@@ -42,6 +42,13 @@ try {
   await command('Runtime.enable');
   await command('Network.enable');
   await command('Page.enable');
+  await evaluate(`new Promise((resolve,reject)=>{
+    const ready=()=>document.querySelector('#connection-status')?.dataset.state==='connected';
+    if(ready()){resolve(true);return;}
+    const timer=setTimeout(()=>{observer.disconnect();reject(new Error('Native handshake missing'));},10000);
+    const observer=new MutationObserver(()=>{if(ready()){clearTimeout(timer);observer.disconnect();resolve(true);}});
+    observer.observe(document,{childList:true,subtree:true,attributes:true});
+  })`);
   report.initial = await evaluate(`({
     state: document.querySelector('#connection-status').dataset.state,
     headings: document.querySelectorAll('#markdown-sample h3').length,

@@ -19,6 +19,89 @@
       <span id="connection-status" class="status-badge" role="status"></span>
     </header>
 
+    <details id="byok-panel" class="byok-panel">
+      <summary data-i18n="byokTitle"></summary>
+      <div class="byok-scroll" tabindex="0" data-i18n-label="byokTitle">
+        <p id="byok-status" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="byok-error" class="error" role="alert" hidden></p>
+        <form id="byok-configure" autocomplete="off">
+          <fieldset id="byok-config-fields" disabled>
+            <legend data-i18n="byokAddProvider"></legend>
+            <label for="byok-kind" data-i18n="byokKind"></label>
+            <select id="byok-kind"></select>
+            <label for="byok-provider-id" data-i18n="byokProviderId"></label>
+            <input id="byok-provider-id" type="text" maxlength="64" required autocomplete="off" spellcheck="false">
+            <label for="byok-url" data-i18n="byokUrl"></label>
+            <input id="byok-url" type="url" maxlength="2048" required autocomplete="off" spellcheck="false" aria-describedby="byok-url-help">
+            <p id="byok-url-help" class="secondary" data-i18n="byokUrlHelp"></p>
+            <label for="byok-key" id="byok-key-label" data-i18n="byokKey"></label>
+            <input id="byok-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="byok-key-help">
+            <p id="byok-key-help" class="secondary" data-i18n="byokKeyHelp"></p>
+            <div id="byok-deployments-group" class="byok-field" hidden>
+              <label for="byok-deployments" data-i18n="byokDeployments"></label>
+              <textarea id="byok-deployments" rows="2" maxlength="8192" spellcheck="false" aria-describedby="byok-deployments-help"></textarea>
+              <p id="byok-deployments-help" class="secondary" data-i18n="byokDeploymentsHelp"></p>
+            </div>
+            <p class="secondary" data-i18n="byokListingNote"></p>
+            <button id="byok-configure-button" type="submit" class="text-button" data-i18n="byokConfigure" disabled></button>
+          </fieldset>
+        </form>
+        <section class="byok-catalog" aria-labelledby="byok-models-title">
+          <h2 id="byok-models-title" data-i18n="byokModelsTitle"></h2>
+          <label for="byok-providers" data-i18n="byokProviders"></label>
+          <select id="byok-providers" disabled></select>
+          <div class="byok-actions">
+            <button id="byok-list" type="button" class="text-button" data-i18n="byokList" disabled></button>
+            <button id="byok-discover" type="button" class="text-button" data-i18n="byokDiscover" disabled></button>
+          </div>
+          <label for="byok-models" data-i18n="byokModel"></label>
+          <select id="byok-models" disabled></select>
+          <ul id="byok-capabilities" class="byok-capabilities" aria-live="polite"></ul>
+          <details id="byok-override" class="byok-override">
+            <summary data-i18n="byokOverrideTitle"></summary>
+            <p class="secondary" data-i18n="byokOverrideHelp"></p>
+            <label for="byok-vision" data-i18n="byokVision"></label><select id="byok-vision" disabled></select>
+            <label for="byok-tools" data-i18n="byokTools"></label><select id="byok-tools" disabled></select>
+            <label for="byok-reasoning" data-i18n="byokReasoning"></label><select id="byok-reasoning" disabled></select>
+            <button id="byok-apply-override" type="button" class="text-button" data-i18n="byokApplyOverride" disabled></button>
+          </details>
+          <section id="byok-probe" class="byok-probe" aria-labelledby="byok-probe-title" aria-busy="false">
+            <h3 id="byok-probe-title" data-i18n="byokProbeTitle"></h3>
+            <p id="byok-probe-help" class="secondary" data-i18n="byokProbeHelp"></p>
+            <p id="byok-probe-budget" class="secondary" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+            <div class="byok-probe-consent">
+              <input id="byok-probe-consent" type="checkbox" disabled aria-describedby="byok-probe-help byok-probe-budget">
+              <label for="byok-probe-consent" data-i18n="byokProbeConsent"></label>
+            </div>
+            <label for="byok-probe-capability" data-i18n="byokProbeCapability"></label>
+            <select id="byok-probe-capability" disabled aria-describedby="byok-probe-help"></select>
+            <button id="byok-verify" type="button" class="text-button" data-i18n="byokVerify" disabled aria-describedby="byok-probe-help byok-probe-budget"></button>
+          </section>
+        </section>
+        <section class="byok-chat" aria-labelledby="byok-chat-title">
+          <h2 id="byok-chat-title" data-i18n="byokChatTitle"></h2>
+          <div id="byok-output" class="byok-output" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0" data-i18n-label="byokChatTitle"></div>
+          <form id="byok-chat-form" autocomplete="off">
+            <label for="byok-effort" data-i18n="byokEffort"></label>
+            <select id="byok-effort" disabled></select>
+            <label for="byok-message" data-i18n="byokMessage"></label>
+            <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost"></textarea>
+            <p id="byok-chat-hint" class="secondary" data-i18n="byokChatHint"></p>
+            <label for="byok-image" data-i18n="byokImage"></label>
+            <input id="byok-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled aria-describedby="byok-image-help">
+            <p id="byok-image-help" class="secondary" data-i18n="byokImageHelp"></p>
+            <p id="byok-attachment" class="secondary" role="status" hidden></p>
+            <button id="byok-remove-image" type="button" class="text-button" data-i18n="byokRemoveImage" hidden></button>
+            <p id="byok-cost" class="byok-cost" data-i18n="byokCost"></p>
+            <div class="byok-actions">
+              <button id="byok-send" type="submit" class="primary-button" data-i18n="byokSend" disabled></button>
+              <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancel" disabled></button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </details>
+
     <main>
       <details class="showcase" open>
         <summary data-i18n="sampleTitle"></summary>

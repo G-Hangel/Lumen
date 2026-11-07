@@ -1,4 +1,4 @@
-# COMANDOS — Fase 0
+# COMANDOS — Fases 0–2
 
 Testados em **2026-11-07**, na raiz `C:\Users\Hanjel\Documents\Extensão`.
 VS Community Insiders 18.12.12328.396, instanceId `25e762c6`, SDK .NET
@@ -170,6 +170,52 @@ O servidor aceita somente loopback, GET/HEAD e paths confinados a `wwwroot`.
 - `open-experimental.ps1 -Action Open` com Lumen desinstalado: exit 1 e
   `The Lumen command is missing from the Exibir menu`.
 
-O estado final deixado nesta máquina: hive `18.0_25e762c6Exp` resetada e com
-Lumen **instalado e verificado** em `Extensions\nrqagayt.p4k`; nenhuma instância
-Exp aberta; perfil principal do VS intocado.
+O estado ao fim da Fase 0 foi hive `18.0_25e762c6Exp` resetada e Lumen em
+`Extensions\nrqagayt.p4k`, Exp fechada e perfil principal intocado. A instalação
+foi substituída pelos builds das fases seguintes.
+
+## Fase 2 — build e verificação BYOK offline
+
+```bash
+npm run build:ui
+dotnet restore Lumen.sln
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release -bl:artifacts/phase2.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=phase2.trx' --results-directory artifacts/tests
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+```
+
+Em outro processo local autorizado:
+
+```bash
+node scripts/byok-fixture-server.mjs
+```
+
+O servidor escuta apenas `127.0.0.1:4184`, responde com fixtures e não encaminha
+chaves nem chama APIs externas. O caso Tools não-streaming tem atraso sintético
+para testar cancelamento; o sinal `/fixture/wait-probe` evita polling.
+
+Com a Exp nova e o servidor em execução:
+
+```bash
+node scripts/verify-webview.mjs
+node scripts/verify-byok-webview.mjs
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+Build limpo: **0 erros/0 avisos**, **813 testes C#** e **91 testes JS** verdes,
+com controles negativos. O verificador BYOK usa a ponte C# do WebView2 real,
+configura somente chave sintética, prova que o catálogo público não valida a
+chave, bloqueia anexo sem visão, anexa PNG real, recebe streaming/tool card e
+exercita consentimento, deduplicação e cancelamento do probe. Remove ao final
+somente configurações/credenciais que criou. Não substitui integração com
+Ollama real nem com uma chave BYOK real.
+
+Evidências ignoradas pelo Git: `artifacts/phase2.binlog`,
+`artifacts/tests/phase2.trx`, `artifacts/byok-webview.json`,
+`artifacts/byok-webview.png` e o relatório de regressão do spike.
+Encerre somente o servidor de fixtures e a Exp lançados por esta sessão;
+nenhum processo preexistente nem perfil principal precisa ser alterado.

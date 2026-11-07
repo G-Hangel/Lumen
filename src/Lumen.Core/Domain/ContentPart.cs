@@ -59,7 +59,7 @@ public enum ImageDetail
 
 public sealed class ToolCallPart : ContentPart
 {
-    public ToolCallPart(string id, string name, JsonElement arguments)
+    public ToolCallPart(string id, string name, JsonElement arguments, string? providerState = null)
     {
         if (arguments.ValueKind != JsonValueKind.Object)
         {
@@ -68,13 +68,15 @@ public sealed class ToolCallPart : ContentPart
 
         Id = string.IsNullOrEmpty(id) ? throw new ArgumentNullException(nameof(id)) : id;
         Name = string.IsNullOrEmpty(name) ? throw new ArgumentNullException(nameof(name)) : name;
-        Arguments = arguments;
+        Arguments = arguments.Clone();
+        ProviderState = providerState;
     }
 
     public override string Kind => "toolCall";
     public string Id { get; }
     public string Name { get; }
     public JsonElement Arguments { get; }
+    public string? ProviderState { get; }
 }
 
 public sealed class ToolResultPart : ContentPart
@@ -135,7 +137,8 @@ public sealed class ContentPartConverter : JsonConverter<ContentPart>
             ["toolCall"] = element => new ToolCallPart(
                 RequireString(element, "id"),
                 RequireString(element, "name"),
-                RequireProperty(element, "arguments").Clone()),
+                RequireProperty(element, "arguments"),
+                element.TryGetProperty("providerState", out var callState) && callState.ValueKind == JsonValueKind.String ? callState.GetString() : null),
             ["toolResult"] = element => new ToolResultPart(
                 RequireString(element, "invocationId"),
                 element.TryGetProperty("isError", out var isError) && isError.GetBoolean(),
@@ -200,6 +203,7 @@ public sealed class ContentPartConverter : JsonConverter<ContentPart>
                 writer.WriteString("name", call.Name);
                 writer.WritePropertyName("arguments");
                 call.Arguments.WriteTo(writer);
+                if (call.ProviderState is not null) writer.WriteString("providerState", call.ProviderState);
                 break;
             case ToolResultPart result:
                 writer.WriteString("invocationId", result.InvocationId);

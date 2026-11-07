@@ -40,10 +40,15 @@ public sealed class TextDelta : StreamEvent
 
 public sealed class ReasoningDelta : StreamEvent
 {
-    public ReasoningDelta(string text) => Text = text ?? throw new ArgumentNullException(nameof(text));
+    public ReasoningDelta(string text, string? providerState = null)
+    {
+        Text = text ?? throw new ArgumentNullException(nameof(text));
+        ProviderState = providerState;
+    }
 
     public override StreamEventKind Kind => StreamEventKind.ReasoningDelta;
     public string Text { get; }
+    public string? ProviderState { get; }
 }
 
 public sealed class ToolCallStart : StreamEvent
@@ -74,7 +79,7 @@ public sealed class ToolCallArgsDelta : StreamEvent
 
 public sealed class ToolCallEnd : StreamEvent
 {
-    public ToolCallEnd(string id, JsonElement parsedArgs)
+    public ToolCallEnd(string id, JsonElement parsedArgs, string? providerState = null)
     {
         Id = string.IsNullOrEmpty(id) ? throw new ArgumentNullException(nameof(id)) : id;
         if (parsedArgs.ValueKind != JsonValueKind.Object)
@@ -82,12 +87,14 @@ public sealed class ToolCallEnd : StreamEvent
             throw new ArgumentException("Parsed tool arguments must be a JSON object.", nameof(parsedArgs));
         }
 
-        ParsedArgs = parsedArgs;
+        ParsedArgs = parsedArgs.Clone();
+        ProviderState = providerState;
     }
 
     public override StreamEventKind Kind => StreamEventKind.ToolCallEnd;
     public string Id { get; }
     public JsonElement ParsedArgs { get; }
+    public string? ProviderState { get; }
 }
 
 public sealed class Usage : StreamEvent

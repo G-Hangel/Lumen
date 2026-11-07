@@ -1,11 +1,14 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Resources;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Lumen.Core.Bridge;
+using Lumen.Providers;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Threading;
@@ -20,12 +23,24 @@ internal sealed class LumenControl : UserControl, IDisposable
     private readonly JoinableTaskFactory taskFactory;
     private readonly WebView2 browser;
     private readonly TextBlock status;
+    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(2) };
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly Lazy<ByokSession> byok;
     private bool started;
     private bool disposed;
 
     internal LumenControl(JoinableTaskFactory taskFactory)
     {
         this.taskFactory = taskFactory;
+        var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lumen");
+        byok = new Lazy<ByokSession>(() =>
+        {
+            var registryPath = Path.Combine(dataFolder, "capabilities.registry.json");
+            var resolver = new CapabilityResolver(File.Exists(registryPath) ? File.ReadAllText(registryPath) : null);
+            var transport = new HttpTransport(http);
+            return new ByokSession(new ProviderFactory(transport, resolver), new WindowsCredentialStore(),
+                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport));
+        });
         browser = new WebView2
         {
             CreationProperties = new CoreWebView2CreationProperties
@@ -110,9 +125,36 @@ internal sealed class LumenControl : UserControl, IDisposable
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var reply = BridgeProtocol.Handle(e.Source, e.WebMessageAsJson, ReadTheme());
-        if (reply != null)
-            browser.CoreWebView2.PostWebMessageAsJson(reply.ToJson());
+        var source = e.Source;
+        var json = e.WebMessageAsJson;
+        var theme = ReadTheme();
+        taskFactory.RunAsync(async () =>
+        {
+            try
+            {
+                await Task.Run(async () =>
+                {
+                    if (BridgeProtocol.IsTrustedSource(source) && ByokSession.IsRequest(json))
+                    {
+                        await byok.Value.HandleAsync(source, json, PostAsync, lifetime.Token).ConfigureAwait(false);
+                        return;
+                    }
+                    var reply = BridgeProtocol.Handle(source, json, theme);
+                    if (reply != null) await PostAsync(reply.ToJson()).ConfigureAwait(false);
+                }, lifetime.Token);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception exception) when (exception is IOException || exception is System.Text.Json.JsonException || exception is ArgumentException)
+            {
+                await PostAsync(new BridgeMessage { Type = "error", Payload = new BridgePayload { Code = "invalid_configuration" } }.ToJson());
+            }
+        }).FileAndForget("Lumen/BridgeRequest");
+    }
+
+    private async Task PostAsync(string json)
+    {
+        await taskFactory.SwitchToMainThreadAsync();
+        if (!disposed && browser.CoreWebView2 != null) browser.CoreWebView2.PostWebMessageAsJson(json);
     }
 
     private void OnThemeChanged(ThemeChangedEventArgs e) =>
@@ -146,6 +188,9 @@ internal sealed class LumenControl : UserControl, IDisposable
         if (disposed)
             return;
         disposed = true;
+        lifetime.Cancel();
+        if (byok.IsValueCreated) byok.Value.Dispose();
+        http.Dispose();
         Loaded -= OnLoaded;
         VSColorTheme.ThemeChanged -= OnThemeChanged;
         if (browser.CoreWebView2 != null)

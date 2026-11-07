@@ -1,0 +1,15 @@
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"","thought":true,"thoughtSignature":"empty-one"},{"text":"","thought":true,"thoughtSignature":"empty-two"}]}}]}
+
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"checking files","thought":true,"thoughtSignature":"thought-signature"}]}}]}
+
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"Hello ","thoughtSignature":"answer-signature"}]}}]}
+
+event: future_event
+data: unknown event with deliberately invalid JSON
+
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"world"}]}}]}
+
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"functionCall":{"name":"read_file","args":{"path":"a.cs","line":7}},"thoughtSignature":"function-signature"}]}}]}
+
+data: {"candidates":[{"index":0,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":19,"candidatesTokenCount":42,"thoughtsTokenCount":12}}
+

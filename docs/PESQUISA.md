@@ -21,13 +21,22 @@
 | Gemini | `GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=&pageToken=` | `x-goog-api-key: KEY` | Parcial: `thinking`, limites de token. **Sem flag de visão** |
 | OpenRouter | `GET https://openrouter.ai/api/v1/models` | pública, sem chave | **O mais rico** (ver 1.3) |
 | Ollama | `GET /api/tags` → `POST /api/show {"model":"…","verbose":false}` | nenhuma por padrão | **Sim**, array `capabilities` |
-| Azure OpenAI | `GET {endpoint}/openai/deployments?api-version=…` e `GET {endpoint}/openai/models?api-version=2024-10-21` | header `api-key:` | Parcial, sem visão/raciocínio |
+| Azure OpenAI | `GET {endpoint}/openai/v1/models` (ofertas, não inventory de deployments) | header `api-key:` | Sem modalidades verificadas; deployments via ARM exigem Entra/RBAC |
 | LM Studio | `GET /api/v0/models` → fallback `/v1/models` | `Authorization: Bearer` | `type:"vlm"\|"llm"\|"embeddings"`, `max_context_length` |
 | DeepSeek, Groq, Mistral, xAI, Together, Cerebras, vLLM, llama.cpp | `GET /v1/models` (OpenAI-compatível) | Bearer | Só id/owned_by/created. vLLM também dá `max_model_len` |
 
 **Azure:** o que você usa no chat é o **deployment name**, não o model id.
-`/openai/models` retorna `capabilities:{chat_completion, completion, embeddings,
-fine_tune, inference}`, `lifecycle_status`, `deprecation:{inference,fine_tune}`.
+Reverificado em 2026-11-07: `GET /openai/v1/models` lista ofertas, sem garantir
+nomes de deployments. `POST /openai/v1/chat/completions` aceita `api-key`, sem
+`api-version` datada. A rota data-plane `/openai/deployments` anterior não foi
+confirmada e não deve ser usada. Descoberta de deployments verificada é ARM:
+`GET https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.CognitiveServices/accounts/{accountName}/deployments?api-version=2025-06-01`.
+Retorna `value[].name`, `properties.model.{format,name,version,publisher}` e
+`nextLink`; requer token Entra e RBAC, não a chave do recurso. O adapter BYOK
+valida a chave por `/openai/v1/models` e exige nomes de deployments informados.
+Fontes: <https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle>
+· <https://learn.microsoft.com/en-us/rest/api/microsoftfoundry/accountmanagement/deployments/list?view=rest-microsoftfoundry-accountmanagement-2025-06-01>
+· <https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/models>.
 
 **OpenAI:** existe pedido de feature aberto (set/2026) por um objeto
 `capabilities` / `GET /v1/models/{id}/capabilities`, sem compromisso da OpenAI.
@@ -63,8 +72,17 @@ capabilities:
 Uma única chamada responde visão + thinking + níveis de effort + contexto.
 **Use diretamente, sem heurística.**
 
-`RE-VERIFICAR`: o valor exato do header `anthropic-version` na data do build, e os
-nomes atuais de `line`. Fonte: <https://platform.claude.com/docs/en/api/models-list>
+Reverificado em 2026-11-07: `anthropic-version: 2026-10-21`, mantendo
+`x-api-key` (a documentação também aceita Bearer). Nesta versão não enviar
+`temperature`, `top_p` nem `top_k`. Effort fica em `output_config.effort`;
+`thinking.type` e níveis devem vir de metadados do modelo. Manual
+`budget_tokens` mínimo 1024, abaixo de `max_tokens`, é rejeitado por Claude 4.7+.
+Preservar blocos `thinking` com `signature` e `redacted_thinking` com `data`
+inteiros, inclusive texto vazio. `line` não é usado para escolher capacidades.
+Fontes: <https://platform.claude.com/docs/en/api/models-list>
+· <https://platform.claude.com/docs/en/api/versioning>
+· <https://platform.claude.com/docs/en/build-with-claude/effort>
+· <https://platform.claude.com/docs/en/build-with-claude/thinking>.
 
 ## 1.3 OpenRouter — verificado ao vivo
 
@@ -100,9 +118,12 @@ pricing: { prompt, completion, image, internal_reasoning,
 endpoints[]: ex. ["/api/v1/chat/completions","/api/v1/messages","/api/v1/responses"]
 ```
 
-Filtros server-side (use para não baixar tudo):
-`?supported_parameters=tools&input_modalities=text,image&limit=1000&offset=0`
-(`limit` máx 1000; pagine por `links.next`).
+Reverificado em 2026-11-07: a listagem sem `limit`/`offset` retorna o catálogo
+completo; só seguir `links.next` quando fornecido pelo provedor, sempre na mesma
+origem. O endpoint é público: nem sucesso nem 401/402/429 dessa chamada provam
+validade da chave fornecida. O Lumen guarda a configuração após um catálogo
+bem-sucedido, mas mostra explicitamente **chave não verificada**; nunca faz uma
+inferência para validá-la automaticamente.
 
 Fontes:
 <https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties>
@@ -167,13 +188,17 @@ Nesta ordem. **Nunca comece probing.**
 - Probe mais barata: `max_tokens:1` (ou `max_completion_tokens:16`),
   `stream:false`; PNG 1×1 em data URI (~70 bytes) para visão; `tools:[{…}]`
   trivial + `tool_choice:"none"` para tools. Custo ≈ dezenas de tokens.
-- Distinga **rejeição de capacidade** (400/422, `invalid_request_error`, mensagem
-  citando o parâmetro) de erro de auth/quota.
-- Cache resultado **negativo permanentemente** por model id; positivo com TTL.
-- **Não probe raciocínio enviando um effort:** muitos modelos ignoram parâmetro
-  desconhecido silenciosamente, então HTTP 200 não prova nada — e uma chamada de
-  raciocínio bem-sucedida **cobra tokens de raciocínio**. Prefira registry /
-  metadado nativo. Último recurso: `effort:"minimal"` ou `"none"`.
+- Um POST mínimo aceito **não prova** visão/tools: o endpoint pode ignorar os
+  parâmetros. Nesta implementação, HTTP 200 é **inconclusivo**, sem probe extra.
+- Negativo permanente exige erro estruturado 400/422 com rejeição explícita e
+  incondicional da capacidade pelo modelo. `tool_choice`, parâmetro genérico,
+  restrições condicionais, auth/quota/contexto não estabelecem ausência de tools
+  ou visão e ficam inconclusivos.
+- Cache negativo por configuração canônica/modelo/capacidade, invalidado ao
+  remover configuração; positivos de evidência válida têm TTL. A remoção não
+  devolve tentativas nem orçamento dentro da mesma sessão.
+- **Nunca probe raciocínio enviando effort:** parâmetros podem ser ignorados e
+  uma chamada bem-sucedida cobra tokens de raciocínio. Use registry/metadado nativo.
 - Orçamento rígido: máx 1 probe por capacidade por modelo, cap global (ex. 5)
   por sessão, setting opt-in "Verificar capacidades (consome alguns tokens)".
 
@@ -212,7 +237,11 @@ Fontes: <https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
   Fonte: <https://platform.claude.com/docs/en/build-with-claude/vision>
 - **Gemini:** `parts:[{inline_data:{mime_type:"image/png", data:"<base64>"}}]`
   (camelCase `inlineData`/`mimeType` também aceito); `file_data:{file_uri, mime_type}`
-  para Files API. `RE-VERIFICAR` o cap atual de bytes inline (~20 MB total).
+  para Files API. Reverificado em 2026-11-07: **20 MB para o request serializado
+  completo**, não por imagem. O adapter verifica bytes UTF-8 antes do HTTP e
+  preserva cada Part assinado, inclusive texto vazio com `thoughtSignature`.
+  Fonte do limite: <https://aistudio.google.com/docs/image-understanding>
+  (redirecionamento oficial de `ai.google.dev`, consultado em 2026-11-07).
 
 ## 1.9 Normalização de streaming
 
@@ -251,11 +280,14 @@ Fonte: <https://platform.claude.com/docs/en/build-with-claude/streaming>
 
 ## 1.10 Validação de chave e storage
 
-**Valide com a própria chamada de listagem** — é grátis, não consome tokens:
-OpenAI/OpenRouter/Groq/Mistral/xAI/Together/Cerebras `GET /v1/models`;
-Anthropic `GET /v1/models?limit=1`; Gemini `GET /v1beta/models?pageSize=1`;
-Azure `GET /openai/deployments?api-version=…`;
-Ollama/LM Studio/vLLM `GET /api/tags` / `/api/v0/models`.
+**Use a chamada autenticada de listagem** — não consome tokens:
+OpenAI/Groq/Mistral/xAI/Together/Cerebras `GET /v1/models`;
+Anthropic `GET /v1/models`; Gemini `GET /v1beta/models`;
+Azure `GET /openai/v1/models` (ofertas, não deployments);
+Ollama/LM Studio/vLLM `GET /api/tags` / `/api/v0/models` / `/v1/models`.
+OpenRouter é exceção: `GET /api/v1/models` público **não valida chave**;
+`credentialValid` permanece `null` e a UI informa isso. Somente erros de chamadas
+autenticadas podem fundamentar a interpretação de credencial abaixo.
 
 **Interpretação dos erros:**
 

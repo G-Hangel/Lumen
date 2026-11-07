@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "providerId": "deepseek",
+      "modelIdPattern": "^deepseek-chat$",
+      "text": true,
+      "vision": false,
+      "tools": true,
+      "reasoning": false,
+      "source": "https://api-docs.deepseek.com/api/create-chat-completion",
+      "confidence": "Medium",
+      "verifiedAt": "2026-11-06"
+    },
+    {
+      "providerId": "deepseek",
+      "modelIdPattern": "^deepseek-reasoner$",
+      "text": true,
+      "vision": false,
+      "reasoning": {
+        "kind": "ModelSelection",
+        "efforts": ["Medium"],
+        "mandatory": true
+      },
+      "source": "https://api-docs.deepseek.com/guides/reasoning_model",
+      "confidence": "Medium",
+      "verifiedAt": "2026-11-06"
+    }
+  ]
+}

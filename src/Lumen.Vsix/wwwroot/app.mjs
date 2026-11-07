@@ -4,6 +4,7 @@ import { HostBridge, MAX_TEXT_LENGTH } from './bridge.mjs';
 import { createMarkdownRenderer, renderDiff } from './renderers.mjs';
 import { VirtualHistory, ROW_HEIGHT } from './virtual-history.mjs';
 import { themeProperties } from './theme.mjs';
+import { startByok } from './byok.mjs';
 
 const catalogs = { 'pt-BR': pt, en };
 const element = id => document.getElementById(id);
@@ -17,6 +18,7 @@ let state = 'preview';
 let busy = false;
 let errorCode = null;
 let bridge;
+let byokUI;
 const messages = Array.from({ length: 500 }, (_, index) => ({ kind: 'sample', index }));
 
 function text(key, values = {}) {
@@ -108,6 +110,7 @@ function applyLocale(nextCulture) {
   history.setItems(messages);
   updateControls();
   if (errorCode) showError(errorCode);
+  byokUI?.refreshLocale();
 }
 
 function applyHostTheme(theme) {
@@ -129,6 +132,7 @@ async function connect() {
     showError(error.code);
   }
   updateControls();
+  byokUI?.setConnected();
 }
 
 async function submit(event) {
@@ -168,6 +172,7 @@ function handleLink(event) {
 }
 
 bridge = new HostBridge(window.chrome?.webview, { onTheme: applyHostTheme, onError: showError });
+byokUI = startByok({ transport: window.chrome?.webview, connected: () => state === 'connected', text });
 applyLocale(culture);
 growComposer();
 document.querySelector('.app').setAttribute('aria-busy', 'false');
@@ -193,6 +198,7 @@ const composerResize = new ResizeObserver(growComposer);
 composerResize.observe(element('composer'));
 window.addEventListener('pagehide', () => {
   bridge.dispose();
+  byokUI.dispose();
   history.dispose();
   composerResize.disconnect();
 }, { once: true });

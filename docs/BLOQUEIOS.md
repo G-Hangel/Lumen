@@ -8,6 +8,16 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
+### B8 — Azure: inventory de deployments requer Entra/RBAC
+
+A rota data-plane prevista não foi confirmada pela documentação oficial.
+`GET /openai/v1/models` valida a chave, mas lista ofertas, não nomes de deployments.
+A listagem ARM exige token Entra/RBAC; chave BYOK do recurso é insuficiente.
+O adapter exige nomes informados e retorna `deployment_required` se faltarem.
+Fontes e rota ARM exata em `PESQUISA.md` §1.1; descoberta automática permanece limitada.
+**Status:** aceito como limitação pelo usuário em 2026-11-07 ao instruir o avanço
+para a Fase 3; deployments manuais funcionam. Não bloqueia as próximas fases.
+
 ### B2 — Disco com pouco espaço
 
 `C:` tinha **19 GB livres** antes do workload; `df -h /c` em 2026-11-07 mostrou
@@ -37,6 +47,15 @@ ação do usuário (`AGENTS.md` §6). Não tentar contornar.
 ---
 
 ## Resolvidos
+
+### B7 — Ollama real: AC dispensado pelo usuário (2026-11-07)
+
+O executável/processo Ollama não existia na máquina (checagem por `Get-Command`/
+`Get-Process` sem resultado). Em 2026-11-07 o usuário declarou na conversa:
+"não precisa fazer o ollama local, eu já fiz os testes e o chat realmente funciona"
+— teste com chave real feito pelo próprio usuário na UI, com chat funcionando.
+O AC de Ollama local fica **dispensado por decisão explícita do usuário**; o
+adapter continua coberto por mocks/fixtures. Nenhum gasto foi feito pelo agente.
 
 ### B6 — Reset da hive experimental validado (2026-11-07, com autorização)
 
@@ -213,6 +232,45 @@ JsonDocument.ParseValue(ref reader)`. Os `JsonElement` extraídos dali morrem co
 confirmado revertendo a correção (1 falha) e restaurando (0 falhas).
 
 ---
+
+### R13 — Revisão BYOK: identidade, replay, EOF e evidência (2026-11-07)
+
+Controle negativo reproduzido no código nativo:
+
+```bash
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --filter 'FullyQualifiedName~ConfigurationGuidCasing|FullyQualifiedName~PaidRequestReplay|FullyQualifiedName~RemovedConfigurationCannot|FullyQualifiedName~GeminiUnsignedThenSigned'
+```
+
+Antes: **4 falhas / 1 sucesso**. Depois: **5 sucessos**. GUIDs são canônicos
+(`Contracts.cs:24`), a deduplicação não apaga IDs antigos após 1024 requests
+(`ByokSession.cs:70`), remover configuração invalida cache sem devolver orçamento
+(`ByokSession.cs:153`) e Gemini conserva limites dos Parts assinados
+(`ByokSession.cs:242`). EOF sem `message_stop`/`finishReason` produz `invalid_stream`
+(`AnthropicProvider.cs:407`, `GeminiProvider.cs:295`) e não grava histórico parcial.
+
+O probe passou a retornar inconclusivo em HTTP 200 (`CapabilityHttpProbe.cs:83`);
+negativo permanente exige declaração incondicional do modelo, não `tool_choice`,
+restrição condicional ou parâmetro genérico (`CapabilityHttpProbe.cs:121`). Cancel
+cobre RPCs não-chat (`wwwroot/byok.mjs:102`) e reconcilia orçamento só pela sessão
+nativa (`wwwroot/byok.mjs:285`). Testes usam apenas mocks/chaves sintéticas.
+
+### R14 — Erro de catálogo anunciava modelos carregados
+
+O WebView2 mostrou mensagem de sucesso ao lado de 401/404, embora nenhum modelo
+fosse carregado. Novo controle em `scripts/byok-ui-tests.mjs:403` reproduziu **5
+falhas** antes da correção. `applyCatalog` usa estado pronto, não sucesso de
+listagem, quando há erro e a credencial não foi validada; 429 autenticado mantém
+seu estado distinto. Catálogo público mantém a mensagem de chave não verificada.
+
+### R15 — Verificador acessava o DOM antes do handshake (2026-11-07)
+
+Após build/testes/install verdes, `node scripts/verify-webview.mjs` falhou com
+`TypeError: Cannot read properties of null (reading 'dataset')`. A tool window
+WPF já estava aberta, mas o documento ainda não tinha o elemento de status.
+`scripts/verify-webview.mjs:45` e `scripts/verify-byok-webview.mjs:45` agora esperam
+por `connected` via MutationObserver com prazo de 10 segundos, sem polling ou
+handshake simulado. Reexecução dos dois scripts no WebView2 real: exit 0, sem
+exceções e com controle negativo de layout detectado.
 
 ## Armadilhas que NÃO são bloqueios (mas vão morder)
 

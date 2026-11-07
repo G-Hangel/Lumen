@@ -4,17 +4,59 @@ Atualizado em **2026-11-07**.
 
 ## Estado atual
 
-**Fase 0 e Fase 1 concluídas.** A Fase 0 terminou com o reset da hive validado
-(B6 resolvido com autorização do usuário). A Fase 1 adicionou o núcleo de domínio
-puro em `Lumen.Core`, sem VS e sem HTTP, e o VSIX continuou instalando e abrindo
-depois do rebuild. Nenhum remote nem push foi realizado.
+**Fases 0, 1 e 2 concluídas; Fase 3 em andamento (fatia 3a).** A Fase 2 foi
+fechada com limites explicitamente aceitos pelo usuário em 2026-11-07: ele testou
+com chave real na UI (listagem e chat funcionaram), dispensou o Ollama local (B7)
+e aceitou o inventory Azure manual (B8). Nenhum remote nem push foi realizado.
 
 | Fase | Estado |
 | --- | --- |
 | Planejamento | concluído |
 | Fase 0 — Spike de toolchain e UI | **concluído** |
 | Fase 1 — Núcleo de domínio | **concluído** |
-| Fases 2–8 | não iniciadas |
+| Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
+| Fase 3 — UI do chat | **em andamento — fatia 3a (chat unificado)** |
+| Fases 4–8 | não iniciadas |
+
+## Evidências verificadas da Fase 2 (2026-11-07)
+
+- Build limpo Release: **0 erros / 0 avisos**; **813 testes C#** e **91 testes
+  JavaScript** aprovados, sem falhas ou testes ignorados, com controles negativos.
+  Evidências: `artifacts/phase2.binlog` e `artifacts/tests/phase2.trx`.
+- Pacote instalado somente na Exp `18.0_25e762c6Exp`, em
+  `Extensions\gjhfvx4a.sor`; todos os arquivos empacotados conferidos por SHA-256
+  após instalar e novamente após fechar o VS.
+- Ponte C# e WebView2 reais, usando apenas fixtures loopback: catálogo público
+  OpenRouter com validade da chave desconhecida, chave sintética limpa do campo,
+  seleção sem visão bloqueando imagem/effort e seleção com visão liberando anexo
+  real e esforços Low/High. Chat com imagem e streaming terminou com texto e
+  card de tool; nenhuma ferramenta foi executada.
+- Probe sem consentimento foi recusado sem POST. Duas tentativas da mesma
+  capacidade produziram **um único POST**, resultado inconclusivo e orçamento
+  nativo 4/5. Cancelar outro probe já recebido pelo servidor local respondeu em
+  **7 ms**, com erro `cancelled` e orçamento reconciliado em 3/5, sem reembolso.
+- 401 e 404 exibiram erros distintos sem salvar configuração nem anunciar sucesso
+  de listagem. 429 autenticado preservou validade da credencial e configuração;
+  o catálogo público não foi usado como prova de chave válida.
+- BYOK sem overflow em larguras 203/375/900; overflow deliberadamente forçado foi
+  detectado. Verificador legado revalidou eco real, 500 mensagens virtualizadas,
+  markdown/highlight/diff e recuperação após mensagens inválidas. Reload offline
+  carregou **12 assets**, todos de `https://lumen.local`; layouts 203/320/375/900
+  sem overflow ou sobreposição. Ambos os relatórios têm `exceptions: []` e
+  `layoutNegative: true`.
+- A reexecução detectou uma corrida de inicialização do verificador, corrigida
+  esperando o handshake real antes de acessar o DOM. Os dois verificadores
+  passaram depois da correção (R15).
+- Exp fechada e servidores iniciados por esta sessão encerrados. O preview
+  preexistente na porta 4173 foi mantido. Configurações sintéticas removidas:
+  `%LocalAppData%\Lumen\providers.json` contém `[]` e o cache de probes contém
+  `{"version":1,"entries":[]}`. Perfil principal do VS intocado.
+- **Sem chamadas a serviços reais de IA, sem credenciais reais e sem gasto pelo
+  agente.** O teste com chave real foi feito pelo próprio usuário na UI.
+- **Aceite do usuário (2026-11-07, na conversa):** "não precisa fazer o ollama
+  local, eu já fiz os testes e o chat realmente funciona" e "vamos para a próxima
+  fase". B7 dispensado explicitamente; B8 aceito como limitação (deployments
+  manuais). Fase 2 fechada e checkpoint commitado com esses limites registrados.
 
 ## Evidências da Fase 1 (2026-11-07)
 
@@ -87,35 +129,48 @@ depois do rebuild. Nenhum remote nem push foi realizado.
 
 ## Evidências locais (ignoradas pelo Git)
 
-- `artifacts/phase0.binlog`, `artifacts/phase1.binlog`, `artifacts/net48-probe.binlog`.
-- `artifacts/tests/phase0.trx`.
+- `artifacts/phase0.binlog`, `artifacts/phase1.binlog`, `artifacts/phase2.binlog`,
+  `artifacts/net48-probe.binlog`.
+- `artifacts/tests/phase0.trx`, `artifacts/tests/phase2.trx`.
 - `artifacts/webview-verification.json`, `artifacts/webview-offline.png`.
-- `artifacts/webview-theme.json`.
+- `artifacts/webview-theme.json`, `artifacts/byok-webview.json`,
+  `artifacts/byok-webview.png`.
 - `artifacts/vs-activity.xml`, `artifacts/vs-update.xml` e logs `lumen-*.log`.
 
 O preview em navegador nunca simula conexão C#: sem host, enviar fica
 indisponível. Teste de produto foi feito no WebView2 do VS, não apenas no preview.
-Nenhuma API de IA, credencial ou crédito pago foi utilizado.
+Nenhum serviço real de IA, credencial real ou crédito pago foi utilizado.
 
-Estado deixado nesta máquina: hive `18.0_25e762c6Exp` resetada e com Lumen
-instalado e verificado em `Extensions\nrqagayt.p4k`; nenhuma instância Exp aberta;
-nenhum servidor de preview rodando; perfil principal do VS intocado.
+Estado ao fim da Fase 0: hive `18.0_25e762c6Exp` resetada, Lumen em
+`Extensions\nrqagayt.p4k`, Exp fechada e servidores da sessão encerrados.
+O estado atual da Fase 2 está registrado nas evidências acima; o perfil
+principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fase 2 — BYOK: provedores, descoberta e capacidades** (`PLANO.md`): criar
-`Lumen.Providers`, `IChatProvider` / `IModelCatalog` / `ICredentialStore`, os
-adapters e o `CapabilityResolver` em camadas de `PESQUISA.md` §1.6, mais
-`capabilities.registry.json` embarcado. Preencher `ModelInfo.Origins` com a
-origem **por capacidade**, que é o que a UI mostra como badge.
+**Fase 3 — fatia 3a (chat unificado), autorizada pelo usuário em 2026-11-07.**
+Unificar o spike de eco local e o painel BYOK em um único chat dirigido pelo
+provedor real: histórico rolável, composer multilinha, anexo só com visão, botão
+copiar em code blocks e bloco de raciocínio colapsável. Sem consumo de API —
+verificação com fixtures e WebView2 real. Fatias seguintes (3b persistência,
+3c contexto `@arquivo`, 3d acessibilidade) ficam para depois, cada uma com commit.
 
-**Limite de gasto:** a Fase 2 toca APIs pagas. Descoberta de modelos usa
-endpoints de listagem (OpenRouter é público; os demais exigem chave). Nenhuma
-chamada real sem chave de teste fornecida pelo usuário **e** autorização por
-escrito; até lá, tudo com fixtures gravadas e mocks. Probing ativo continua
-opt-in, orçado e só sobre o modelo selecionado.
+**Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
+fornecida pelo usuário **e** autorização por escrito. Probing ativo continua
+opt-in, orçado e só sobre o modelo selecionado. A Fase 3 não toca APIs pagas.
 
-Não iniciar a Fase 2 sem o commit da Fase 1 estar feito.
+Fase 1 commitada em `316b796`; Fase 2 commitada com os limites aceitos acima.
+A revisão da Fase 2 gerou controles negativos para isolamento de credenciais,
+GUIDs canônicos, replay de requests pagos, EOF prematuro e preservação de blocos
+assinados. Probe HTTP usa um único POST mínimo, consentimento explícito e cinco
+verificações por sessão; HTTP 200 sem evidência semântica é inconclusivo, não
+suporte confirmado. Rejeições condicionais ou de `tool_choice` não justificam
+negativo permanente. Remover configuração invalida seu cache sem devolver o
+orçamento da sessão.
+
+O registry embarcado tem cobertura limitada. O host permite substituição por
+`%LocalAppData%\Lumen\capabilities.registry.json`, validado pelo resolver, sem
+buscar atualização na rede. Overrides manuais ainda são apenas da sessão.
 
 ## Decisões e limites
 

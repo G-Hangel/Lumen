@@ -13,10 +13,11 @@ public sealed class VsixPackageTests
 {
     private static readonly string[] Required =
     {
-        "Lumen.Vsix.dll", "Lumen.Vsix.pkgdef", "Lumen.Core.dll", "System.Text.Json.dll",
+        "Lumen.Vsix.dll", "Lumen.Vsix.pkgdef", "Lumen.Core.dll", "Lumen.Providers.dll", "System.Text.Json.dll",
         "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.Wpf.dll",
         "runtimes/win-x64/native/WebView2Loader.dll", "pt-BR/Lumen.Vsix.resources.dll",
-        "wwwroot/index.html", "wwwroot/app.mjs", "wwwroot/locales/en.json", "wwwroot/locales/pt-BR.json",
+        "wwwroot/index.html", "wwwroot/app.mjs", "wwwroot/byok.mjs", "wwwroot/byok-bridge.mjs",
+        "wwwroot/locales/en.json", "wwwroot/locales/pt-BR.json",
         "wwwroot/vendor/libraries.mjs", "wwwroot/vendor/manifest.json"
     };
 
@@ -33,8 +34,11 @@ public sealed class VsixPackageTests
     [Theory]
     [InlineData("Lumen.Vsix.pkgdef")]
     [InlineData("System.Text.Json.dll")]
+    [InlineData("Lumen.Providers.dll")]
     [InlineData("runtimes/win-x64/native/WebView2Loader.dll")]
     [InlineData("wwwroot/index.html")]
+    [InlineData("wwwroot/byok.mjs")]
+    [InlineData("wwwroot/byok-bridge.mjs")]
     public void VerifierRejectsMissingRuntimeOrUi(string missing)
     {
         var package = ReadPackage();

@@ -1,0 +1,21 @@
+: keepalive
+
+data: {"choices":[{"index":0,"delta":{"content":"Hello "}}]}
+
+event: future_event
+data: {"future":true}
+
+data: {"choices":[{"index":0,"delta":{"content":"world","tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\""}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"path"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"a.cs"}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"completion_tokens_details":{"reasoning_tokens":3}}}
+
+data: [DONE]
+

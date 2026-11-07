@@ -91,6 +91,7 @@ export class HostBridge {
   }
 
   receive(message) {
+    if (record(message) && ((typeof message.type === 'string' && message.type.startsWith('byok.')) || (message.type === 'error' && message.id !== null && !this.pending.has(message.id)))) return;
     if (!isEnvelope(message)) {
       if (record(message) && this.pending.has(message.id)) this.finish(message.id, new BridgeError('invalid_response'));
       else this.onError('invalid_response');

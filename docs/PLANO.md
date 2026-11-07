@@ -148,8 +148,8 @@ visão / raciocínio / tools. **Esta é a feature-assinatura do produto.**
 
 ### Tarefas
 
-- [ ] `IChatProvider` + `IModelCatalog` + `ICredentialStore`.
-- [ ] Adapters, nesta ordem:
+- [x] `IChatProvider` + `IModelCatalog` + `ICredentialStore`.
+- [x] Adapters implementados e exercitados com mocks, nesta ordem:
       1. **OpenAI-compatível** (cobre OpenAI, DeepSeek, Groq, Mistral, xAI,
          Together, Cerebras, vLLM, llama.cpp, LM Studio) — base URL configurável.
       2. **OpenRouter** — metadado mais rico, melhor para validar a UI.
@@ -157,26 +157,39 @@ visão / raciocínio / tools. **Esta é a feature-assinatura do produto.**
       4. **Gemini**.
       5. **Ollama** — local, sem chave, ótimo para testes sem custo.
       6. **Azure OpenAI** — deployments, não model ids.
-- [ ] Descoberta de modelos exatamente por `PESQUISA.md` §1.1–1.5.
-      Validação de chave **pela própria chamada de listagem** (custo zero).
-- [ ] `CapabilityResolver` em camadas (`PESQUISA.md` §1.6):
-      nativo → registry → heurística → probe opt-in.
-- [ ] `capabilities.registry.json` embarcado, atualizável sem release.
-      Cada entrada com `source`, `confidence`, `verifiedAt`.
-- [ ] Mapeamento de `ReasoningIntent` por provedor (`PESQUISA.md` §1.7`),
+- [x] Descoberta de modelos exatamente por `PESQUISA.md` §1.1–1.5.
+      Listagem autenticada valida a chave sem geração; o catálogo público do
+      OpenRouter mantém validade **desconhecida**, inclusive em 401/402/429.
+      Exceção aceita: Azure usa nomes de deployments informados; inventory
+      automático adiado (B8, aceito pelo usuário em 2026-11-07).
+- [x] `CapabilityResolver` em camadas (`PESQUISA.md` §1.6):
+      nativo → registry → heurística → probe opt-in. Heurística de visão não
+      substitui evidência nativa; nome não inventa controle wire de raciocínio.
+- [x] `capabilities.registry.json` embarcado, substituível por JSON local validado
+      sem release. Cada entrada com `source`, `confidence`, `verifiedAt`.
+- [x] Mapeamento de `ReasoningIntent` por provedor (`PESQUISA.md` §1.7`),
       **omitindo o campo** quando não suportado.
-- [ ] Streaming normalizado para `StreamEvent` (`PESQUISA.md` §1.9`),
+- [x] Streaming normalizado para `StreamEvent` (`PESQUISA.md` §1.9`),
       incluindo remontagem de tool-call deltas e preservação de
-      `signature` / `thoughtSignature` para replay.
-- [ ] Entrada de visão nos três formatos (`PESQUISA.md` §1.8`), com validação
+      `signature` / `thoughtSignature` para replay; EOF prematuro não confirma resposta.
+- [x] Entrada de visão nos três formatos (`PESQUISA.md` §1.8`), com validação
       de tamanho antes de enviar.
-- [ ] `ICredentialStore` via **Windows Credential Manager**
-      (`PESQUISA.md` §1.10`), fallback DPAPI.
-- [ ] Tratamento de erro por código HTTP conforme a tabela de §1.10,
-      com backoff + jitter honrando `retry-after`.
-- [ ] UI de configuração: adicionar provedor, colar chave, testar, listar
+- [x] `ICredentialStore` via **Windows Credential Manager**
+      (`PESQUISA.md` §1.10`), fallback DPAPI; testes com chaves sintéticas.
+- [x] Tratamento de erro por código HTTP conforme a tabela de §1.10,
+      com backoff + jitter honrando `retry-after`; POST pago nunca é repetido automaticamente.
+- [x] UI de configuração: adicionar provedor, colar chave, testar, listar
       modelos com badges e **origem da capacidade** visível.
-- [ ] Fixtures SSE gravadas para cada provedor em `Lumen.Tests/Fixtures/`.
+- [x] Fixtures SSE/NDJSON para cada provedor em `Lumen.Tests/Fixtures/`.
+
+**Fase concluída com limites aceitos pelo usuário (2026-11-07).** O usuário
+testou com chave real na UI e confirmou que a listagem e o chat funcionam;
+dispensou explicitamente o AC de Ollama local (B7) e aceitou o inventory Azure
+manual (B8) ao autorizar o avanço para a Fase 3. O agente não fez nenhuma chamada
+paga: toda a verificação automatizada usou mocks/fixtures e WebView2 real com
+fixture loopback. Probe mínimo não confirma suporte por HTTP 200: retorna
+inconclusivo, sem chamada extra. Consentimento, limite cinco, deduplicação,
+cache negativo conservador e cancelamento foram exercitados com fixtures.
 
 ### AC
 

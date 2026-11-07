@@ -1,0 +1,64 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+TestResults/
+coverage*/
+*.binlog
+
+# Visual Studio / VSIX
+.vs/
+*.vsix
+*.vsixmanifest.bak
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.cache
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+*.pdb
+!build/**/*.pdb
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/build/
+
+# Rider / VS Code
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# Secrets — never commit keys or local provider config
+*.pfx
+*.snk
+!build/**/*.snk
+.env
+.env.*
+appsettings.Local.json
+secrets.json
+*.credentials.json
+providers.local.json
+
+# OS noise
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Agent scratch space
+.scratch/
+tmp/
+*.tmp

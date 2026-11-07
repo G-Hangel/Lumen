@@ -1,6 +1,6 @@
 # ARQUITETURA — Lumen
 
-Desenho técnico e fatos **verificados** em 2026-11-06.
+Desenho técnico de 2026-11-06, atualizado com evidências da Fase 0 em **2026-11-07**.
 Fatos locais (inspeção da máquina) têm a confiança mais alta. Fatos de
 documentação/pesquisa estão com URL. O que falta confirmar está `A CONFIRMAR`.
 
@@ -25,16 +25,14 @@ documentação/pesquisa estão com URL. O que falta confirmar está `A CONFIRMAR
 | **`gh` CLI ausente** | `command not found` → remote GitHub é ação manual do usuário |
 | Workload `Microsoft.VisualStudio.Workload.VisualStudioExtension` **INSTALADO** | `vswhere -prerelease -all -requires …` → `C:\Program Files\Microsoft Visual Studio\18\Insiders`; componentes: `VSSDK` e `VisualStudioExtension` |
 | Pacotes 18.x do SDK moderno **não estão no nuget.org** nem no fallback local | fallback `…\Shared\NuGetPackages` só tem `microsoft.visualstudio.javascript.sdk`; nenhum `.nupkg` de Extensibility no install |
-| **Nenhuma hive experimental** ainda | `%LocalAppData%\Microsoft\VisualStudio\*Exp*` não existe |
+| Hive experimental criada em **2026-11-07** | `%LocalAppData%\Microsoft\VisualStudio\18.0_25e762c6Exp`; resetada com `CreateExpInstance /Reset /VSInstance=18.0_25e762c6` e reinstalada, com SHA-256 conferido |
 | Disco `C:` com **19 GB livres** (93% usado) | `df -h /c` |
 | `devenv.exe` **não estava rodando** no momento da instalação do workload | `tasklist` |
 
-> **Ação em andamento:** o usuário autorizou instalar o workload
-> `Microsoft.VisualStudio.Workload.VisualStudioExtension` na instância Insiders.
-> Comando disparado:
-> `vs_installer.exe modify --installPath "C:\Program Files\Microsoft Visual Studio\18\Insiders" --add Microsoft.VisualStudio.Workload.VisualStudioExtension --passive --norestart --wait`
-> **Não é pré-requisito do caminho escolhido** (VSSDK clássico restaura do
-> nuget.org), mas dá tooling de VSIX, templates e debug F5→Exp.
+> **Workload instalado**, confirmado pelo `vswhere`. Não é pré-requisito do
+> caminho escolhido (VSSDK clássico restaura do nuget.org), mas fornece tooling
+> de VSIX e templates. O antigo comando com `--wait` falhou; esse switch não
+> existe no installer local. Evidência em `BLOQUEIOS.md` R1 e B1.
 
 ---
 
@@ -76,17 +74,26 @@ Fatos que sustentam a decisão:
 
 | Projeto | TFM | Pacotes |
 | --- | --- | --- |
-| `Lumen.Core` | `netstandard2.0` | `System.Text.Json`, `System.Collections.Immutable` |
+| `Lumen.Core` | `netstandard2.0` | `System.Text.Json` **10.0.14** na Fase 0 |
 | `Lumen.Providers` | `netstandard2.0` | `System.Text.Json` |
 | `Lumen.Agent` | `netstandard2.0` | — |
 | `Lumen.Tools` | `net48` | refs do VS (editor, solution, shell) |
-| `Lumen.Vsix` | **`net48`** | `Microsoft.VisualStudio.SDK` (17.14.40265), `Microsoft.VSSDK.BuildTools` (18.9.820), **`Microsoft.Web.WebView2`** |
-| `Lumen.Tests` | `net10.0` | xUnit, Moq/NSubstitute; referencia as libs netstandard2.0 |
+| `Lumen.Vsix` | **`net48`** | `Microsoft.VisualStudio.SDK` **17.14.40265**, `Microsoft.VSSDK.BuildTools` **18.5.38461**, `Microsoft.Web.WebView2` **1.0.4314.35**, `Microsoft.NETFramework.ReferenceAssemblies` **1.0.3** |
+| `Lumen.Tests` | `net10.0` | xUnit **2.9.3**; referencia `Lumen.Core`, sem assemblies do VS |
 
-`A CONFIRMAR` na Fase 0: versões exatas que restauram e compilam juntas.
-Os números acima são os mais recentes verificados na pesquisa; confirme no
-nuget.org antes de fixar. `Microsoft.VSSDK.BuildTools` 17.14.2120 é a versão
-comprovada em uso pelo vs-agentic.
+**Confirmado em 2026-11-07:** a combinação acima restaura e gera VSIX via
+`dotnet build -c Release` no SDK **11.0.100-rc.3.26522.148**, com zero erros e
+zero avisos. Probe WPF `net48` + ReferenceAssemblies 1.0.3: 49,12 s, zero erros/
+avisos. Não foi necessário instalar SDK 10. `BuildTools` 18.9.820 está **unlisted**;
+foi usada 18.5.38461, do template SDK-style oficial, em vez de adotá-la.
+`Lumen.Core` usa System.Text.Json **10.0.14**; testes: Microsoft.NET.Test.Sdk
+**18.11.0**, xUnit **2.9.3**, runner Visual Studio **4.0.1**. Fontes e detalhes
+reproduzíveis em `PESQUISA.md` §2.7 e `COMANDOS.md`.
+
+O VSSDK exclui algumas DLLs de nomes `System.*` por padrão; o target
+`IncludeRuntimeDependencies` empacota as dependências CopyLocal de runtime.
+O teste de pacote falhou com `System.Text.Json.dll` ausente antes da correção.
+Nenhuma assembly do SDK do VS é distribuída (`ExcludeAssets="runtime"`).
 
 **Regra:** `Core`, `Providers` e `Agent` **não referenciam nenhuma assembly do
 Visual Studio**. É isso que permite testá-los fora do VS, em .NET 10, com
@@ -126,7 +133,11 @@ Como o pacote é in-process, **todo** trabalho bloqueante sai da UI thread:
 
 - HTTP, streaming, parsing, loop de agente: `async`/`await` + `Task.Run`.
 - Acesso a serviços do VS: `ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync`.
-- Atualizar a UI: `PostWebMessageAsJson` (thread-safe) ou dispatcher do WPF.
+- Atualizar a UI: `PostWebMessageAsJson` **na thread UI/STA criadora** via JTF ou
+  dispatcher do WPF. A API **não é thread-safe**. `WebMessageReceived` também
+  chega nessa thread; mover trabalho pesado explicitamente para background.
+  Correção verificada em 2026-11-07:
+  <https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model>.
 - **Nunca** `.Result` / `.Wait()` / `.GetAwaiter().GetResult()` em código que
   possa rodar na UI thread — deadlock clássico do VS.
 - Analyzer de threading nos testes de revisão; `Microsoft.VisualStudio.Threading`
@@ -185,7 +196,7 @@ wwwroot/          (em Lumen.Vsix)  chat HTML/CSS/JS, markdown-it, highlight.js,
 
 ```
 usuário digita no WebView2
-  -> postMessage -> C# (fora da UI thread)
+  -> postMessage -> C# (callback na UI thread; trabalho pesado delegado ao background)
   -> ContextBuilder (seleção, @arquivos, skills ativas, system prompt do modo)
   -> IChatProvider.StreamAsync(model, messages, tools, reasoningIntent)
   -> normaliza para StreamEvent
@@ -318,35 +329,35 @@ Inspecionado em
 
 ## 4. Build, debug e install
 
+Comandos completos e resultados em `COMANDOS.md`. Ciclo testado em 2026-11-07:
+
 ```bash
-# Build (funciona sem workload — pacotes do nuget.org)
-dotnet build -c Release
-
-# MSBuild do VS, se necessário
-"/c/Program Files/Microsoft Visual Studio/18/Insiders/MSBuild/Current/Bin/MSBuild.exe"
-
-# Criar/resetar a hive experimental
-CreateExpInstance.exe /Reset /VSInstance=18.0 /RootSuffix=Exp
-# hive resultante: %LocalAppData%\Microsoft\VisualStudio\18.0_25e762c6Exp
-
-# Abrir a experimental instance
-"/c/Program Files/Microsoft Visual Studio/18/Insiders/Common7/IDE/devenv.exe" /RootSuffix Exp
-
-# Instalar / desinstalar silenciosamente (use o VSIXInstaller DESTA instância)
-"…/18/Insiders/Common7/IDE/VSIXInstaller.exe" /q /a "<caminho>.vsix"
-"…/18/Insiders/Common7/IDE/VSIXInstaller.exe" /q /u:<IdentityId>
+npm run build:ui
+dotnet build Lumen.sln -c Release
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
 ```
 
-**Gotchas verificados na pesquisa** (fonte: vs-agentic CONTRIBUTING):
+O script exige a Exp fechada, desinstala somente Lumen, instala, executa
+`devenv /RootSuffix Exp /UpdateConfiguration` e compara SHA-256 com o VSIX.
+**A atualização do cache foi necessária:** antes dela, o VSIX estava instalado
+mas o menu não aparecia. Depois, Exibir → Lumen abriu e a ponte respondeu.
+Nunca usa `/a`, nunca modifica o perfil principal, nunca reseta uma hive.
 
-- Mesma `Id` + mesma `Version` → instalação **silenciosamente ignorada**.
-  Desinstale antes, ou incremente a versão.
-- `obj\...\extension.vsixmanifest` **obsoleto** pode ser empacotado no lugar do
-  novo. Limpar `obj/` entre mudanças de manifesto.
-- Regressão de quiet mode reportada no 17.14.27:
-  <https://developercommunity.microsoft.com/t/11097999>
-- F5 no VS deploya na Exp (`VsixDeployOnDebug=true`; `DeployExtension` está
-  deprecated).
+**Gotchas verificados localmente:**
+
+- Mesma Id+Version **atualizou/reparou** no instalador 18.12, contrariando a
+  hipótese anterior. O script mantém uninstall-first e verificação de conteúdo.
+- `CreateExpInstance /Reset /VSInstance=18.0 /RootSuffix=Exp` reseta `18.0Exp`,
+  **não** a hive real `18.0_25e762c6Exp` — e ainda retorna exit 0. O parâmetro é o
+  prefixo da hive: `/VSInstance=18.0_25e762c6` é o comando válido, testado em
+  2026-11-07 (25 entradas/156 arquivos → 1/6, zero Lumen). Ver `COMANDOS.md`.
+  O binário fica em `VSSDK\VisualStudioIntegration\Tools\Bin`, não em `Common7\IDE`.
+- `/logFile` recebe nome de arquivo e grava em `%TEMP%`; `/instanceIds` é plural.
+- Os testes verificam o manifesto efetivamente empacotado, dependências e assets;
+  não basta conferir os fontes. `dotnet clean` + build também foi validado.
+- F5 está configurado (`VsixDeployOnDebug=true`), mas o ciclo exercitado foi CLI
+  e abertura da janela pelo menu, não depuração F5.
 
 **Manifesto VSIX clássico para VS 2026:** o VS 2026 **ignora upper bounds**.
 Use `Version="[18.0,)"` para 2026-only, ou `[17.0,)` para incluir 2022.

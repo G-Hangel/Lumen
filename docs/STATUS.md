@@ -1,117 +1,95 @@
 # STATUS — Lumen
 
-Atualize este arquivo ao concluir cada fase. É a primeira coisa que o próximo
-agente lê para saber onde parou.
+Atualizado em **2026-11-07**.
 
 ## Estado atual
 
-**Planejamento concluído. Implementação NÃO iniciada.**
+**Fase 0 concluída.** B6 resolvido em 2026-11-07 com autorização explícita do
+usuário: o reset da hive de teste foi executado, verificado e documentado, e o
+ciclo completo foi re-exercitado na hive nova. Nenhuma fase posterior foi
+iniciada; nenhum remote nem push foi realizado.
 
 | Fase | Estado |
 | --- | --- |
-| Planejamento (pesquisa, arquitetura, plano) | **concluído** |
-| Fase 0 — Spike de toolchain e UI | não iniciada |
-| Fase 1 — Núcleo de domínio | não iniciada |
-| Fase 2 — BYOK | não iniciada |
-| Fase 3 — UI do chat | não iniciada |
-| Fase 4 — Ferramentas e segurança | não iniciada |
-| Fase 5 — Loop do agente e modos | não iniciada |
-| Fase 6 — Skills | não iniciada |
-| Fase 7 — Personalização visual | não iniciada |
-| Fase 8 — Hardening e empacotamento | não iniciada |
+| Planejamento | concluído |
+| Fase 0 — Spike de toolchain e UI | **concluído** |
+| Fases 1–8 | não iniciadas |
+
+## Evidências concluídas
+
+- Probe `net48` + WPF no SDK .NET 11 RC: zero erros/avisos, 49,12 s.
+- Build **limpo** Release: zero erros/avisos, VSIX gerado em
+  `src/Lumen.Vsix/bin/Release/net48/Lumen.Vsix.vsix`.
+- **35 testes C#** e **17 testes JavaScript** passaram, com controles negativos.
+- Instalação/desinstalação somente na Exp `18.0_25e762c6Exp`: exit 0 e
+  comparação SHA-256 de todos os arquivos instaláveis.
+- Exibir → Lumen abriu a tool window no VS Community 18.12 Insiders.
+  Foi necessário atualizar o cache com `/RootSuffix Exp /UpdateConfiguration`;
+  o script de deploy agora faz isso automaticamente.
+- WebView2 real: handshake C#, eco multilinha, markdown, highlight C#, diff
+  com duas colunas, 500 mensagens virtualizadas; botão Final alcançou a nº 500.
+- Composer cresceu de 40 para 120 px. Layouts emulados no WebView2
+  203×422, 320×320, 375×700 e 900×900 ficaram sem overflow horizontal/sobreposição.
+  O controle negativo forçou largura mínima incorreta e foi detectado.
+- Mensagem inválida e Unicode isolado foram rejeitados pelo C# com
+  `invalid_message`; ping posterior confirmou recuperação sem crash.
+- Reload com cache desabilitado e rede offline carregou 10 assets, todos de
+  `https://lumen.local`, e completou handshake real. Sem exceções JS observadas.
+- Troca **Escuro → Claro no menu do VS** alterou o fundo de `#282828` para
+  `#F9F9F9`, com `theme.changed`, mesmo `performance.timeOrigin`, sem reload.
+  Essa evidência é da hive **anterior ao reset** e não foi repetida: depende de
+  troca manual de tema, não de estado da hive. Todo o resto foi revalidado.
+- Cópia com range `[99.0,)` recusada pelo instalador real (exit 2003).
+  Verificador de instalação rejeitou asset adulterado.
+- Revisão detectou Unicode inválido aceito pelo parser mas rejeitado ao
+  decodificar string; os testes falharam antes e passaram após a correção.
+- **Reset da hive validado (B6).** `CreateExpInstance.exe /Reset
+  /VSInstance=18.0_25e762c6 /RootSuffix=Exp` reduziu a hive de 25 entradas/156
+  arquivos para 1/6, sem nenhum arquivo "lumen". Controle negativo:
+  `/VSInstance=18.0` deu exit **0** e resetou a hive errada, deixando a real
+  intacta com Lumen instalado — a verificação por contagem de arquivos detectou.
+- **Ciclo completo re-executado na hive resetada:** build Release 0 erros/0 avisos,
+  35 testes C# + 17 JS verdes, install verificado por SHA-256 em
+  `Extensions\nrqagayt.p4k`, **Exibir → Lumen** abriu a tool window,
+  `verify-webview.mjs` exit 0 com os 10 requests em `https://lumen.local`,
+  `exceptions: []` e `layoutNegative: true`, e `Verify` exit 0 após fechar o VS.
+- **Controle negativo do detector de menu:** com Lumen desinstalado,
+  `scripts/open-experimental.ps1 -Action Open` falhou com exit 1 e
+  `The Lumen command is missing from the Exibir menu`; após reinstalar, exit 0.
+
+## Evidências locais (ignoradas pelo Git)
+
+- `artifacts/phase0.binlog`, `artifacts/net48-probe.binlog`.
+- `artifacts/tests/phase0.trx`.
+- `artifacts/webview-verification.json`, `artifacts/webview-offline.png`.
+- `artifacts/webview-theme.json`.
+- `artifacts/vs-activity.xml`, `artifacts/vs-update.xml` e logs `lumen-*.log`.
+
+O preview em navegador nunca simula conexão C#: sem host, enviar fica
+indisponível. Teste de produto foi feito no WebView2 do VS, não apenas no preview.
+Nenhuma API de IA, credencial ou crédito pago foi utilizado.
+
+Estado deixado nesta máquina: hive `18.0_25e762c6Exp` resetada e com Lumen
+instalado e verificado em `Extensions\nrqagayt.p4k`; nenhuma instância Exp aberta;
+nenhum servidor de preview rodando; perfil principal do VS intocado.
 
 ## Próximo passo exato
 
-Abrir `docs/PLANO.md` e executar a **Fase 0**. Ela é bloqueante: prova o ciclo
-restore → build → instalar → abrir no VS → WebView2 renderizando, antes de
-qualquer feature.
+**Fase 1 — Domínio e contratos** (`PLANO.md`): tipos `Conversation`, `Message`,
+`MessageRole`, `ContentPart`, `ModelInfo`, `ModelCapabilities`, `ReasoningIntent`,
+`StreamEvent`, `ToolSpec`/`ToolResult`/`ToolInvocation`, `ChatMode`, e
+serialização round-trip coberta por testes em `Lumen.Core`. Nenhum provedor,
+nenhuma chamada de rede e nenhuma credencial nesta fase.
 
-Primeira tarefa da Fase 0: confirmar no nuget.org as versões de
-`Microsoft.VisualStudio.SDK`, `Microsoft.VSSDK.BuildTools`,
-`Microsoft.Web.WebView2` e `Microsoft.NETFramework.ReferenceAssemblies` que
-restauram e compilam juntas em `net48`.
+Não iniciar a Fase 1 sem o commit da Fase 0 estar feito.
 
-# STATUS — Lumen
+## Decisões e limites
 
-Atualize este arquivo ao concluir cada fase. É a primeira coisa que o próximo
-agente lê para saber onde parou.
+Lumen é chat próprio independente, VSSDK clássico `net48` + WPF/WebView2.
+Aprovações, ausência de dependência de Copilot e política de credenciais continuam
+as de `AGENTS.md`. A autorização desta sessão cobriu comandos locais, caches e o
+reset da hive **experimental**; nunca cobriu alterar o perfil principal do VS,
+criar remote, dar push ou usar APIs pagas.
 
-## Estado atual
-
-**Planejamento concluído. Implementação NÃO iniciada.**
-
-| Fase | Estado |
-| --- | --- |
-| Planejamento (pesquisa, arquitetura, plano) | **concluído** |
-| Fase 0 — Spike de toolchain e UI | não iniciada |
-| Fase 1 — Núcleo de domínio | não iniciada |
-| Fase 2 — BYOK | não iniciada |
-| Fase 3 — UI do chat | não iniciada |
-| Fase 4 — Ferramentas e segurança | não iniciada |
-| Fase 5 — Loop do agente e modos | não iniciada |
-| Fase 6 — Skills | não iniciada |
-| Fase 7 — Personalização visual | não iniciada |
-| Fase 8 — Hardening e empacotamento | não iniciada |
-
-## Próximo passo exato
-
-Abrir `docs/PLANO.md` e executar a **Fase 0**. Ela é bloqueante: prova o ciclo
-restore → build → instalar → abrir no VS → WebView2 renderizando, antes de
-qualquer feature.
-
-Primeira tarefa da Fase 0: confirmar no nuget.org as versões de
-`Microsoft.VisualStudio.SDK`, `Microsoft.VSSDK.BuildTools`,
-`Microsoft.Web.WebView2` e `Microsoft.NETFramework.ReferenceAssemblies` que
-restauram e compilam juntas em `net48`.
-
-## O que já foi feito no ambiente
-
-- Repositório git inicializado em `main` (sem remote).
-- Documentos de planejamento escritos e **commitados** (veja `git log`).
-- **Probe de build real:** .NET SDK 11.0.100-rc.3 compila `net8.0-windows` +
-  `UseWPF=true` com 0 erros / 0 avisos em 8,77 s. Probe removida depois.
-  → falta repetir o probe para `net48` (tarefa da Fase 0).
-- Inspeção completa do VS 18 Insiders: runtime, MSBuild, VSIXInstaller,
-  WebView2, contratos do Copilot, manifesto de extensão real.
-- Duas pesquisas externas concluídas (SDK de extensibilidade e APIs BYOK),
-  consolidadas em `docs/PESQUISA.md` com fontes.
-- **Workload `Microsoft.VisualStudio.Workload.VisualStudioExtension` instalado**
-  na instância Insiders (verificado por `vswhere`).
-
-## Decisões do usuário registradas
-
-1. Estratégia: **chat próprio independente** (não estender o Copilot nativo).
-2. Nome: **Lumen**.
-3. Aprovação no Agent: **auto-editar dentro da solução com diff + undo;
-   confirmar comandos e escritas fora do workspace**.
-4. Modelo de extensão: **VSSDK net48 + WebView2** (escolhido após a pesquisa
-   mostrar as restrições do Remote UI e a ausência dos pacotes 18.x no nuget.org).
-5. Workload de desenvolvimento de extensão: **autorizado e instalado**.
-
-## Como retomar
-
-```bash
-cd "C:/Users/Hanjel/Documents/Extensão"
-git log --oneline -5
-```
-
-Ler `AGENTS.md` → `docs/PLANO.md` → este arquivo → `docs/BLOQUEIOS.md`.
-
-## Decisões do usuário registradas
-
-1. Estratégia: **chat próprio independente** (não estender o Copilot nativo).
-2. Nome: **Lumen**.
-3. Aprovação no Agent: **auto-editar dentro da solução com diff + undo;
-   confirmar comandos e escritas fora do workspace**.
-4. Modelo de extensão: **VSSDK net48 + WebView2** (escolhido após a pesquisa
-   mostrar as restrições do Remote UI e a ausência dos pacotes 18.x no nuget.org).
-5. Workload de desenvolvimento de extensão: **autorizado instalar**.
-
-## Como retomar
-
-```bash
-cd "C:/Users/Hanjel/Documents/Extensão"
-git log --oneline -5
-```
-
-Ler `AGENTS.md` → `docs/PLANO.md` → este arquivo → `docs/BLOQUEIOS.md`.
+Para retomar: `AGENTS.md` → `PLANO.md` → `ARQUITETURA.md` → `PESQUISA.md` →
+este arquivo e `BLOQUEIOS.md`; comandos reproduzíveis em `COMANDOS.md`.

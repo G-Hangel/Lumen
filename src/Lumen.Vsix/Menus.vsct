@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+  <Commands package="guidLumenPackage">
+    <Groups>
+      <Group guid="guidLumenCommandSet" id="LumenGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_VIEW" />
+      </Group>
+    </Groups>
+    <Buttons>
+      <Button guid="guidLumenCommandSet" id="OpenLumen" priority="0x0100" type="Button">
+        <Parent guid="guidLumenCommandSet" id="LumenGroup" />
+        <Strings>
+          <ButtonText>Lumen</ButtonText>
+          <CommandName>Lumen.Open</CommandName>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+  <Symbols>
+    <GuidSymbol name="guidLumenPackage" value="{69e1a944-246f-4705-b303-32018d4a8df5}" />
+    <GuidSymbol name="guidLumenCommandSet" value="{96a71c4a-f4cb-4711-80de-38e40b2e6ad8}">
+      <IDSymbol name="LumenGroup" value="0x1020" />
+      <IDSymbol name="OpenLumen" value="0x0100" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

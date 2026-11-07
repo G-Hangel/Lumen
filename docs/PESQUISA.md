@@ -324,7 +324,7 @@ Fontes machine-readable e sem chave, ideais para validação/codegen no build:
 | | VSSDK clássico (in-process) | VisualStudio.Extensibility (out-of-process) |
 | --- | --- | --- |
 | TFM no VS 2026 | `net472` / `net48` | **`net10.0-windows8.0`** (VS 2022: .NET 8) |
-| Pacotes | `Microsoft.VisualStudio.SDK` **17.14.40265**, `Microsoft.VSSDK.BuildTools` **18.9.820** — **no nuget.org** | `Microsoft.VisualStudio.Extensibility.Sdk` **18.12.1488** + `.Build` **18.12.1487** — **NÃO no nuget.org** (nuget.org só tem 17.14.x); vêm com o workload |
+| Pacotes | `Microsoft.VisualStudio.SDK` **17.14.40265**, `Microsoft.VSSDK.BuildTools` **18.5.38461** — **no nuget.org, combinação testada na Fase 0** | `Microsoft.VisualStudio.Extensibility.Sdk` **18.12.1488** + `.Build` **18.12.1487** — **NÃO no nuget.org** (nuget.org só tem 17.14.x); vêm com o workload |
 | Project SDK | `Microsoft.NET.Sdk` clássico | `Microsoft.VisualStudio.Sdk.Build` com `<TargetFrameworks>vs18_11</TargetFrameworks>` |
 | UI | WPF/WebView2 arbitrários, **code-behind completo** | **Remote UI**: MVVM-only |
 | Suporte no 18.x | **total** | total, exige 18.12+ se buildado com pacote 18.12 |
@@ -436,22 +436,27 @@ Fontes:
 
 - Build: `dotnet build -c Release` (VSIX em `bin/<config>/`) ou build no VS.
   F5 deploya na Exp (`VsixDeployOnDebug=true`; `DeployExtension` deprecated).
-- Debug: `devenv.exe /RootSuffix Exp`.
-  Reset: `CreateExpInstance.exe /Reset /VSInstance=18.0 /RootSuffix=Exp`.
-  Hive: `%LocalAppData%\Microsoft\VisualStudio\18.0_<instanceId>Exp`
-  — nesta máquina o instanceId é **`25e762c6`** (verificado); nenhuma hive Exp
-  existe ainda.
-- Install: `Common7\IDE\VSIXInstaller.exe /q /a <file>.vsix` **daquela instância**;
-  uninstall `/q /u:<IdentityId>`.
+- Debug: `devenv.exe /RootSuffix Exp`, testado na hive
+  `%LocalAppData%\Microsoft\VisualStudio\18.0_25e762c6Exp` em 2026-11-07.
+  Reset testado com `CreateExpInstance /Reset /VSInstance=18.0_25e762c6
+  /RootSuffix=Exp` — o parâmetro é o **prefixo da hive**, e `18.0` reseta a hive
+  errada com exit 0. Ver `COMANDOS.md` e `BLOQUEIOS.md` B6 (resolvido).
+- Install: VSIXInstaller **daquela instância**, com
+  `/q /rootSuffix:Exp /instanceIds:25e762c6 <file>.vsix`;
+  uninstall com os mesmos switches e `/uninstall:<IdentityId>`. **Não usar `/a`**.
+  Executar `devenv /RootSuffix Exp /UpdateConfiguration` após o deploy para
+  atualizar o cache de menus. Comandos testados em `COMANDOS.md`.
 - **Manifesto:** VS 2026 ignora upper bounds → `Version="[17.0,)"` (2022+2026) ou
   `"[18.0,)"` (só 2026); `ProductArchitecture=amd64`.
 - **Extensões pure out-of-process NÃO têm `extension.vsixmanifest`** — metadados
   vão em código e geram `extension.json`. O Lumen é clássico, então **tem**
   vsixmanifest normal.
 
-### Gotchas de install (fonte: vs-agentic CONTRIBUTING)
+### Gotchas de install (pesquisa anterior corrigida pelo teste local)
 
-- Mesma `Id`+`Version` → instalação **silenciosamente ignorada**. Desinstale antes.
+- Mesma `Id`+`Version` → **atualizada/reparada** no instalador 18.12 local.
+  A hipótese de instalação ignorada não se confirmou; ver §2.7.
+  O script desinstala antes e exige comparação SHA-256.
 - `obj\...\extension.vsixmanifest` **obsoleto** pode ser empacotado. Limpe `obj/`.
 - Regressão de quiet mode no 17.14.27:
   <https://developercommunity.microsoft.com/t/11097999>
@@ -471,14 +476,94 @@ retornou 87 e 5007.
 Forma correta: `.ps1` com `-ArgumentList` recebendo **uma string única
 pré-quotada** + `-Verb RunAs -Wait -PassThru`. Ver o apêndice de `PLANO.md`.
 
-## 2.6 Re-verificar no build
+## 2.6 Situação das verificações
 
-1. Versões de `Microsoft.VisualStudio.SDK`, `Microsoft.VSSDK.BuildTools` e
-   `Microsoft.Web.WebView2` que restauram juntas e compilam em `net48` com o
-   SDK .NET 11 RC. Fallback comprovado: BuildTools **17.14.2120**.
-2. Se `Microsoft.NETFramework.ReferenceAssemblies` é suficiente para buildar
-   `net48` sem o targeting pack instalado.
-3. Flags exatas de `VSIXInstaller` para atingir a instância Insiders
-   (`/instanceId`, `/sku`, `/version`).
-4. Se a Microsoft publicou API de provider de modelo para o chat nativo.
-5. Mecanismo de registro de servidor MCP por extensão.
+As dúvidas de versões, restore `net48`, flags do instalador e o reset da hive
+foram resolvidas pelos testes abaixo (B6 fechado em 2026-11-07).
+APIs futuras de provider do chat nativo e registro MCP não foram reinvestigadas:
+não são dependências do Lumen nem tarefas desta fase.
+
+## 2.7 Evidência da Fase 0 — 2026-11-07
+
+Pacotes restaurados e compilados juntos no SDK .NET **11.0.100-rc.3.26522.148**:
+
+| Pacote | Versão | Fonte |
+| --- | --- | --- |
+| Microsoft.VisualStudio.SDK | 17.14.40265 | <https://www.nuget.org/packages/Microsoft.VisualStudio.SDK/17.14.40265> |
+| Microsoft.VSSDK.BuildTools | 18.5.38461 | <https://www.nuget.org/packages/Microsoft.VSSDK.BuildTools/18.5.38461> |
+| Microsoft.Web.WebView2 | 1.0.4314.35 | <https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4314.35> |
+| Microsoft.NETFramework.ReferenceAssemblies | 1.0.3 | <https://www.nuget.org/packages/Microsoft.NETFramework.ReferenceAssemblies/1.0.3> |
+
+`BuildTools` **18.9.820 está unlisted**, não escolhido. 18.5.38461 é a versão do
+[template SDK-style oficial](https://devblogs.microsoft.com/visualstudio/sdk-style-support-for-extension-projects/),
+com `VSSDKBuildToolsAutoSetup=true`. O build local provou `dotnet build` além
+da compilação pelo IDE descrita no artigo. Fallback 17.14.2120 não foi necessário.
+Probe `net48` + WPF + ReferenceAssemblies: **zero erros/avisos**, 49,12 s.
+Build Release da solução: **zero erros/avisos**, gera `Lumen.Vsix.vsix`.
+
+NuGet de teste/serialização: System.Text.Json 10.0.14; Microsoft.NET.Test.Sdk
+18.11.0; xUnit 2.9.3; xunit.runner.visualstudio 4.0.1. Versões confirmadas nos
+índices `https://api.nuget.org/v3-flatcontainer/<id>/index.json` e por restore.
+UI npm: markdown-it 15.0.3, highlight.js 11.12.0, diff2html 3.4.56,
+esbuild 0.28.2; versões e integridades fixadas em `package-lock.json`; bundle
+local com licenças em `wwwroot/vendor/`.
+
+**Threading corrigido:** `PostWebMessageAsJson` e callbacks do WebView2 exigem a
+thread UI/STA, não são livres de afinidade. Fonte:
+<https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/threading-model>.
+Mapping usa pasta absoluta e `CoreWebView2HostResourceAccessKind.Deny`.
+A Microsoft recomenda evitar `.local` por possível atraso; o spike mantém
+`lumen.local` do plano para validar empiricamente.
+Fonte: <https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2.setvirtualhostnametofoldermapping>.
+
+**Instalador local 18.12.1477:** ajuda recuperada no log de `VSIXInstaller /?`
+(`%TEMP%/dd_VSIXInstaller_20261107102352_5a08.log:9–70`). Flags corretas:
+`/rootSuffix:Exp /instanceIds:25e762c6` (plural), `/skuName` e `/skuVersion`.
+`/logFile` aceita **nome**, não caminho absoluto; o arquivo fica em `%TEMP%`.
+`/a` instala administrativamente: não usar para a hive Exp. Instalação efetiva
+confirmada sob `%LocalAppData%/Microsoft/VisualStudio/18.0_25e762c6Exp/Extensions`.
+
+**Correção do gotcha de mesma versão:** nesta versão, reinstalar mesma Id e
+Version **atualizou** o conteúdo (exit 0), não ignorou. Evidência:
+`artifacts/lumen-same-version.log:725,1071–1134`, remoção da pasta antiga e
+instalação em pasta nova. O deploy continua desinstalando antes e verificando
+SHA-256 dos arquivos instaláveis; `[Content_Types].xml` é metadado OPC, não
+arquivo instalado. `/norepair` desabilita reparo segundo a ajuda local.
+
+**Controle de range:** cópia de teste com lower bound `[99.0,)` foi recusada
+pelo instalador real no VS 18.12, exit **2003**, `NoApplicableSKUsException`.
+Evidência: `artifacts/lumen-unsupported.log:26–36`. Não exige instalar outro VS.
+
+**Hive e reset validado:** `CreateExpInstance` fica em
+`VSSDK\VisualStudioIntegration\Tools\Bin`, não em `Common7\IDE`; flags por `/?`:
+`/Create`, `/Reset`, `/Clean`. **`/VSInstance` é o prefixo da hive, não a
+versão.** `/Reset /VSInstance=18.0` retornou exit **0** e apagou `18.0Exp`
+(hive não usada), deixando `18.0_25e762c6Exp` intacta com Lumen instalado — esse
+é o controle negativo. `/Reset /VSInstance=18.0_25e762c6` apagou a hive correta:
+25 entradas/156 arquivos → 1/6, `find -iname "*lumen*"` vazio, e copiou
+`Extensions` de `18.0_25e762c6`. No Git Bash, `/Reset` vira
+`C:/Program Files/Git/Reset` sem `MSYS_NO_PATHCONV=1`.
+
+**Ciclo re-executado na hive resetada:** build Release 0 erros/0 avisos, 35 C# +
+17 JS verdes, install com SHA-256 em `Extensions\nrqagayt.p4k`, Exibir → Lumen
+abriu a tool window, `verify-webview.mjs` exit 0 com 10 requests todos em
+`https://lumen.local`, `exceptions: []`, `layoutNegative: true`, e `Verify`
+exit 0. Com Lumen **desinstalado**, `scripts/open-experimental.ps1 -Action Open`
+falhou com exit 1 e `The Lumen command is missing from the Exibir menu` —
+controle negativo do detector de menu.
+
+**Execução no VS confirmada:** após `/RootSuffix Exp /UpdateConfiguration`,
+Exibir → Lumen abriu a tool window e o handshake C# ficou conectado.
+A validação real em `scripts/verify-webview.mjs` comprovou eco, rejeição de
+mensagens inválidas/Unicode, recuperação e reload offline sem cache, com todos
+os requests restritos a `https://lumen.local`.
+
+35 testes C# e 17 testes JS passaram. Surrogates isolados primeiro provocaram
+2 falhas: `JsonDocument` valida strings tardiamente e lança
+`InvalidOperationException`; agora o protocolo retorna erro controlado.
+O teste real também rejeitou uma regressão forçada de largura mínima.
+A troca Escuro → Claro pelo menu do VS alterou o CSS sem recarregar o documento
+(`artifacts/webview-theme.json`). Layouts 203×422, 320×320, 375×700 e 900×900
+foram exercitados no renderer real. Evidências em `STATUS.md` e comandos em
+`COMANDOS.md`. A troca de tema foi medida na hive anterior ao reset e não
+repetida; todo o restante foi revalidado na hive nova. Fase 0 encerrada.

@@ -8,38 +8,11 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
-### B1 — Workload de desenvolvimento de extensão: **RESOLVIDO**
-
-**Estado:** instalado com sucesso.
-
-O usuário autorizou instalar
-`Microsoft.VisualStudio.Workload.VisualStudioExtension` na instância Insiders.
-
-**Verificação:**
-```bash
-vswhere -prerelease -all \
-  -requires Microsoft.VisualStudio.Workload.VisualStudioExtension \
-  -property installationPath
-# → C:\Program Files\Microsoft Visual Studio\18\Insiders
-```
-
-**Log do installer:** `%TEMP%\dd_installer_20261106215357.log` —
-`Exit Code: 0` (sucesso). Houve warnings de rede ao tentar atualizar os feeds
-(`aka.ms/vs/channels`, `aka.ms/vs/installer/latest/feed`) — **não fatais**.
-
-**Componentes instalados:**
-- `Microsoft.VisualStudio.Workload.VisualStudioExtension`
-- `Microsoft.VisualStudio.Component.VSSDK`
-
-**Nota:** o script PowerShell reportou `SETUP_EXIT=-2146233029` (0x8013153B),
-mas o installer em si retornou **0** e o vswhere confirma a instalação.
-Isso foi um artefato de COM interop com o processo elevado.
-
 ### B2 — Disco com pouco espaço
 
-`C:` tinha **19 GB livres** (93% usado) antes da instalação do workload; caiu
-para **17 GB** durante o download. Builds de VSIX, cache NuGet e a hive
-experimental consomem espaço.
+`C:` tinha **19 GB livres** antes do workload; `df -h /c` em 2026-11-07 mostrou
+**16 GB livres**, 94% ocupado. Builds de VSIX, cache NuGet e a hive experimental
+consomem espaço, mas o build limpo da Fase 0 passou.
 
 **Mitigação:** antes de build grande, conferir `df -h /c`. Se necessário, limpar
 `bin/`, `obj/` e o cache NuGet (`dotnet nuget locals all --clear`). Não apagar
@@ -61,18 +34,59 @@ automaticamente.
 **Mitigação:** o repositório é **local**. Criar remote e dar push é decisão e
 ação do usuário (`AGENTS.md` §6). Não tentar contornar.
 
-### B5 — Versões de pacotes NuGet não fixadas
-
-As versões em `ARQUITETURA.md` §2.2 são as mais recentes vistas na pesquisa, mas
-**não foram testadas juntas**. `Microsoft.VSSDK.BuildTools` 18.9.820 e
-`Microsoft.VisualStudio.SDK` 17.14.40265 podem não casar.
-
-**Mitigação:** primeira tarefa da Fase 0. Fallback comprovado em produção:
-`Microsoft.VSSDK.BuildTools` **17.14.2120** (usado pelo vs-agentic).
-
 ---
 
 ## Resolvidos
+
+### B6 — Reset da hive experimental validado (2026-11-07, com autorização)
+
+O usuário autorizou o reset nesta sessão. Comando validado:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Insiders\VSSDK\VisualStudioIntegration\Tools\Bin\CreateExpInstance.exe" /Reset /VSInstance=18.0_25e762c6 /RootSuffix=Exp
+```
+
+**`/VSInstance` é o prefixo da hive, não a versão.** Com `/VSInstance=18.0` o
+utilitário resetou `18.0Exp` (hive vazia e não usada) e avisou
+`o diretório do Visual Studio …\18.0 não existe`, deixando a hive real
+**intacta**: 25 entradas, 156 arquivos, Lumen ainda em
+`Extensions\4un2n5ic.1yv`. Esse é o **controle negativo** — prova que o comando
+documentado no plano não fazia nada e que a verificação detecta a diferença.
+
+Com `/VSInstance=18.0_25e762c6`, saída: `…\18.0_25e762c6Exp removido`,
+`…\Extensions criado`, `Diretório Extensões copiado de …\18.0_25e762c6\Extensions`.
+Estado depois: **1 entrada, 6 arquivos, zero vestígio de Lumen**
+(`find -iname "*lumen*"` vazio).
+
+**Ciclo completo pós-reset re-exercitado na hive nova:** build Release
+0 erros/0 avisos → 35 testes C# + 17 testes JS verdes → `Install` com SHA-256
+de cada arquivo em `Extensions\nrqagayt.p4k` → **Exibir → Lumen** abriu a tool
+window → `node scripts/verify-webview.mjs` exit 0 com `layoutNegative: true`,
+10 requests todos em `https://lumen.local`, `exceptions: []` → `Verify` exit 0.
+
+**Controle negativo do detector de menu:** com Lumen desinstalado,
+`scripts/open-experimental.ps1 -Action Open` falhou com exit 1 e
+`The Lumen command is missing from the Exibir menu`, encerrando o VS.
+O mesmo script, após reinstalar, deu exit 0.
+
+`CreateExpInstance.exe` **não** fica em `Common7\IDE`; fica em
+`VSSDK\VisualStudioIntegration\Tools\Bin`. Flags confirmados por `/?`:
+`/Create`, `/Reset`, `/Clean`, `/VSInstance=<VsInstance>`, `/RootSuffix=<Suffix>`.
+
+### B1 — Workload de desenvolvimento de extensão instalado
+
+`vswhere -prerelease -all -requires Microsoft.VisualStudio.Workload.VisualStudioExtension -property installationPath`
+confirmou `C:\Program Files\Microsoft Visual Studio\18\Insiders`.
+Componentes `VisualStudioExtension` e `VSSDK` presentes.
+`%TEMP%\dd_installer_20261106215357.log`: `Exit Code: 0`; warnings de rede não
+foram fatais. O wrapper COM reportou `SETUP_EXIT=-2146233029`, mas o log e o
+estado instalado confirmaram sucesso. Não é pré-requisito do restore clássico.
+
+### B5 — Versões NuGet compatíveis fixadas
+
+SDK 17.14.40265 + BuildTools 18.5.38461 + WebView2 1.0.4314.35 +
+ReferenceAssemblies 1.0.3 restauraram e compilaram juntas, zero erros/avisos.
+BuildTools 18.9.820 está unlisted e não foi escolhido. Fontes em `PESQUISA.md` §2.7.
 
 ### R1 — `--wait` não existe no VS Installer → exit 87
 
@@ -121,8 +135,9 @@ código real; e o wrapper reporta o exit do shell, não do processo filho.
 compilou com **0 erros, 0 avisos, 8,77 s**.
 **Conclusão:** down-level targeting funciona; os targeting packs restauram do
 NuGet. Probe removida depois.
-**Pendente:** repetir para `net48` com
-`Microsoft.NETFramework.ReferenceAssemblies` (tarefa da Fase 0).
+**Atualização 2026-11-07:** probe `net48` + WPF + ReferenceAssemblies 1.0.3
+passou com zero erros/avisos em 49,12 s (`artifacts/net48-probe.binlog`).
+O build limpo da solução também passou; nenhum SDK adicional foi necessário.
 
 ### R6 — Incerteza sobre o runtime do VS 2026
 
@@ -137,10 +152,57 @@ para componentes **out-of-process** (o VS traz hosts .NET 8.0.33 e 10.0.14 em
 
 ---
 
+### R7 — VSIX instalado, mas comando ausente do menu
+
+O pacote estava habilitado e seus arquivos conferiam, mas Exibir não continha
+Lumen. `devenv /RootSuffix Exp /UpdateConfiguration` forçou regeneração do cache
+(`artifacts/vs-update.xml`); depois **Exibir → Lumen** abriu a janela.
+`scripts/deploy-experimental.ps1` incorpora essa etapa após install/uninstall.
+Não apaga hive e não altera o perfil principal.
+
+### R8 — Dependências `System.*` omitidas do VSIX
+
+O teste do pacote falhou por ausência de `System.Text.Json.dll`. O filtro padrão
+do VSSDK omitia DLLs de framework, apesar de CopyLocal. O target
+`IncludeRuntimeDependencies` em `src/Lumen.Vsix/Lumen.Vsix.csproj` inclui runtime;
+as referências ao SDK do VS usam `ExcludeAssets="runtime"`.
+`VsixPackageTests` compara DLLs do output com o ZIP e rejeita remoções/mutações.
+
+### R9 — Unicode inválido escapava da validação JSON
+
+`dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~Surrogate`
+reproduziu **2 falhas e 1 sucesso** antes da correção.
+`BridgeProtocol.cs:56`: `InvalidOperationException` ao decodificar `\uD800` ou
+`\uDC00`. `JsonDocument.Parse` aceita o token, mas strings/nomes têm validação
+tardia. O protocolo retorna `invalid_message` também nessa fronteira; testes
+cobrem valores, nomes de campos e par válido.
+
+### R10 — Layout estreito cortava a área rolável
+
+O verificador real detectou `overlap: true` em 203×422 com composer multilinha.
+O tamanho fixo subtraído do cabeçalho de `details` foi substituído por grid/flex;
+a altura mínima permite rolagem externa quando o painel é muito baixo.
+O teste força `min-width:240px` em viewport 203 para provar que detecta overflow.
+
+---
+
 ## Armadilhas que NÃO são bloqueios (mas vão morder)
 
-- **VSIX mesma Id+Version é silenciosamente ignorado.** Desinstale antes ou
-  incremente a versão. O deploy precisa provar que atualizou.
+- **Git Bash converte `/Reset` em `C:/Program Files/Git/Reset`** ao chamar
+  `.exe` do Windows. Erro real: `Parâmetro inválido 'C:/Program Files/Git/Reset'`.
+  Prefixar com `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'`, ou chamar de
+  PowerShell.
+- **`/VSInstance=18.0` não é a hive do Insiders.** Usar `18.0_<instanceId>`.
+  O utilitário avisa quando o diretório base não existe — ler a saída, não só o
+  exit code (que foi **0** no reset da hive errada).
+- **VSIX mesma Id+Version atualizou/reparou** no instalador 18.12 local,
+  contrariando a hipótese anterior: `artifacts/lumen-same-version.log:725,1071–1134`.
+  O deploy mantém uninstall-first; o controle com `app.mjs` adulterado foi
+  rejeitado com `Stale installed file: wwwroot/app.mjs`.
+- Range `[99.0,)` foi recusado com exit **2003**, `NoApplicableSKUsException`:
+  `artifacts/lumen-unsupported.log:26–36`.
+- `/instanceIds` é plural; `/logFile` aceita nome e grava em `%TEMP%`.
+  `/a` é instalação administrativa, não instalação na Exp.
 - **`obj\...\extension.vsixmanifest` obsoleto** pode ser empacotado no lugar do
   novo. Limpe `obj/` ao mudar o manifesto.
 - **WebView2 renderiza em branco** sem `UserDataFolder` explícito.

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title></title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <div class="app" aria-busy="true">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-rule" aria-hidden="true"></span>
+        <div><h1 data-i18n="appTitle"></h1><p data-i18n="phaseLabel"></p></div>
+      </div>
+      <span id="connection-status" class="status-badge" role="status"></span>
+    </header>
+
+    <main>
+      <details class="showcase" open>
+        <summary data-i18n="sampleTitle"></summary>
+        <div class="sample-scroll" tabindex="0" data-i18n-label="sampleTitle">
+          <p class="eyebrow" data-i18n="sampleDescription"></p>
+          <div id="markdown-sample" class="markdown"></div>
+          <section class="diff-sample" aria-labelledby="diff-title">
+            <h2 id="diff-title" data-i18n="diffTitle"></h2>
+            <p class="secondary" data-i18n="diffDescription"></p>
+            <div class="diff-labels" aria-hidden="true">
+              <span data-i18n="diffBefore"></span><span data-i18n="diffAfter"></span>
+            </div>
+            <div id="diff-sample" class="diff-region" role="region" tabindex="0" data-i18n-label="diffTitle"></div>
+          </section>
+        </div>
+      </details>
+
+      <section id="section" class="history" aria-labelledby="history-title">
+        <div class="history-heading">
+          <h2 id="history-title" data-i18n="historyTitle"></h2>
+          <div class="history-actions">
+            <button id="first-message" type="button" class="text-button" data-i18n="firstMessages" data-i18n-title="firstMessagesTitle"></button>
+            <button id="last-message" type="button" class="text-button" data-i18n="lastMessages" data-i18n-title="lastMessagesTitle"></button>
+          </div>
+        </div>
+        <p id="history-help" class="sr-only" data-i18n="historyDescription"></p>
+        <div id="history-viewport" class="history-viewport" role="list" tabindex="0" data-i18n-label="historyLabel" aria-describedby="history-help">
+          <div id="history-spacer" class="history-spacer" role="presentation">
+            <div id="history-items" class="history-items" role="presentation"></div>
+          </div>
+        </div>
+        <p id="history-range" class="history-range"></p>
+      </section>
+    </main>
+
+    <footer class="composer-panel">
+      <div class="connection-note">
+        <p id="connection-detail"></p>
+        <button id="retry" type="button" class="text-button" data-i18n="retry" hidden></button>
+      </div>
+      <p id="error" class="error" role="alert" hidden></p>
+      <form id="composer" autocomplete="off">
+        <div class="composer-heading">
+          <label for="message-input" data-i18n="composerLabel"></label>
+          <span id="character-count" class="secondary"></span>
+        </div>
+        <textarea id="message-input" rows="1" maxlength="4096" spellcheck="true" disabled data-i18n-placeholder="composerPlaceholder" aria-describedby="composer-hint connection-detail"></textarea>
+        <div class="composer-actions">
+          <p id="composer-hint" data-i18n="composerHint"></p>
+          <button id="send" type="submit" class="primary-button" disabled data-i18n="send"></button>
+        </div>
+      </form>
+    </footer>
+    <p id="announcement" class="sr-only" role="status"></p>
+  </div>
+</body>
+</html>

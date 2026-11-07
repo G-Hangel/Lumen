@@ -31,40 +31,24 @@ Caminho escolhido: **VSSDK clássico, `net48`, WPF + WebView2**
 
 ### Tarefas
 
-- [ ] Confirmar no nuget.org as versões que restauram e compilam juntas:
-      `Microsoft.VisualStudio.SDK`, `Microsoft.VSSDK.BuildTools`,
-      `Microsoft.Web.WebView2`, `Microsoft.NETFramework.ReferenceAssemblies`.
-      Fallback comprovado: `Microsoft.VSSDK.BuildTools` **17.14.2120**
-      (usado pelo vs-agentic). Registrar em `PESQUISA.md` Parte 2 com URL.
-- [ ] **Probe de build `net48` com o SDK .NET 11 RC.** O probe de
-      `net8.0-windows`+WPF já passou; repetir para `net48` com
-      `Microsoft.NETFramework.ReferenceAssemblies`. Se falhar, instalar
-      .NET SDK 10 estável e registrar.
-- [ ] Criar a solution e os projetos conforme `ARQUITETURA.md` §2.6.
-      Começar só com `Lumen.Vsix` + `Lumen.Core` + `Lumen.Tests`; os demais
-      entram nas fases em que são usados.
-- [ ] `extension.vsixmanifest` **clássico** (não o molde out-of-process):
-      `InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[18.0,)"`,
-      `ProductArchitecture` amd64. Lembrar que o VS 2026 **ignora upper bound**.
-- [ ] `LumenToolWindow : ToolWindowPane` que abre.
-- [ ] Host WebView2 com **`CoreWebView2CreationProperties.UserDataFolder`
-      explícito** em `%LocalAppData%\Lumen\WebView2`. Sem isso renderiza em
-      branco (`ARQUITETURA.md` §2.3).
-- [ ] `wwwroot/index.html` servido por `SetVirtualHostNameToFolderMapping`
-      (`https://lumen.local/`), assets empacotados no VSIX como `Content`.
-      **Zero CDN.**
-- [ ] Ponte C#↔JS: `WebMessageReceived` / `PostWebMessageAsJson`, protocolo
-      tipado com ids de correlação.
-- [ ] **Spike de UI:** renderizar (a) markdown com headings/listas/links,
-      (b) code block com highlight de C#, (c) lista virtualizada com 500
-      mensagens, (d) composer que cresce, (e) um diff lado a lado.
-      Usar markdown-it + highlight.js + diff2html **locais**.
-- [ ] Theming mínimo: ler a cor de fundo do VS e injetar como CSS variable;
-      trocar o tema do VS e ver o chat mudar.
-- [ ] Configurar `Directory.Build.props` (nullable, `LangVersion`,
-      warnings-as-errors em análise, determinismo) e o runner de testes.
-- [ ] Documentar em `docs/COMANDOS.md` os comandos **testados** de build /
-      install / uninstall / experimental / reset da hive.
+- [x] Confirmar versões NuGet compatíveis e suas fontes: SDK 17.14.40265,
+      BuildTools 18.5.38461, WebView2 1.0.4314.35, ReferenceAssemblies 1.0.3.
+      Fallback 17.14.2120 não foi necessário (`PESQUISA.md` §2.7).
+- [x] Probe `net48` + WPF com SDK .NET 11 RC: zero erros/avisos, 49,12 s.
+      Não foi necessário instalar outro SDK.
+- [x] Criar somente `Lumen.Vsix`, `Lumen.Core` e `Lumen.Tests` na solução.
+- [x] Manifesto clássico Community `[18.0,)`, arquitetura amd64.
+- [x] `LumenToolWindow : ToolWindowPane` aberta por **Exibir → Lumen** na Exp.
+- [x] WebView2 com `UserDataFolder` explícito em `%LocalAppData%\Lumen\WebView2`.
+- [x] Assets locais empacotados, mapping `https://lumen.local/`, sem CDN.
+- [x] Ponte C#↔JS versionada, tipada e com ids de correlação; eco real validado.
+- [x] Spike com markdown, highlight C#, diff lado a lado, 500 mensagens
+      virtualizadas e composer expansível, usando bibliotecas locais.
+- [x] Troca real Escuro → Claro no VS atualizou CSS sem recarregar o documento.
+- [x] `Directory.Build.props`, analyzers e runner de testes configurados.
+- [x] Documentar todos os comandos **testados**, incluindo reset da hive.
+      Build/install/uninstall/verify/abertura/fechamento/cache/reset estão em
+      `docs/COMANDOS.md`. B6 resolvido com autorização do usuário em 2026-11-07.
 
 ### AC
 
@@ -81,12 +65,18 @@ Caminho escolhido: **VSSDK clássico, `net48`, WPF + WebView2**
 
 - Instalar o VSIX numa versão fora do range deve ser **recusado** pelo
   VSIXInstaller (prova que o `InstallationTarget` está efetivo).
-- Reinstalar mesma `Id`+`Version` é **silenciosamente ignorado** — o script de
-  deploy deve desinstalar antes ou incrementar versão. Teste prova que o
-  deploy realmente atualizou (ex.: mudar um texto e ver a mudança).
+- Reinstalar mesma `Id`+`Version`: **neste VSIXInstaller 18.12, atualiza/repara**
+  (verificado em 2026-11-07; corrige a hipótese de que seria ignorado).
+  O script desinstala antes, atualiza o cache experimental e compara SHA-256;
+  uma cópia com asset adulterado deve ser rejeitada pelo verificador.
 - Mensagem JS malformada enviada ao C# → **rejeitada com erro controlado**,
   não exceção não tratada nem crash do VS.
 - Abrir a tool window **sem rede** → a UI carrega igual (prova que não há CDN).
+- `CreateExpInstance /Reset /VSInstance=18.0` retorna exit **0** mas reseta a
+  hive errada e deixa a real intacta — verificar contagem de arquivos, não o
+  exit code. O reset válido usa `/VSInstance=18.0_25e762c6`.
+- `open-experimental.ps1 -Action Open` com Lumen **desinstalado** → exit 1 e
+  `The Lumen command is missing from the Exibir menu`, encerrando o VS que abriu.
 
 ### Commit
 
@@ -515,38 +505,40 @@ A extensão está pronta quando **tudo** abaixo é verdade:
 10. `docs/STATUS.md` reflete a realidade e `docs/BLOQUEIOS.md` está vazio ou
     tem itens explicitamente aceitos pelo usuário.
 
-## Apêndice — comandos do ambiente (verificados)
+## Apêndice — comandos do ambiente
+
+Comandos completos efetivamente testados estão em `docs/COMANDOS.md`.
 
 ```bash
-# Build (funciona sem workload — pacotes do nuget.org)
-dotnet build -c Release
-
-# MSBuild do VS 18 (não fica sob Common7/IDE)
-"/c/Program Files/Microsoft Visual Studio/18/Insiders/MSBuild/Current/Bin/MSBuild.exe"
-
-# Criar/resetar a hive experimental
-CreateExpInstance.exe /Reset /VSInstance=18.0 /RootSuffix=Exp
-# hive resultante: %LocalAppData%\Microsoft\VisualStudio\18.0_25e762c6Exp
-
-# Abrir a experimental instance
-"/c/Program Files/Microsoft Visual Studio/18/Insiders/Common7/IDE/devenv.exe" /RootSuffix Exp
-
-# Instalar / desinstalar (use o VSIXInstaller DESTA instância)
-"…/18/Insiders/Common7/IDE/VSIXInstaller.exe" /q /a "<caminho>.vsix"
-"…/18/Insiders/Common7/IDE/VSIXInstaller.exe" /q /u:<IdentityId>
-
-# Listar instâncias
-"/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -prerelease -all -format json
+npm run build:ui
+dotnet build Lumen.sln -c Release
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+node scripts/verify-webview.mjs
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+MSYS_NO_PATHCONV=1 "/c/Program Files/Microsoft Visual Studio/18/Insiders/VSSDK/VisualStudioIntegration/Tools/Bin/CreateExpInstance.exe" /Reset /VSInstance=18.0_25e762c6 /RootSuffix=Exp
 ```
 
-### Gotchas de VSIX (verificados na pesquisa)
+### Gotchas de VSIX (validados localmente em 2026-11-07)
 
-- Mesma `Id` + mesma `Version` → instalação **silenciosamente ignorada**.
-  Desinstale antes ou incremente a versão.
-- `obj\...\extension.vsixmanifest` obsoleto pode ser empacotado no lugar do novo.
-  Limpe `obj/` ao mudar o manifesto.
-- F5 no VS deploya na Exp (`VsixDeployOnDebug=true`; `DeployExtension` deprecated).
-- VS 2026 **ignora upper bound** do manifesto → use `[18.0,)`.
+- Mesma Id+Version **atualizou/reparou**, não foi ignorada. O script mantém
+  uninstall-first e SHA-256 para comprovar o conteúdo instalado.
+- `/RootSuffix Exp /UpdateConfiguration` foi necessário para o menu aparecer.
+  A atualização de cache está no script e **não** equivale a reset da hive.
+- `/rootSuffix:Exp /instanceIds:25e762c6` selecionam o destino do VSIXInstaller.
+  Não usar `/a` (administrativo). Logs recebem nome e são gravados em `%TEMP%`.
+- **`/VSInstance` de `CreateExpInstance` é o prefixo da hive, não a versão.**
+  `/VSInstance=18.0` retorna exit 0 e reseta `18.0Exp` (hive não usada), deixando
+  a real intacta. O comando validado é
+  `…\VSSDK\VisualStudioIntegration\Tools\Bin\CreateExpInstance.exe /Reset
+  /VSInstance=18.0_25e762c6 /RootSuffix=Exp` — 25 entradas/156 arquivos → 1/6,
+  zero Lumen. No Git Bash, prefixar `MSYS_NO_PATHCONV=1`, senão `/Reset` vira
+  `C:/Program Files/Git/Reset`. B6 resolvido (`BLOQUEIOS.md`).
+- O manifesto empacotado e suas dependências são conferidos pelos testes.
+- F5 está configurado (`VsixDeployOnDebug=true`), mas não foi exercitado;
+  o teste real usou CLI e Exibir → Lumen.
+- VS 2026 ignora upper bound do manifesto; o Lumen usa `[18.0,)`.
 
 ### Gotchas do VS Installer — **aprendidos na prática nesta máquina**
 
@@ -576,6 +568,6 @@ Write-Output ("SETUP_EXIT=" + $p.ExitCode)
 e o log em `%TEMP%\dd_installer_*.log` (procure `Exit Code:`).
 O wrapper reportou "exit 0" mesmo quando o installer retornou 87 e 5007.
 
-> A Fase 0 deve confirmar as flags exatas de `VSIXInstaller` para atingir a
-> instância Insiders correta (`/instanceId`, `/sku`, `/version`) e registrar
-> o comando testado em `docs/COMANDOS.md`.
+> Flags de instalação e o reset da hive confirmados e registrados em
+> `docs/COMANDOS.md`. B6 resolvido em 2026-11-07 com autorização do usuário;
+> a Fase 0 está encerrada.

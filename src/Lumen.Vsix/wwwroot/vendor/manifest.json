@@ -1,0 +1,86 @@
+{
+  "bundle": "libraries.mjs",
+  "sha256": "7d82bdf816897a4242f9f31c4479a6086ef4fa279e99d35ffca9bba486d616b6",
+  "packages": [
+    {
+      "name": "@profoundlogic/hogan",
+      "version": "3.0.4",
+      "license": "Apache-2.0",
+      "files": [
+        "profoundlogic-hogan-3.0.4-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "diff",
+      "version": "8.0.4",
+      "license": "BSD-3-Clause",
+      "files": [
+        "diff-8.0.4-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "diff2html",
+      "version": "3.4.56",
+      "license": "MIT",
+      "files": [
+        "diff2html-3.4.56-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "entities",
+      "version": "8.1.0",
+      "license": "BSD-2-Clause",
+      "files": [
+        "entities-8.1.0-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "highlight.js",
+      "version": "11.12.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        "highlight.js-11.12.0-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "linkify-it",
+      "version": "6.1.0",
+      "license": "MIT",
+      "files": [
+        "linkify-it-6.1.0-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "markdown-it",
+      "version": "15.0.3",
+      "license": "MIT",
+      "files": [
+        "markdown-it-15.0.3-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "mdurl",
+      "version": "2.1.0",
+      "license": "MIT",
+      "files": [
+        "mdurl-2.1.0-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "punycode.js",
+      "version": "2.3.1",
+      "license": "MIT",
+      "files": [
+        "punycode.js-2.3.1-LICENSE-MIT.txt"
+      ]
+    },
+    {
+      "name": "uc.micro",
+      "version": "3.0.0",
+      "license": "MIT",
+      "files": [
+        "uc.micro-3.0.0-LICENSE.txt"
+      ]
+    }
+  ]
+}

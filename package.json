@@ -1,0 +1,23 @@
+{
+  "name": "lumen-ui-spike",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "vendor": "node scripts/vendor-ui.mjs",
+    "build:ui": "npm run vendor && npm run check:ui",
+    "check:ui": "node --disallow-code-generation-from-strings --test scripts/ui-tests.mjs",
+    "serve:ui": "node scripts/serve-ui.mjs"
+  },
+  "dependencies": {
+    "diff2html": "3.4.56",
+    "highlight.js": "11.12.0",
+    "markdown-it": "15.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

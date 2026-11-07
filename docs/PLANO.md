@@ -1,4 +1,4 @@
-# PLANO — Lumen
+﻿# PLANO — Lumen
 
 Plano executável para o agente que vai construir a extensão inteira.
 Leia `AGENTS.md` antes. Consulte `ARQUITETURA.md` e `PESQUISA.md` como referência.
@@ -90,33 +90,50 @@ Caminho escolhido: **VSSDK clássico, `net48`, WPF + WebView2**
 
 ### Tarefas
 
-- [ ] `Conversation`, `Message`, `MessageRole`, `ContentPart`
-      (text / image / tool-call / tool-result / reasoning).
-- [ ] `ModelInfo`, `ModelCapabilities` (flags de `ARQUITETURA.md` §2.4),
-      `ReasoningSupport`, `CapabilitySource`, `Confidence`.
-- [ ] `ReasoningIntent = Off | Minimal | Low | Medium | High | Max`.
-- [ ] `StreamEvent` como união discriminada:
+- [x] `Conversation`, `Message`, `MessageRole`, `ContentPart`
+      (text / image / tool-call / tool-result / reasoning) em
+      `src/Lumen.Core/Domain/`. `ReasoningPart` guarda `ProviderState` opaco para
+      replay (`PESQUISA.md` §1.9). `UnknownPart` preserva `kind` desconhecido.
+- [x] `ModelInfo`, `ModelCapabilities` (flags de `ARQUITETURA.md` §2.9),
+      `ReasoningSupport`, `CapabilitySource`, `Confidence`, `ReasoningKind`,
+      `CapabilityOrigin` (origem **por** capacidade, exigida pelo DoD global 2).
+- [x] `ReasoningIntent = Off | Minimal | Low | Medium | High | Max`.
+- [x] `StreamEvent` como união discriminada por `StreamEventKind`:
       `TextDelta, ReasoningDelta, ToolCallStart, ToolCallArgsDelta, ToolCallEnd,
-      Usage, Done, Error` (`PESQUISA.md` §1.9).
-- [ ] `ToolSpec` / `ToolResult` / `ToolInvocation` com JSON schema.
-- [ ] `ChatMode = Agent | Ask | Plan` e a matriz de permissões de
-      `ARQUITETURA.md` §2.3.
-- [ ] Serialização round-trip de conversa em JSON (para persistir histórico).
-- [ ] `Lumen.Tests` com xUnit, cobertura dos tipos e da serialização.
+      Usage, Done, StreamError` (`PESQUISA.md` §1.9).
+- [x] `ToolSpec` / `ToolResult` / `ToolInvocation` com JSON schema; nome de tool
+      restrito a `^[a-zA-Z0-9_-]{1,64}$`.
+- [x] `ChatMode = Agent | Ask | Plan` e a matriz de permissões de
+      `ARQUITETURA.md` §2.8 em `ChatModePolicy` (função pura, aplicável no
+      ApprovalBroker e não só na UI).
+- [x] Serialização round-trip de conversa em JSON (`ConversationSerializer`),
+      com `TryParse` que retorna código de erro em vez de lançar.
+- [x] `Lumen.Tests` com xUnit: **97 testes** verdes, sendo 62 novos da Fase 1.
 
 ### AC
 
 - `Lumen.Core` compila sem referenciar **nenhuma** assembly do VS ou HTTP.
+  Verificado por `CoreReferencesTests`, que inspeciona as referências reais da
+  assembly compilada (VS, WebView2, HTTP, sockets, WPF) e o TFM `netstandard2.0`.
 - Round-trip de serialização preserva todos os tipos de `ContentPart`,
-  incluindo imagem base64 e argumentos de tool call.
-- Testes verdes.
+  incluindo imagem base64 e argumentos de tool call. Verificado, mais a
+  estabilidade de duas serializações consecutivas.
+- Testes verdes: **97** aprovados, 0 falhas.
 
 ### CN
 
 - JSON de conversa **malformado / truncado** deve falhar de forma controlada,
   não corromper o histórico nem lançar exceção não tratada.
+  Coberto por 19 casos (truncado, `null`, array no lugar de objeto, role/enum
+  inválido, base64 inválido, media type não-imagem, argumentos não-objeto,
+  parts vazio, surrogate isolado, nesting acima de `MaxDepth` 64): todos retornam
+  `false` + `invalid_json`, sem exceção.
 - `ContentPart` desconhecido deve ser preservado ou descartado explicitamente —
-  nunca silenciosamente virar texto.
+  nunca silenciosamente virar texto. Vira `UnknownPart` com o `kind` e o JSON
+  bruto intactos, e re-serializa byte a byte; o teste afirma `IsNotType<TextPart>`.
+- Controle negativo adicional: `DeserializedJsonElementsOutliveTheirBackingDocument`
+  falha com `ObjectDisposedException` se o `.Clone()` dos argumentos for removido
+  (verificado revertendo a correção: 1 falha).
 
 ### Commit
 

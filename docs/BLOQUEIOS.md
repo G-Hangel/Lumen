@@ -184,6 +184,34 @@ O tamanho fixo subtraído do cabeçalho de `details` foi substituído por grid/f
 a altura mínima permite rolagem externa quando o painel é muito baixo.
 O teste força `min-width:240px` em viewport 203 para provar que detecta overflow.
 
+### R11 — Construtor de desserialização do System.Text.Json exige tipos idênticos
+
+**Sintoma:** `TryParse` devolvia `invalid_json` para **toda** conversa válida,
+inclusive as produzidas pelo próprio serializador.
+**Evidência:** `InvalidOperationException: Each parameter in the deserialization
+constructor on type 'Lumen.Core.Domain.Conversation' must bind to an object
+property or field on deserialization.`
+**Causa:** o construtor recebia `DateTimeOffset?` enquanto a propriedade é
+`DateTimeOffset`. Nullable não casa; o STJ rejeita o construtor inteiro.
+**Fix:** parâmetros com o tipo exato da propriedade e `default` como sentinela de
+"carimbar agora" (`Conversation.cs`).
+**Lição:** `TryParse` que engole exceção esconde a causa real — para diagnosticar,
+chamar `JsonSerializer.Deserialize` diretamente num teste temporário e imprimir a
+exceção, em vez de chutar.
+
+### R12 — `JsonElement` retido precisa de `.Clone()`
+
+**Sintoma:** `ObjectDisposedException: Cannot access a disposed object.
+Object name: 'JsonDocument'` ao serializar uma conversa recém-desserializada.
+**Causa:** `ContentPartConverter.Read` usa `using var document =
+JsonDocument.ParseValue(ref reader)`. Os `JsonElement` extraídos dali morrem com o
+`document`; só o `UnknownPart` clonava, os argumentos de `ToolCallPart` não.
+**Fix:** `.Clone()` em todo elemento que sobrevive ao método (`ContentPart.cs`).
+**Controle negativo:** o teste
+`DeserializedJsonElementsOutliveTheirBackingDocument` foi escrito para isso e
+**falha** com `ObjectDisposedException` quando o `.Clone()` é removido —
+confirmado revertendo a correção (1 falha) e restaurando (0 falhas).
+
 ---
 
 ## Armadilhas que NÃO são bloqueios (mas vão morder)

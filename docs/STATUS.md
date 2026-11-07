@@ -4,18 +4,46 @@ Atualizado em **2026-11-07**.
 
 ## Estado atual
 
-**Fase 0 concluída.** B6 resolvido em 2026-11-07 com autorização explícita do
-usuário: o reset da hive de teste foi executado, verificado e documentado, e o
-ciclo completo foi re-exercitado na hive nova. Nenhuma fase posterior foi
-iniciada; nenhum remote nem push foi realizado.
+**Fase 0 e Fase 1 concluídas.** A Fase 0 terminou com o reset da hive validado
+(B6 resolvido com autorização do usuário). A Fase 1 adicionou o núcleo de domínio
+puro em `Lumen.Core`, sem VS e sem HTTP, e o VSIX continuou instalando e abrindo
+depois do rebuild. Nenhum remote nem push foi realizado.
 
 | Fase | Estado |
 | --- | --- |
 | Planejamento | concluído |
 | Fase 0 — Spike de toolchain e UI | **concluído** |
-| Fases 1–8 | não iniciadas |
+| Fase 1 — Núcleo de domínio | **concluído** |
+| Fases 2–8 | não iniciadas |
 
-## Evidências concluídas
+## Evidências da Fase 1 (2026-11-07)
+
+- Tipos criados em `src/Lumen.Core/Domain/`: `ContentPart` (text/image/toolCall/
+  toolResult/reasoning/unknown), `Message`, `Conversation`, `ModelInfo`,
+  `ModelCapabilities`, `CapabilityOrigin`, `CapabilitySource`, `Confidence`,
+  `ReasoningSupport`, `ReasoningKind`, `ReasoningIntent`, `StreamEvent` (8 casos),
+  `ToolSpec`, `ToolInvocation`, `ToolResult`, `ChatModePolicy`,
+  `ConversationSerializer`.
+- `dotnet clean` + build Release: **0 erros / 0 avisos** (`artifacts/phase1.binlog`).
+- **97 testes C#** verdes (62 novos) e **17 testes JS** verdes.
+- `CoreReferencesTests` prova que `Lumen.Core` não referencia `Microsoft.VisualStudio*`,
+  `Microsoft.Web.WebView2*`, `System.Net.Http`, `System.Net.Sockets` nem WPF, e que
+  o TFM é `.NETStandard,Version=v2.0`. O detector tem controle negativo próprio.
+- Round-trip de conversa preserva imagem base64, argumentos de tool call,
+  `ProviderState` opaco de raciocínio e duas serializações consecutivas são idênticas.
+- `kind` desconhecido vira `UnknownPart` com o JSON bruto intacto — o teste afirma
+  explicitamente que **não** vira `TextPart`.
+- 19 casos de JSON malformado/truncado/inválido retornam `false` + `invalid_json`
+  sem lançar exceção, incluindo surrogate isolado e nesting acima de `MaxDepth` 64.
+- Matriz de permissões coberta nos 12 pares modo×categoria: Ask e Plan negam
+  escrita e comando; Agent permite escrita dentro do workspace com undo e exige
+  aprovação para escrita fora e para **qualquer** comando.
+- **Regressão de UI verificada após o rebuild:** install com SHA-256 em
+  `Extensions\cmbvfewn.ha2`, **Exibir → Lumen** abriu, `verify-webview.mjs` exit 0
+  com 10 requests todos em `https://lumen.local`, `exceptions: []`,
+  `layoutNegative: true`, eco real funcionando. VS fechado em seguida.
+
+## Evidências concluídas da Fase 0
 
 - Probe `net48` + WPF no SDK .NET 11 RC: zero erros/avisos, 49,12 s.
 - Build **limpo** Release: zero erros/avisos, VSIX gerado em
@@ -59,7 +87,7 @@ iniciada; nenhum remote nem push foi realizado.
 
 ## Evidências locais (ignoradas pelo Git)
 
-- `artifacts/phase0.binlog`, `artifacts/net48-probe.binlog`.
+- `artifacts/phase0.binlog`, `artifacts/phase1.binlog`, `artifacts/net48-probe.binlog`.
 - `artifacts/tests/phase0.trx`.
 - `artifacts/webview-verification.json`, `artifacts/webview-offline.png`.
 - `artifacts/webview-theme.json`.
@@ -75,13 +103,19 @@ nenhum servidor de preview rodando; perfil principal do VS intocado.
 
 ## Próximo passo exato
 
-**Fase 1 — Domínio e contratos** (`PLANO.md`): tipos `Conversation`, `Message`,
-`MessageRole`, `ContentPart`, `ModelInfo`, `ModelCapabilities`, `ReasoningIntent`,
-`StreamEvent`, `ToolSpec`/`ToolResult`/`ToolInvocation`, `ChatMode`, e
-serialização round-trip coberta por testes em `Lumen.Core`. Nenhum provedor,
-nenhuma chamada de rede e nenhuma credencial nesta fase.
+**Fase 2 — BYOK: provedores, descoberta e capacidades** (`PLANO.md`): criar
+`Lumen.Providers`, `IChatProvider` / `IModelCatalog` / `ICredentialStore`, os
+adapters e o `CapabilityResolver` em camadas de `PESQUISA.md` §1.6, mais
+`capabilities.registry.json` embarcado. Preencher `ModelInfo.Origins` com a
+origem **por capacidade**, que é o que a UI mostra como badge.
 
-Não iniciar a Fase 1 sem o commit da Fase 0 estar feito.
+**Limite de gasto:** a Fase 2 toca APIs pagas. Descoberta de modelos usa
+endpoints de listagem (OpenRouter é público; os demais exigem chave). Nenhuma
+chamada real sem chave de teste fornecida pelo usuário **e** autorização por
+escrito; até lá, tudo com fixtures gravadas e mocks. Probing ativo continua
+opt-in, orçado e só sobre o modelo selecionado.
+
+Não iniciar a Fase 2 sem o commit da Fase 1 estar feito.
 
 ## Decisões e limites
 

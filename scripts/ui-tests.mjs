@@ -15,6 +15,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const loadJson = async filename => JSON.parse(await readFile(filename, 'utf8'));
 const pt = await loadJson(path.join(webRoot, 'locales/pt-BR.json'));
 const en = await loadJson(path.join(webRoot, 'locales/en.json'));
+const sampleMarkdown = '### Uma resposta, bem legível\nTexto com **ênfase**, listas e código, renderizado com assets locais.\n\n- Markdown sem HTML executável.\n- [Ir para as mensagens](#section), sem sair da tool window.\n\n```csharp\npublic static string Greet(string name)\n{\n    return $"Olá, {name}!";\n}\n```';
+const sampleDiff = 'diff --git a/Greeting.cs b/Greeting.cs\nindex 1111111..2222222 100644\n--- a/Greeting.cs\n+++ b/Greeting.cs\n@@ -1,4 +1,4 @@\n public static class Greeting\n {\n-    public static string Text => "Olá";\n+    public static string Text => "Olá, Lumen";\n }\n';
+const diffEmpty = 'Arquivo sem alterações';
 const theme = { culture: 'pt-BR', background: '#202124', foreground: '#eeeeee', accent: '#75b9ff' };
 const id = '12345678-1234-4234-8234-123456789abc';
 const envelope = (type, payload, correlation = id) => ({ version: 1, id: correlation, type, payload });
@@ -170,7 +173,7 @@ test('Markdown blocks executable HTML, tracking images and unsafe link schemes',
   const attack = markdown.render('<script>alert(1)</script>\n<img src="https://example.org/pixel" onerror="alert(1)">\n![pixel](https://example.org/pixel)\n[x](javascript:alert%281%29)\n[x](data:text/html,bad)\n[x](file:///secret)');
   assert.doesNotMatch(attack, /<(script|img|iframe)\b|<[^>]+\son\w+=|href="(?:javascript|file|data):/i);
   assert.match(attack, /&lt;script&gt;/);
-  const rendered = markdown.render(pt.sampleMarkdown);
+  const rendered = markdown.render(sampleMarkdown);
   assert.match(rendered, /<h3>/);
   assert.match(rendered, /<ul>/);
   assert.match(rendered, /href="#section"/);
@@ -181,8 +184,8 @@ test('Markdown blocks executable HTML, tracking images and unsafe link schemes',
 });
 
 test('real diff2html renders two sides without English controls or unescaped source HTML', () => {
-  const hostile = pt.sampleDiff.replace('Olá, Lumen', '<img src=x onerror=alert(1)>');
-  const output = renderDiff(hostile, pt.diffEmpty);
+  const hostile = sampleDiff.replace('Olá, Lumen', '<img src=x onerror=alert(1)>');
+  const output = renderDiff(hostile, diffEmpty);
   assert.doesNotMatch(output, /<img|\bViewed\b|\bCHANGED\b|type="checkbox"/);
   assert.match(output, /&lt;img/);
   assert.equal((output.match(/class="d2h-file-side-diff"/g) || []).length, 2);
@@ -258,8 +261,10 @@ test('local resources cover all static labels and have matching translations/pla
   const application = await readFile(path.join(webRoot, 'app.mjs'), 'utf8');
   for (const [, key] of application.matchAll(/\btext\('([^']+)'/g)) assert.ok(Object.hasOwn(pt, key), key);
   assert.doesNotMatch(application, /localStorage|sessionStorage|fetch\(|XMLHttpRequest|WebSocket/);
-  assert.match(application, /state !== 'connected'/);
-  assert.match(application, /isComposing/);
+  assert.match(application, /connected: \(\) => state === 'connected'/);
+  assert.doesNotMatch(application, /connected: \(\) => true/);
+  const byok = await readFile(path.join(webRoot, 'byok.mjs'), 'utf8');
+  assert.match(byok, /isComposing/);
 });
 
 test('CSP and asset graph contain no CDN, fonts, inline script or tracking images', async () => {
@@ -345,7 +350,7 @@ test('loopback server serves only UI assets and refuses traversal, foreign Host 
   const page = await httpCall(port, '/index.html');
   assert.equal(page.status, 200);
   assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
-  assert.match(page.body, /id="history-viewport"/);
+  assert.match(page.body, /id="byok-output"/);
   const locale = await httpCall(port, '/locales/en.json');
   assert.match(locale.headers['content-type'], /^application\/json/);
   assert.equal(JSON.parse(locale.body).appTitle, en.appTitle);

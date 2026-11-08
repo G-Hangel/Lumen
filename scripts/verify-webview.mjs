@@ -51,43 +51,36 @@ try {
   })`);
   report.initial = await evaluate(`({
     state: document.querySelector('#connection-status').dataset.state,
-    headings: document.querySelectorAll('#markdown-sample h3').length,
-    keywords: document.querySelectorAll('.hljs-keyword').length,
-    diffSides: document.querySelectorAll('.d2h-file-side-diff').length,
-    total: document.querySelector('.message').getAttribute('aria-setsize'),
-    rows: document.querySelectorAll('.message').length,
+    lang: document.documentElement.lang,
+    emptyVisible: !document.querySelector('#byok-empty').hidden && document.querySelector('#byok-empty').textContent.length > 0,
+    turns: document.querySelectorAll('#byok-output .byok-turn').length,
+    panelOpen: document.querySelector('#byok-panel').open,
+    sendDisabled: document.querySelector('#byok-send').disabled,
+    messageDisabled: document.querySelector('#byok-message').disabled,
+    activeModel: document.querySelector('#byok-active-model').textContent,
     background: getComputedStyle(document.documentElement).getPropertyValue('--vs-background'),
     width: innerWidth, height: innerHeight
   })`);
   assert.equal(report.initial.state, 'connected');
-  assert.ok(report.initial.headings > 0 && report.initial.keywords > 0);
-  assert.equal(report.initial.diffSides, 2);
-  assert.equal(report.initial.total, '500');
-  assert.ok(report.initial.rows < 30);
-  report.last = await evaluate(`(() => {
-    document.querySelector('#last-message').click();
-    return [...document.querySelectorAll('.message')].at(-1).getAttribute('aria-posinset');
+  assert.ok(['pt-BR', 'en'].includes(report.initial.lang));
+  assert.equal(report.initial.emptyVisible, true);
+  assert.equal(report.initial.turns, 0);
+  assert.equal(report.initial.panelOpen, false);
+  assert.equal(report.initial.sendDisabled, true);
+  assert.equal(report.initial.messageDisabled, true);
+  assert.ok(report.initial.activeModel.length > 0);
+  report.legacyRemoved = await evaluate(`['message-input', 'send', 'history-viewport', 'markdown-sample', 'diff-sample'].every(id => !document.getElementById(id))`);
+  assert.equal(report.legacyRemoved, true, 'The echo spike and showcase must be gone from the unified chat.');
+  report.gating = await evaluate(`(async () => {
+    const form = document.querySelector('#byok-chat-form');
+    const message = document.querySelector('#byok-message');
+    message.value = 'must not send without a selected model';
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return { turns: document.querySelectorAll('#byok-output .byok-turn').length, emptyHidden: document.querySelector('#byok-empty').hidden };
   })()`);
-  assert.equal(report.last, '500');
-  report.composer = await evaluate(`(() => {
-    const input = document.querySelector('#message-input');
-    const before = input.getBoundingClientRect().height;
-    input.value = 'Eco real C#\\nLinha 2\\nLinha 3\\nLinha 4\\nLinha 5';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    return { before, after: input.getBoundingClientRect().height };
-  })()`);
-  assert.ok(report.composer.after > report.composer.before);
-  report.echo = await evaluate(`new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Echo did not reach the UI')), 10000);
-    const observer = new MutationObserver(() => {
-      const host = document.querySelector('.message[data-kind="host"] .message-text');
-      if (!host) return;
-      clearTimeout(timer); observer.disconnect(); resolve(host.textContent);
-    });
-    observer.observe(document.querySelector('#history-items'), { childList: true, subtree: true });
-    document.querySelector('#send').click();
-  })`);
-  assert.equal(report.echo, 'Eco real C#\nLinha 2\nLinha 3\nLinha 4\nLinha 5');
+  assert.equal(report.gating.turns, 0, 'A forged submit without a model must not create a turn or a request.');
+  assert.equal(report.gating.emptyHidden, false);
   report.negative = await evaluate(`new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Malformed message was not answered')), 10000);
     const handler = event => {
@@ -132,17 +125,19 @@ try {
       if (document.querySelector('#connection-status')?.dataset.state !== 'connected') return;
       clearTimeout(timer); observer.disconnect(); resolve({
         state: document.querySelector('#connection-status').dataset.state,
-        rows: document.querySelectorAll('.message').length,
-        total: document.querySelector('.message')?.getAttribute('aria-setsize'),
-        diffSides: document.querySelectorAll('.d2h-file-side-diff').length
+        turns: document.querySelectorAll('#byok-output .byok-turn').length,
+        emptyVisible: !document.querySelector('#byok-empty').hidden,
+        sendDisabled: document.querySelector('#byok-send').disabled
       });
     };
     const observer = new MutationObserver(check);
     observer.observe(document, { childList: true, subtree: true, attributes: true });
     check();
   })`);
-  assert.equal(report.offline.total, '500');
-  assert.equal(report.offline.diffSides, 2);
+  assert.equal(report.offline.state, 'connected');
+  assert.equal(report.offline.turns, 0);
+  assert.equal(report.offline.emptyVisible, true);
+  assert.equal(report.offline.sendDisabled, true);
   report.requests = events.filter(event => event.method === 'Network.requestWillBeSent').map(event => event.params.request.url);
   assert.ok(report.requests.length > 0, 'The offline check must observe actual uncached requests.');
   assert.ok(report.requests.every(url => new URL(url).origin === 'https://lumen.local'));
@@ -154,17 +149,16 @@ try {
   for (const [width, height] of [[203, 422], [320, 320], [375, 700], [900, 900]]) {
     await command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     const layout = await evaluate(`(() => {
-      const input = document.querySelector('#message-input');
-      input.value = 'Line 1\\nLine 2\\nLine 3\\nLine 4\\nLine 5';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const main = document.querySelector('main').getBoundingClientRect();
+      const composer = document.querySelector('.composer-panel').getBoundingClientRect();
       return { width: innerWidth, height: innerHeight,
         overflow: document.documentElement.scrollWidth > innerWidth,
-        overlap: document.querySelector('.sample-scroll').getBoundingClientRect().bottom > document.querySelector('.history').getBoundingClientRect().top,
-        rows: document.querySelectorAll('.message').length };
+        overlap: main.bottom > composer.top + 1,
+        chatHeight: main.height, composerHeight: composer.height };
     })()`);
     assert.equal(layout.overflow, false, JSON.stringify(layout));
     assert.equal(layout.overlap, false, JSON.stringify(layout));
-    assert.ok(layout.rows < 30);
+    assert.ok(layout.chatHeight > 0 && layout.composerHeight > 0, JSON.stringify(layout));
     report.responsive.push(layout);
     if (width === 203) {
       report.layoutNegative = await evaluate(`(() => {

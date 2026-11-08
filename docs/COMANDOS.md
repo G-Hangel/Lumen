@@ -1,4 +1,4 @@
-# COMANDOS — Fases 0–2
+# COMANDOS — Fases 0–3a
 
 Testados em **2026-11-07**, na raiz `C:\Users\Hanjel\Documents\Extensão`.
 VS Community Insiders 18.12.12328.396, instanceId `25e762c6`, SDK .NET
@@ -125,15 +125,18 @@ node scripts/verify-webview.mjs
 powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
 ```
 
-Esse comando conecta ao WebView2 real, não a um mock. Verifica:
+Esse comando conecta ao WebView2 real, não a um mock. Na Fase 3a o eco foi
+removido; o verificador foi atualizado para o chat unificado. Verifica:
 
-- Handshake, eco multilinha, markdown/highlight, duas colunas de diff.
-- 500 mensagens com DOM limitado e navegação à última mensagem.
-- Composer expansível; mensagem inválida e surrogate isolado rejeitados pelo C#;
-  ping posterior ainda responde.
+- Handshake real; chat vazio com estado inicial, envio desabilitado sem modelo.
+- **Controle negativo:** submit forjado sem modelo selecionado não cria turno
+  nem esconde o estado vazio.
+- Mensagem inválida e surrogate isolado rejeitados pelo C#; ping posterior
+  ainda responde (controles negativos da ponte).
 - Reload com cache desabilitado e offline via CDP, sem desligar a rede da máquina.
 - Todos os requests de UI permanecem em `https://lumen.local`.
-- Layouts emulados 203×422, 320×320, 375×700, 900×900 e overflow forçado detectado.
+- Layouts emulados 203×422, 320×320, 375×700, 900×900 sem overflow/sobreposição;
+  overflow forçado detectado.
 
 Salva `artifacts/webview-verification.json` e `artifacts/webview-offline.png`.
 Restaura emulação de tamanho/rede ao terminar. O processo de diagnóstico deve
@@ -219,3 +222,35 @@ Evidências ignoradas pelo Git: `artifacts/phase2.binlog`,
 `artifacts/byok-webview.png` e o relatório de regressão do spike.
 Encerre somente o servidor de fixtures e a Exp lançados por esta sessão;
 nenhum processo preexistente nem perfil principal precisa ser alterado.
+
+## Fase 3a — chat unificado (2026-11-07)
+
+Mesmo ciclo da Fase 2, com `phase3a.binlog`/`phase3a.trx`:
+
+```bash
+npm run build:ui
+dotnet build Lumen.sln -c Release -bl:artifacts/phase3a.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=phase3a.trx' --results-directory artifacts/tests
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+node scripts/byok-fixture-server.mjs   # em outro processo local
+node scripts/verify-webview.mjs
+node scripts/verify-byok-webview.mjs
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+Resultado: build **0 erros/0 avisos**, **813 testes C#** e **93 testes JS**
+verdes; install SHA-256 em `Extensions\5avnx5ua.xdx`; ambos os verificadores
+exit 0 com `exceptions: []` e `layoutNegative: true`. O chat agora é único:
+o eco local foi removido e o composer envia ao provedor selecionado no painel
+BYOK (configurações). Opções de esforço/imagem e a ajuda com aviso de custo
+ficam em `<details>` colapsados; a nota de conexão some quando conectado.
+O verificador BYOK ganhou o modelo `fixture/code` (roteado por `payload.model`)
+para exercitar o botão copiar com clipboard real: exige `Page.bringToFront` +
+`Emulation.setFocusEmulationEnabled` porque o WebView2 sem foco do SO rejeita
+`writeText` com `NotAllowedError` mesmo com permissão concedida. O orçamento
+de probe é por sessão nativa: reiniciar a Exp antes do verificador é obrigatório
+para começar em 5/5. Nenhuma API paga foi chamada; as três configurações
+reais do usuário na Exp foram preservadas.

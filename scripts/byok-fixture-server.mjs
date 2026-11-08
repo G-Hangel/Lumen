@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 
 const fixture = await readFile(new URL('../tests/Lumen.Tests/Fixtures/openai.sse', import.meta.url), 'utf8');
+const codeFixture = 'data: {"choices":[{"index":0,"delta":{"content":"Exemplo de código:\\n\\n```csharp\\npublic static int Add(int a, int b)\\n{\\n    return a + b;\\n}\\n```"}}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":12}}\n\ndata: [DONE]\n\n';
 export const fixtures = {
   data: [
     { id: 'fixture/plain', name: 'Offline · text only', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'], context_length: 4096 },
-    { id: 'fixture/vision', name: 'Offline · vision + reasoning', architecture: { input_modalities: ['text', 'image'] }, supported_parameters: ['tools', 'reasoning'], reasoning: { mandatory: false, supported_efforts: ['low', 'high'] }, context_length: 4096 }
+    { id: 'fixture/vision', name: 'Offline · vision + reasoning', architecture: { input_modalities: ['text', 'image'] }, supported_parameters: ['tools', 'reasoning'], reasoning: { mandatory: false, supported_efforts: ['low', 'high'] }, context_length: 4096 },
+    { id: 'fixture/code', name: 'Offline · code block', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'], context_length: 4096 }
   ]
 };
 
@@ -43,7 +45,7 @@ export function createFixtureServer() {
         return;
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.end(fixture);
+      response.end(payload.model === 'fixture/code' ? codeFixture : fixture);
       return;
     }
     response.writeHead(404); response.end();

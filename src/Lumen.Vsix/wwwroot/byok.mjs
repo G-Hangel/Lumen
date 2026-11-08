@@ -83,6 +83,15 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   function canProbe() { return probeEligible() && node('probe-consent').checked === true && PROBE_CAPABILITIES.includes(node('probe-capability').value); }
 
+  function renderActiveModel() {
+    const model = selectedModel();
+    node('active-model').textContent = model ? text('byokActiveModel', { model: model.name }) : text('byokNoModel');
+  }
+  function syncEmpty() { node('empty').hidden = node('output').children.length > 0; }
+  function scrollPinned() {
+    const log = node('output');
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  }
   function updateControls() {
     const enabled = online(), locked = busy || imageLoading || needsCancel || cancelling;
     node('config-fields').disabled = !enabled || locked;
@@ -106,6 +115,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('probe').setAttribute('aria-busy', String(probing && busy));
     node('configure').setAttribute('aria-busy', String(busy && !streaming));
     node('chat-form').setAttribute('aria-busy', String(streaming || imageLoading));
+    node('count').textContent = text('byokCount', { count: node('message').value.length, max: 4096 });
     if (!enabled) node('status').textContent = text('byokDisconnected');
   }
 
@@ -150,6 +160,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const supported = model?.reasoning ? model.efforts : [];
     node('effort').replaceChildren(...(supported.length ? supported.map(value => option(value, text(`byokEffort${value}`))) : [option('Off', text('byokEffortDefault'))]));
     node('effort').value = supported.includes(effort) ? effort : supported[0] || 'Off';
+    renderActiveModel();
     updateControls();
   }
 
@@ -244,7 +255,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (disposed) return;
       configurations = configurations.map(config => config.id === result.configuration.id ? result.configuration : config);
       selectedModelId = result.configuration.selectedModelId; renderModels(); renderCapabilities(); setStatus('byokSelected');
-      node('output').replaceChildren();
+      node('output').replaceChildren(); syncEmpty();
     }, node('message'));
   }
   async function override() {
@@ -309,6 +320,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function createTurn(value) {
+    const pinned = scrollPinned();
     const article = document.createElement('article'); article.className = 'byok-turn';
     const user = localized('h3', 'byokUser'); const userText = document.createElement('p'); userText.className = 'byok-plain'; userText.textContent = value;
     const assistant = localized('h3', 'byokAssistant');
@@ -320,10 +332,13 @@ export function startByok({ transport, connected = () => false, text, renderMark
     article.append(user, userText, assistant, response, reasoning, tools, usage);
     node('output').append(article);
     while (node('output').children.length > 20) node('output').firstElementChild.remove();
+    syncEmpty();
+    if (pinned) node('output').scrollTop = node('output').scrollHeight;
     return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), usage };
   }
   function renderEvent(turn, event) {
     if (disposed) return;
+    const pinned = scrollPinned();
     if (event.kind === 'TextDelta') {
       turn.text += event.text; turn.response.append(document.createTextNode(event.text));
     } else if (event.kind === 'ReasoningDelta') {
@@ -340,13 +355,33 @@ export function startByok({ transport, connected = () => false, text, renderMark
     } else if (event.kind === 'Usage') {
       turn.usage.replaceChildren(localized('span', 'byokUsage'), document.createTextNode(`: ${event.input} / ${event.output}`));
     } else if (event.kind === 'Error') showError(event.code);
+    if (pinned) node('output').scrollTop = node('output').scrollHeight;
   }
   function finishMarkdown(turn) {
     if (typeof renderMarkdown !== 'function' || !turn.text) return;
     // Only the main's sanitized renderer may return HTML; streaming is always text nodes.
     try {
       const html = renderMarkdown(turn.text);
-      if (typeof html === 'string') { turn.response.innerHTML = html; turn.response.className = 'markdown'; }
+      if (typeof html !== 'string') return;
+      turn.response.innerHTML = html; turn.response.className = 'markdown';
+      for (const block of turn.response.querySelectorAll('pre')) {
+        block.tabIndex = 0; block.setAttribute('aria-label', text('byokCodeBlock'));
+        const wrapper = document.createElement('div'); wrapper.className = 'code-block';
+        const copy = localized('button', 'byokCopy', 'code-copy'); copy.type = 'button';
+        block.replaceWith(wrapper); wrapper.append(block, copy);
+        copy.addEventListener('click', async () => {
+          const value = (block.querySelector('code') || block).textContent;
+          let copied = false;
+          try { await navigator.clipboard.writeText(value); copied = true; }
+          catch {
+            const scratch = document.createElement('textarea'); scratch.value = value; scratch.className = 'sr-only'; scratch.setAttribute('readonly', '');
+            document.body.append(scratch); scratch.select();
+            try { copied = document.execCommand('copy'); } finally { scratch.remove(); }
+          }
+          copy.textContent = text(copied ? 'byokCopied' : 'byokCopyFailed');
+          setTimeout(() => { copy.textContent = text('byokCopy'); }, 2000);
+        });
+      }
     } catch { /* A renderer failure must leave already received plain text intact. */ }
   }
   async function submitChat(event) {
@@ -372,7 +407,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       }
     } finally {
       busy = false; streaming = false; if (!cancelling) cancelRequested = false; clearProbeConsent();
-      if (!disposed) { finishMarkdown(turn); updateControls(); if (panel.open && !node('message').disabled) node('message').focus({ preventScroll: true }); }
+      if (!disposed) { finishMarkdown(turn); updateControls(); if (!node('message').disabled) node('message').focus({ preventScroll: true }); }
     }
   }
   async function cancel() {
@@ -398,10 +433,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   function refreshLocale() {
     if (disposed) return;
-    for (const target of panel.querySelectorAll('[data-i18n]')) target.textContent = text(target.dataset.i18n);
-    for (const target of panel.querySelectorAll('[data-i18n-label]')) target.setAttribute('aria-label', text(target.dataset.i18nLabel));
-    for (const target of panel.querySelectorAll('[data-i18n-placeholder]')) target.setAttribute('placeholder', text(target.dataset.i18nPlaceholder));
-    for (const target of panel.querySelectorAll('[data-byok-text]')) target.textContent = text(target.dataset.byokText);
+    for (const root of [panel, node('chat-form'), node('output')]) {
+      for (const target of root.querySelectorAll('[data-i18n]')) target.textContent = text(target.dataset.i18n);
+      for (const target of root.querySelectorAll('[data-i18n-label]')) target.setAttribute('aria-label', text(target.dataset.i18nLabel));
+      for (const target of root.querySelectorAll('[data-i18n-placeholder]')) target.setAttribute('placeholder', text(target.dataset.i18nPlaceholder));
+      for (const target of root.querySelectorAll('[data-byok-text]')) target.textContent = text(target.dataset.byokText);
+    }
+    node('empty').textContent = text('byokEmpty');
+    node('output').setAttribute('aria-label', text('byokChatTitle'));
     node('key-label').textContent = text(['Ollama', 'LMStudio'].includes(node('kind').value) ? 'byokKeyLocal' : 'byokKey');
     if (node('kind').value === 'Azure') node('url').placeholder = text('byokAzureUrlPlaceholder');
     if (attachment) node('attachment').textContent = text('byokImageAttached');
@@ -429,7 +468,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('kind'), 'change', changeKind);
   listen(node('configure'), 'submit', configure);
   listen(node('list'), 'click', listProviders);
-  listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); node('output').replaceChildren(); void discover(); });
+  listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); node('output').replaceChildren(); syncEmpty(); void discover(); });
   listen(node('discover'), 'click', discover);
   listen(node('models'), 'change', chooseModel);
   listen(node('apply-override'), 'click', override);

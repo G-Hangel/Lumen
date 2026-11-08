@@ -279,7 +279,20 @@ class Element {
   }
   set textContent(value) { this.children = []; this._text = String(value); }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
-  set innerHTML(value) { this._html = value; this.children = []; this._text = ''; }
+  set innerHTML(value) {
+    this._html = value; this.children = []; this._text = '';
+    const stack = [this]; let last = 0;
+    for (const match of value.matchAll(/<(\/)?([a-z][\w-]*)([^>]*)>/gi)) {
+      if (match.index > last) stack.at(-1).append(this.document.createTextNode(value.slice(last, match.index)));
+      last = match.index + match[0].length;
+      if (match[1]) { stack.pop(); continue; }
+      const target = this.document.createElement(match[2]);
+      for (const [, key, attribute = ''] of match[3].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) target.setAttribute(key, attribute);
+      stack.at(-1).append(target);
+      if (!['br', 'hr', 'img', 'input'].includes(match[2].toLowerCase())) stack.push(target);
+    }
+    if (last < value.length) stack.at(-1).append(this.document.createTextNode(value.slice(last)));
+  }
   get innerHTML() { return this._html; }
   append(...children) { for (const child of children) { child.parent = this; this.children.push(child); } }
   replaceChildren(...children) { this._text = ''; this.children = []; this.append(...children); }
@@ -293,16 +306,26 @@ class Element {
   removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
   async emit(type, extra = {}) { const event = { preventDefault() {}, ...extra }; for (const listener of this.listeners.get(type) || []) await listener(event); }
   querySelectorAll(selector) {
-    const key = selector.slice(1, -1); const results = [];
-    const visit = target => { if (Object.hasOwn(target.attributes, key) || (key === 'data-byok-text' && target.dataset.byokText)) results.push(target); for (const child of target.children) visit(child); };
+    const attribute = selector.startsWith('[') ? selector.slice(1, -1) : null;
+    const tag = attribute ? null : selector.toUpperCase();
+    const results = [];
+    const visit = target => {
+      const matches = attribute ? Object.hasOwn(target.attributes, attribute) || (attribute === 'data-byok-text' && target.dataset.byokText) : target.tagName === tag;
+      if (matches) results.push(target);
+      for (const child of target.children) visit(child);
+    };
     for (const child of this.children) visit(child); return results;
   }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  replaceWith(...nodes) { const index = this.parent.children.indexOf(this); this.parent.children.splice(index, 1, ...nodes); for (const node of nodes) node.parent = this.parent; }
+  select() {}
   focus() { this.document.activeElement = this; }
   requestSubmit() { void this.emit('submit'); }
 }
 function makeDocument() {
   const document = { ids: new Map(), createElement(tag) { return new Element(tag, this); }, createTextNode(value) { const node = this.createElement('#text'); node.textContent = value; return node; },
-    getElementById(id) { return this.ids.get(id); } };
+    getElementById(id) { return this.ids.get(id); }, execCommand: () => false };
+  document.body = document.createElement('body');
   const tree = document.createElement('root'); const stack = [tree];
   for (const [, closing, tag, attrs] of html.matchAll(/<(\/)?([a-z][\w-]*)([^>]*)>/gi)) {
     if (closing) { stack.pop(); continue; }
@@ -477,6 +500,51 @@ test('UI streams plain text/reasoning/tools without execution, safe Markdown is 
   assert.deepEqual(rendered, ['<script>not HTML</script>']); assert.match(f.node('status').textContent, /cancelled/);
   assert.equal(f.node('message').value, 'Hello'); assert.equal(f.transport.messages.filter(message => message.type === 'byok.chat').length, 1);
   f.ui.dispose(); assert.equal(f.transport.listeners.size, 0); assert.equal(f.node('send').disabled, true);
+});
+
+test('UI code blocks get an accessible copy button; clipboard failure is reported, never silent', async t => {
+  const f = uiFixture(t, { renderMarkdown: () => '<pre><code>int x = 1;</code></pre>' });
+  await openWithModel(f);
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const writes = [];
+  Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async value => { writes.push(value); } } }, configurable: true, writable: true });
+  t.after(() => { if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator; });
+  f.node('message').value = 'show code'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', { kind: 'TextDelta', text: '```csharp\nint x = 1;\n```' }, chat.id));
+  f.transport.reply({ completed: true }); await send;
+  const pre = f.node('output').querySelector('pre');
+  assert.ok(pre); assert.equal(pre.attributes['aria-label'], en.byokCodeBlock); assert.equal(pre.tabIndex, 0);
+  const copy = f.node('output').querySelectorAll('button').find(button => button.className === 'code-copy');
+  assert.ok(copy); assert.equal(copy.textContent, en.byokCopy);
+  await copy.emit('click');
+  assert.deepEqual(writes, ['int x = 1;']); assert.equal(copy.textContent, en.byokCopied);
+  globalThis.navigator = { clipboard: { writeText: async () => { throw new Error('clipboard denied'); } } };
+  await copy.emit('click');
+  assert.equal(writes.length, 1); assert.equal(copy.textContent, en.byokCopyFailed);
+  assert.equal(f.document.body.children.length, 0);
+  f.locale(); assert.equal(copy.textContent, pt.byokCopy);
+});
+
+test('UI chat log is bounded to 20 turns, empty state tracks real output and active model/count stay visible', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  assert.equal(f.node('empty').hidden, false);
+  assert.equal(f.node('active-model').textContent, en.byokActiveModel.replace('{model}', model.name));
+  assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', '0').replace('{max}', '4096'));
+  for (let index = 0; index < 21; index++) {
+    f.node('message').value = `turn ${index}`; await f.node('message').emit('input');
+    assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', String(`turn ${index}`.length)).replace('{max}', '4096'));
+    const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
+    f.transport.emit(envelope('byok.event', { kind: 'TextDelta', text: `reply ${index}` }, chat.id));
+    f.transport.reply({ completed: true }); await send;
+  }
+  assert.equal(f.node('output').children.length, 20);
+  assert.equal(f.node('empty').hidden, true);
+  assert.doesNotMatch(f.node('output').textContent, /turn 0\b/);
+  assert.match(f.node('output').textContent, /turn 20/);
+  f.node('providers').value = ''; await f.node('providers').emit('change');
+  assert.equal(f.node('output').children.length, 0); assert.equal(f.node('empty').hidden, false);
+  assert.equal(f.node('active-model').textContent, en.byokNoModel);
 });
 
 function assertRpcControlsLocked(f) {
@@ -874,7 +942,8 @@ for (const scenario of ['wrong-model', 'malformed-result', 'changed-selection', 
 }
 
 test('static probe section follows manual overrides with native labels, unchecked opt-in, status/focus and token-based wrapping', () => {
-  const probe = html.slice(html.indexOf('<section id="byok-probe"'), html.indexOf('<section class="byok-chat"'));
+  const probeStart = html.indexOf('<section id="byok-probe"');
+  const probe = html.slice(probeStart, html.indexOf('</section>', probeStart) + '</section>'.length);
   assert.ok(html.indexOf('id="byok-override"') < html.indexOf('id="byok-probe"'));
   assert.equal([...probe.matchAll(/<button\b/g)].length, 1);
   assert.match(probe, /id="byok-probe-consent" type="checkbox"[^>]*disabled/); assert.doesNotMatch(probe, /\bchecked\b/);
@@ -892,9 +961,11 @@ test('static probe section follows manual overrides with native labels, unchecke
   assert.doesNotMatch(probe + Object.keys(en).filter(key => key.startsWith('byokProbe')).map(key => en[key] + pt[key]).join(''), /\p{Extended_Pictographic}/u);
 });
 
-test('static UI retains spike ids/CSP, labels match locales and panel wraps responsively using existing tokens only', async () => {
+test('static UI retains unified chat ids/CSP, labels match locales and panel wraps responsively using existing tokens only', async () => {
   assert.match(html, /<details id="byok-panel" class="byok-panel">/); assert.doesNotMatch(html, /<details id="byok-panel"[^>]*\bopen\b/);
-  for (const id of ['markdown-sample', 'diff-sample', 'history-viewport', 'history-spacer', 'history-items', 'composer', 'message-input', 'send']) assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
+  for (const id of ['byok-output', 'byok-empty', 'byok-chat-form', 'byok-message', 'byok-send', 'byok-cancel', 'byok-active-model', 'byok-count', 'byok-effort', 'byok-image']) assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
+  assert.doesNotMatch(html, /id="(composer|message-input|send|history-viewport|history-spacer|history-items|markdown-sample|diff-sample)"/);
+  assert.match(html, /<main[^>]*aria-labelledby="byok-chat-title"/);
   assert.match(html, /img-src 'none'/); assert.match(html, /autocomplete="off"/);
   assert.match(html, /id="byok-status"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/);
   assert.match(html, /id="byok-error"[^>]*role="alert"[^>]*hidden/);

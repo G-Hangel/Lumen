@@ -4,10 +4,11 @@ Atualizado em **2026-11-07**.
 
 ## Estado atual
 
-**Fases 0, 1 e 2 concluídas; Fase 3 em andamento (fatia 3a).** A Fase 2 foi
-fechada com limites explicitamente aceitos pelo usuário em 2026-11-07: ele testou
-com chave real na UI (listagem e chat funcionaram), dispensou o Ollama local (B7)
-e aceitou o inventory Azure manual (B8). Nenhum remote nem push foi realizado.
+**Fases 0, 1 e 2 concluídas; Fase 3 em andamento — fatia 3a concluída em
+2026-11-07.** A Fase 2 foi fechada com limites explicitamente aceitos pelo
+usuário em 2026-11-07: ele testou com chave real na UI (listagem e chat
+funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
+(B8). Nenhum remote nem push foi realizado.
 
 | Fase | Estado |
 | --- | --- |
@@ -15,8 +16,51 @@ e aceitou o inventory Azure manual (B8). Nenhum remote nem push foi realizado.
 | Fase 0 — Spike de toolchain e UI | **concluído** |
 | Fase 1 — Núcleo de domínio | **concluído** |
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
-| Fase 3 — UI do chat | **em andamento — fatia 3a (chat unificado)** |
+| Fase 3 — UI do chat | **em andamento — 3a concluída; 3b–3d pendentes** |
 | Fases 4–8 | não iniciadas |
+
+## Evidências verificadas da fatia 3a (2026-11-07)
+
+- **Chat unificado:** o spike de eco e o histórico de 500 mensagens fake foram
+  removidos; o composer envia ao provedor real selecionado no painel BYOK, que
+  virou apenas configurações. Estado vazio, linha de modelo ativo, contador
+  0/4096, log limitado a 20 turnos (persistência fica para 3b).
+- Opções de esforço/imagem e a ajuda com aviso de custo vivem em `<details>`
+  colapsados; a nota de conexão desaparece quando conectado. Composer caiu de
+  751 px para **380 px** em 203×422 (chat 120 px mínimo) e para **278 px** em
+  375/900, sem overflow/sobreposição nos quatro layouts; overflow forçado ainda
+  é detectado.
+- Code block streamed recebe botão **copiar** com clipboard real verificado no
+  WebView2 (`Copiado`, aria-label localizado). Sem foco do SO o `writeText`
+  falha com `NotAllowedError` mesmo com permissão concedida; o verificador usa
+  `Page.bringToFront` + `Emulation.setFocusEmulationEnabled` e o produto tem
+  fallback `execCommand` com feedback explícito de falha (teste JS cobre).
+- Build Release **0 erros / 0 avisos**; **813 testes C#** e **93 testes JS**
+  verdes, sem ignorados. Evidências: `artifacts/phase3a.binlog`,
+  `artifacts/tests/phase3a.trx`.
+- Install verificado por SHA-256 em `Extensions\5avnx5ua.xdx`, revalidado após
+  fechar o VS. `verify-webview.mjs` e `verify-byok-webview.mjs` exit 0, ambos
+  com `exceptions: []` e `layoutNegative: true`.
+- BYOK no chat unificado: catálogo com 3 modelos fixture, chave sintética
+  limpa do campo, seleção sem visão bloqueia anexo, com visão anexa PNG real;
+  chat com imagem + streaming terminou com texto e card de tool (nenhuma
+  ferramenta executada). Probe sem consentimento recusado sem POST; duas
+  tentativas da mesma capability = **1 POST** inconclusivo; cancelamento em
+  **10 ms** com orçamento reconciliado 3/5. 401/404/429 com erros distintos;
+  429 preservou credencial e configuração. Submit forjado sem modelo não cria
+  turno (controle negativo no WebView2 real).
+- Orçamento de probe é por sessão nativa: a primeira execução pós-falha exigiu
+  reiniciar a Exp para voltar a 5/5. O servidor de fixtures contou 4 POSTs de
+  probe no total; o verificador prova que a seção de probe gastou exatamente
+  **1** (deduplicação + clique sem consentimento + consentimento recusado não
+  gastam) e o cancelamento reconciliou o orçamento nativo. Todos os POSTs
+  foram para o servidor loopback.
+- **Sem chamadas a serviços reais de IA e sem gasto.** As três configurações
+  BYOK reais que o usuário criou na Exp (Xkiro, ChatGPT, gemini) foram
+  preservadas; o verificador removeu apenas as configurações sintéticas que
+  criou. Cache de probes terminou `{"version":1,"entries":[]}`.
+- Exp fechada e servidor de fixtures encerrados ao final. Perfil principal do
+  VS intocado.
 
 ## Evidências verificadas da Fase 2 (2026-11-07)
 
@@ -130,8 +174,9 @@ e aceitou o inventory Azure manual (B8). Nenhum remote nem push foi realizado.
 ## Evidências locais (ignoradas pelo Git)
 
 - `artifacts/phase0.binlog`, `artifacts/phase1.binlog`, `artifacts/phase2.binlog`,
-  `artifacts/net48-probe.binlog`.
-- `artifacts/tests/phase0.trx`, `artifacts/tests/phase2.trx`.
+  `artifacts/phase3a.binlog`, `artifacts/net48-probe.binlog`.
+- `artifacts/tests/phase0.trx`, `artifacts/tests/phase2.trx`,
+  `artifacts/tests/phase3a.trx`.
 - `artifacts/webview-verification.json`, `artifacts/webview-offline.png`.
 - `artifacts/webview-theme.json`, `artifacts/byok-webview.json`,
   `artifacts/byok-webview.png`.
@@ -148,12 +193,11 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fase 3 — fatia 3a (chat unificado), autorizada pelo usuário em 2026-11-07.**
-Unificar o spike de eco local e o painel BYOK em um único chat dirigido pelo
-provedor real: histórico rolável, composer multilinha, anexo só com visão, botão
-copiar em code blocks e bloco de raciocínio colapsável. Sem consumo de API —
-verificação com fixtures e WebView2 real. Fatias seguintes (3b persistência,
-3c contexto `@arquivo`, 3d acessibilidade) ficam para depois, cada uma com commit.
+**Fase 3 — fatia 3b (persistência de conversas), aguardando autorização do
+usuário.** Histórico persistente com busca/renomear/excluir e virtualização do
+log (o limite atual de 20 turnos é provisório da 3a). Depois 3c (contexto
+`@arquivo`, `@solução`, seleção do editor) e 3d (acessibilidade final), cada
+fatia com seu commit. A 3a foi autorizada e concluída em 2026-11-07.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

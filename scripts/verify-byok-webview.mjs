@@ -63,7 +63,7 @@ try {
   ownedIds.push(report.configure.configuration.id);
   assert.equal(report.configure.credentialValid, null);
   assert.equal(report.configure.code, null);
-  assert.equal(report.configure.models.length, 2);
+  assert.equal(report.configure.models.length, 3);
   report.catalog = await evaluate(`({culture:document.documentElement.lang,status:document.querySelector('#byok-status').textContent,
     errorHidden:document.querySelector('#byok-error').hidden,providerId:document.querySelector('#byok-providers').value,
     providersEnabled:!document.querySelector('#byok-providers').disabled,modelsEnabled:!document.querySelector('#byok-models').disabled,
@@ -78,7 +78,7 @@ try {
   assert.equal(report.catalog.providersEnabled, true);
   assert.equal(report.catalog.modelsEnabled, true);
   assert.equal(report.catalog.keyCleared, true);
-  assert.ok(report.catalog.models.includes('fixture/plain') && report.catalog.models.includes('fixture/vision'));
+  assert.ok(report.catalog.models.includes('fixture/plain') && report.catalog.models.includes('fixture/vision') && report.catalog.models.includes('fixture/code'));
   const saved = await evaluate(`new Promise((resolve,reject)=>{
     const id=crypto.randomUUID();const timer=setTimeout(()=>reject(new Error('Saved catalog reply missing')),10000);
     const handler=e=>{if(e.data.id!==id)return;clearTimeout(timer);chrome.webview.removeEventListener('message',handler);
@@ -171,13 +171,50 @@ try {
   assert.equal(report.attachment,true);
   report.chat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Use the offline fixture only';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
   assert.equal(report.chat.completed, true);
-  report.rendered = await evaluate("document.querySelector('#byok-panel').innerText");
+  report.rendered = await evaluate("document.querySelector('#byok-output').innerText");
   assert.ok(report.rendered.includes('Hello world'));
   assert.ok(report.rendered.includes('read_file'));
   assert.ok(!report.rendered.includes('synthetic-webview-credential-test'));
   delete report.rendered;
+  report.chatUi = await evaluate(`({
+    outputInMain: !!document.querySelector('main #byok-output'),
+    emptyHidden: document.querySelector('#byok-empty').hidden,
+    turns: document.querySelectorAll('#byok-output .byok-turn').length,
+    activeModel: document.querySelector('#byok-active-model').textContent,
+    messageCleared: document.querySelector('#byok-message').value === '',
+    count: document.querySelector('#byok-count').textContent
+  })`);
+  assert.equal(report.chatUi.outputInMain, true);
+  assert.equal(report.chatUi.emptyHidden, true);
+  assert.equal(report.chatUi.turns, 1);
+  assert.ok(report.chatUi.activeModel.includes('Offline'));
+  assert.equal(report.chatUi.messageCleared, true);
+  assert.equal(report.chatUi.count, text.byokCount.replace('{count}', '0').replace('{max}', '4096'));
+  await evaluate(waitForReply('byok.select.result', "const models=document.querySelector('#byok-models');models.value='fixture/code';models.dispatchEvent(new Event('change',{bubbles:true}));"));
+  report.codeChat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Show a code block';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
+  assert.equal(report.codeChat.completed, true);
+  await command('Browser.grantPermissions', { origin: 'https://lumen.local', permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+  await command('Page.bringToFront');
+  await command('Emulation.setFocusEmulationEnabled', { enabled: true });
+  const copyResult = await command('Runtime.evaluate', { awaitPromise: true, returnByValue: true, userGesture: true, expression: `(async () => {
+    const block = document.querySelector('#byok-output .code-block');
+    const button = block && block.querySelector('.code-copy');
+    if (!button) return { present: false };
+    const code = block.querySelector('pre').textContent;
+    const aria = block.querySelector('pre').getAttribute('aria-label');
+    button.click();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return { present: true, code, aria, label: button.textContent };
+  })()` });
+  assert.equal(copyResult.exceptionDetails, undefined);
+  report.copy = copyResult.result.value;
+  assert.equal(report.copy.present, true, 'The streamed code block must offer a copy button.');
+  assert.ok(report.copy.code.includes('public static int Add'));
+  assert.equal(report.copy.aria, text.byokCodeBlock);
+  assert.equal(report.copy.label, text.byokCopied);
+  delete report.copy.code;
   await command('Emulation.setDeviceMetricsOverride',{width:900,height:1100,deviceScaleFactor:1,mobile:false});
-  await evaluate("document.querySelector('.byok-catalog').scrollIntoView({block:'start'});document.querySelector('#byok-key').value='';");
+  await evaluate("document.querySelector('#byok-panel').open=false;document.querySelector('#byok-output').scrollTop=document.querySelector('#byok-output').scrollHeight;document.querySelector('#byok-key').value='';");
   const screenshot=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
   await writeFile(new URL('../artifacts/byok-webview.png',import.meta.url),Buffer.from(screenshot.data,'base64'));
   report.statuses = [];
@@ -224,6 +261,7 @@ try {
   for (const configurationId of ownedIds) {
     await evaluate(`new Promise((resolve,reject)=>{const id=crypto.randomUUID();const timer=setTimeout(()=>reject(new Error('Fixture cleanup failed')),10000);const handler=e=>{if(e.data.id!==id)return;clearTimeout(timer);chrome.webview.removeEventListener('message',handler);if(e.data.type==='error')reject(new Error('Fixture cleanup rejected'));else resolve(true);};chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({version:1,id,type:'byok.remove',payload:{configurationId:${JSON.stringify(configurationId)}}});})`);
   }
+  await command('Emulation.setFocusEmulationEnabled', { enabled: false });
   await command('Emulation.clearDeviceMetricsOverride');
   socket.close();
 }

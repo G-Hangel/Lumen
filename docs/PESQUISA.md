@@ -296,7 +296,7 @@ autenticadas podem fundamentar a interpretação de credencial abaixo.
 | 401 | chave inválida/revogada | rejeitar, pedir chave |
 | 403 | região/permissão/modelo não liberado | rejeitar com mensagem específica |
 | 404 | **base URL errada** (muito comum em BYOK) | dizer "URL incorreta", não "chave inválida" |
-| 429 | quota/rate limit | **chave é válida** — não rejeitar; backoff |
+| 429 | quota/rate limit | **chave é válida** — não rejeitar; mostrar a espera do `Retry-After` (segundos inteiros) |
 | 402 | OpenRouter sem crédito | avisar saldo |
 
 Headers úteis: OpenAI `x-ratelimit-{limit,remaining,reset}-{requests,tokens}`,
@@ -435,6 +435,46 @@ Fontes:
 · <https://learn.microsoft.com/en-us/visualstudio/extensibility/visualstudio-extensibility/recipes/themes-colors-fonts?view=visualstudio>
 · <https://learn.microsoft.com/en-us/visualstudio/extensibility/visualstudio-extensibility/recipes/commands/commands?view=visualstudio>
 · <https://stackoverflow.com/questions/49214827/where-to-store-credentials-for-vsix-visual-studio-2017-extension>
+
+### Contexto explícito — APIs verificadas em 2026-11-08 (3c)
+
+- `IVsTextManager.GetActiveView(0, null, out view)` e as APIs MEF foram verificadas,
+  mas a captura de seleção por essa rota retornou `context_unavailable` na Exp
+  após ativar o Output (2026-11-08). A implementação usa `DTE.ActiveDocument`
+  e `Document.Selection` (`TextSelection.TopPoint` / `BottomPoint`) para manter
+  o vínculo com o documento do editor, independentemente do foco no chat.
+  Não há escrita no editor em código de produto.
+- `IVsSolution.GetSolutionInfo` fornece o diretório da solução carregada.
+  Inventário usa `DTE.Solution.Projects`, `ProjectItem.FileNames` e `SubProject`,
+  limitado a 256 arquivos e 1.024 nós/nomes; não varre pastas nem lê todos os arquivos.
+- Arquivo já aberto usa `Document.Object("TextDocument")`; não faz fallback para
+  disco quando o buffer aberto não é legível. `AbsoluteCharOffset` conta quebra
+  de linha como um caractere, portanto o limite DTE inclui margem para CRLF.
+- Output é somente a `OutputWindow.ActivePane.TextDocument`, anexada explicitamente.
+- Leitura de disco valida o caminho retornado por `GetFinalPathNameByHandleW`
+  antes de ler o handle, além do confinamento lexical e rejeição de reparse points.
+- A fixture experimental usa `Solution.Open`, `Document.Selection` e
+  `TextSelection.Insert` públicos, encontrando DTE no ROT pelo PID exclusivo da Exp.
+
+Fontes verificadas:
+<https://learn.microsoft.com/en-us/dotnet/api/microsoft.visualstudio.textmanager.interop.ivstextmanager.getactiveview>
+· <https://learn.microsoft.com/en-us/dotnet/api/microsoft.visualstudio.shell.interop.ivssolution.getsolutioninfo>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.textpoint.absolutecharoffset>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.outputwindow.activepane>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.outputwindowpane.textdocument>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.document.object>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.projectitem.filenames>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.projectitem.subproject>
+· <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte._solution.open>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.document.selection>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.textselection.toppoint>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.textselection.bottompoint>
+· <https://learn.microsoft.com/en-us/dotnet/api/envdte.textselection.insert>
+
+MEF/snapshots confirmados também nos XML locais dos pacotes 17.14.249:
+`Microsoft.VisualStudio.Editor.xml`, `Microsoft.VisualStudio.Text.Data.xml` e
+`Microsoft.VisualStudio.Text.UI.xml` (`lib/net472`).
 
 ## 2.4 IA nativa do VS 2026 — contexto competitivo
 

@@ -272,6 +272,34 @@ por `connected` via MutationObserver com prazo de 10 segundos, sem polling ou
 handshake simulado. Reexecução dos dois scripts no WebView2 real: exit 0, sem
 exceções e com controle negativo de layout detectado.
 
+### R16 — Onda 3d: contrato `retryAfter` host↔JS e build quebrado (2026-11-09)
+
+A auditoria da 3d encontrou a árvore no meio de uma edição que quebrava build e
+testes. Achados corrigidos com evidência:
+
+- **`retryAfter:null` rejeitado pelo validador JS (bug latente).** `JsonWire.Serialize`
+  usa `JsonSerializer.Serialize` padrão, que **serializa nulos**; o host sempre envia
+  `retryAfter` no evento `Error` e no catálogo (`null` quando o provedor não manda o
+  header). O validador de `Error` em `wwwroot/byok-bridge.mjs` exigia inteiro, então
+  **todo erro de stream real viraria `invalid_response`**. Corrigido para aceitar
+  `null`/inteiro≥0, alinhado aos validadores de catálogo/probe.
+- **Build C# quebrado (3× CS1503 `double?`→`long?`).** `RetryAfter(response)?.TotalSeconds`
+  em `AnthropicProvider.cs:192`, `GeminiProvider.cs:180`, `OpenAIProvider.cs:150`.
+  Novo `HttpTransport.RetryAfterSeconds` (`Math.Ceiling`→`long?`, nunca sub-reporta)
+  substitui os três; `ByokSession` CatalogView/EventView usam o mesmo teto.
+- **`ByokError` posicional.** O ctor `(code, message, retryAfter)` recebia `retryAfter`
+  no slot de `message` (`byok-bridge.mjs:228`); assinatura corrigida para `(code, retryAfter)`.
+- **Verde enganoso.** `dotnet test --no-build` validou binários obsoletos, não o código
+  editado; só o build fresco expôs os erros. Lição: rebuild antes de afirmar verde.
+- **Teardown de fixture JS.** `t.after` roda em FIFO no `node:test`; com vários fixtures
+  no mesmo teste, o primeiro restore deletava `document` e os disposes seguintes
+  falhavam. `uiFixture` agora registra um único teardown que desfaz em ordem inversa.
+
+Controle negativo provado por mutação: desativar o retry (`attempt == 0`) fez
+`Catalog429SurfacesTheLastResponseRetryAfterNotTheFirst` falhar (`Expected:3, Actual:1`)
+antes de reverter. Pós-correção: build 0/0, **1.121 C# + 160 JS** verdes e regressão
+completa na Exp (429 surfaced `retryAfter:90`, 3 tentativas, 0 exceções).
+
 ## Armadilhas que NÃO são bloqueios (mas vão morder)
 
 - **Git Bash converte `/Reset` em `C:/Program Files/Git/Reset`** ao chamar

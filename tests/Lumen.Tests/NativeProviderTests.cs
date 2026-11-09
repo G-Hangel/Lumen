@@ -620,8 +620,38 @@ public sealed class NativeProviderTests
         Assert.Equal("rate_limited", error.Code);
         Assert.Equal(error.Code, error.Message);
         Assert.DoesNotContain(FakeKey, error.Message);
+        Assert.Null(error.RetryAfterSeconds);
         Assert.Single(handler.Requests);
         Assert.Empty(events.OfType<Done>());
+    }
+
+    [Theory]
+    [InlineData(ProviderKind.Anthropic)]
+    [InlineData(ProviderKind.Gemini)]
+    public async Task StreamRateLimitCarriesWholeRetryAfterSecondsWithoutRetryingPost(ProviderKind kind)
+    {
+        using var handler = new FakeHandler((_, _) =>
+        {
+            var response = Response("rate limited", HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(90));
+            return response;
+        });
+        using var client = new HttpClient(handler);
+        var events = await Stream(Provider(kind, new HttpTransport(client)), Request(Configuration(kind), PlainModel(ProviderId(kind), "test")));
+        var error = Assert.Single(events.OfType<StreamError>());
+        Assert.Equal("rate_limited", error.Code);
+        Assert.Equal(90L, error.RetryAfterSeconds);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public void RetryAfterSecondsIsNullWithoutHeaderAndClampsPastDatesToZero()
+    {
+        using var missing = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        Assert.Null(HttpTransport.RetryAfterSeconds(missing));
+        using var past = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        past.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddDays(-1));
+        Assert.Equal(0L, HttpTransport.RetryAfterSeconds(past));
     }
 
     [Theory]

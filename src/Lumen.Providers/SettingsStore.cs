@@ -11,7 +11,12 @@ namespace Lumen.Providers;
 public sealed class SettingsStore
 {
     private readonly string path;
-    public SettingsStore(string path) { this.path = path; }
+    public SettingsStore(string path)
+    {
+        this.path = path;
+        Conversations = new ConversationStore(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, "conversations"));
+    }
+    public ConversationStore Conversations { get; }
     public async Task<IReadOnlyList<ProviderConfiguration>> ReadAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(path)) return Array.Empty<ProviderConfiguration>();

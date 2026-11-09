@@ -246,12 +246,16 @@ cache negativo conservador e cancelamento foram exercitados com fixtures.
       concluído/falhou), resultado expansível, diff embutido.
 - [ ] Anexo de imagem (drag-drop, colar, arquivo) — habilitado só se o modelo
       tem `Vision`.
-- [ ] Contexto: `@arquivo`, `@solução`, seleção ativa do editor, output window.
-- [ ] Histórico de conversas persistente, busca, renomear, excluir.
+- [x] Contexto: `@arquivo`, `@solução`, seleção ativa do editor, output window
+      (3c, 2026-11-08; snapshots explícitos, confinamento e envio verificados na Exp).
+- [x] Histórico de conversas persistente, busca, renomear, excluir (3b,
+      2026-11-08; paginação e virtualização medidas verificadas na Exp).
 - [ ] Cancelamento visível e responsivo durante stream e durante tool.
-- [ ] Estados de erro acionáveis (chave inválida → abrir settings;
-      429 → mostrar tempo de espera).
-- [ ] Acessibilidade: navegação por teclado, ARIA, screen reader, contraste.
+- [x] Estados de erro acionáveis (chave inválida → abrir settings;
+      429 → mostrar tempo de espera) (3d, 2026-11-09; foco no campo certo e
+      espera de 90 s vinda do `Retry-After` verificados na Exp).
+- [x] Acessibilidade: navegação por teclado, ARIA, screen reader, contraste
+      (3d, 2026-11-09; skip link, `Ctrl+Enter`, live region e contraste verificados).
 - [ ] Localização PT-BR e EN (resources no C# + dicionário no JS).
 - [ ] CSP restritiva no `index.html`; assets 100% locais.
 

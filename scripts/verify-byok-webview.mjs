@@ -38,7 +38,7 @@ const waitForReply = (type, action) => `new Promise((resolve,reject)=>{
   chrome.webview.addEventListener('message',handler);${action}
 })`;
 const report = { source: 'real C# WebView2 bridge, loopback fixtures; not a real AI service' };
-const ownedIds = [];
+const ownedIds = [], ownedConversations = [];
 try {
   await command('Runtime.enable');
   await command('Page.enable');
@@ -170,7 +170,7 @@ try {
   })`);
   assert.equal(report.attachment,true);
   report.chat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Use the offline fixture only';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
-  assert.equal(report.chat.completed, true);
+  assert.equal(report.chat.completed, true); ownedConversations.push(report.chat.conversation.id);
   report.rendered = await evaluate("document.querySelector('#byok-output').innerText");
   assert.ok(report.rendered.includes('Hello world'));
   assert.ok(report.rendered.includes('read_file'));
@@ -192,7 +192,7 @@ try {
   assert.equal(report.chatUi.count, text.byokCount.replace('{count}', '0').replace('{max}', '4096'));
   await evaluate(waitForReply('byok.select.result', "const models=document.querySelector('#byok-models');models.value='fixture/code';models.dispatchEvent(new Event('change',{bubbles:true}));"));
   report.codeChat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Show a code block';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
-  assert.equal(report.codeChat.completed, true);
+  assert.equal(report.codeChat.completed, true); ownedConversations.push(report.codeChat.conversation.id);
   await command('Browser.grantPermissions', { origin: 'https://lumen.local', permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
   await command('Page.bringToFront');
   await command('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -217,8 +217,9 @@ try {
   await evaluate("document.querySelector('#byok-panel').open=false;document.querySelector('#byok-output').scrollTop=document.querySelector('#byok-output').scrollHeight;document.querySelector('#byok-key').value='';");
   const screenshot=await command('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
   await writeFile(new URL('../artifacts/byok-webview.png',import.meta.url),Buffer.from(screenshot.data,'base64'));
+  const rateAttemptsBefore = (await (await fetch('http://127.0.0.1:4184/fixture/stats')).json()).errorAttempts['/error429/models'] ?? 0;
   report.statuses = [];
-  for (const status of [401, 404, 429]) {
+  for (const status of [429, 401, 404]) {
     const result = await evaluate(waitForReply('byok.configure.result', `
       const kind=document.querySelector('#byok-kind');kind.value='OpenAI';kind.dispatchEvent(new Event('change',{bubbles:true}));
       document.querySelector('#byok-url').value='http://127.0.0.1:4184/error${status}/';
@@ -226,19 +227,46 @@ try {
       document.querySelector('#byok-configure-button').click();`));
     assert.equal(result.code, status === 401 ? 'invalid_key' : status === 404 ? 'invalid_url' : 'rate_limited');
     assert.equal(result.credentialValid, status === 429 ? true : status === 401 ? false : null);
+    if (status === 429) assert.equal(result.retryAfter, 90, 'The third 429 response carries Retry-After 90; the host must surface whole seconds.');
     if (result.credentialValid === true) ownedIds.push(result.configuration.id);
     const ui = await evaluate(`({status:document.querySelector('#byok-status').textContent,error:document.querySelector('#byok-error').textContent,
       errorHidden:document.querySelector('#byok-error').hidden,keyCleared:document.querySelector('#byok-key').value==='',
+      errorActionHidden:document.querySelector('#byok-error-action').hidden,
       saved:[...document.querySelector('#byok-providers').options].some(option=>option.value===${JSON.stringify(result.configuration.id)})})`);
     assert.equal(ui.errorHidden, false);
-    assert.equal(ui.error, text[status === 401 ? 'byokErrorInvalidKey' : status === 404 ? 'byokErrorUrl' : 'byokErrorRate']);
+    assert.equal(ui.errorActionHidden, status === 429);
+    assert.equal(ui.error, status === 401 ? text.byokErrorInvalidKey : status === 404 ? text.byokErrorUrl : text.byokErrorRateWait.replace('{seconds}', '90'));
     assert.equal(ui.keyCleared, true);
     assert.equal(ui.saved, status === 429);
     assert.notEqual(ui.status, text.byokCatalogUnverified);
     if (status === 429) assert.equal(ui.status, text.byokCredentialValid);
     else assert.equal(ui.status, text.byokReady);
-    report.statuses.push({ status, code: result.code, credentialValid: result.credentialValid, ui });
+    report.statuses.push({ status, code: result.code, credentialValid: result.credentialValid, retryAfter: result.retryAfter ?? null, ui });
   }
+  const statusStats = await (await fetch('http://127.0.0.1:4184/fixture/stats')).json();
+  report.rateLimitAttempts = (statusStats.errorAttempts['/error429/models'] ?? 0) - rateAttemptsBefore;
+  assert.equal(report.rateLimitAttempts, 3, 'The host must retry the 429 GET exactly three times before surfacing the wait.');
+  report.errorActionFocus = await evaluate(`(() => {
+    document.querySelector('#byok-panel').open = false;
+    document.querySelector('#byok-error-action').click();
+    return { panelOpen: document.querySelector('#byok-panel').open, activeId: document.activeElement?.id };
+  })()`);
+  assert.equal(report.errorActionFocus.panelOpen, true);
+  assert.equal(report.errorActionFocus.activeId, 'byok-url');
+  report.accessibility = await evaluate(`({
+    skipLinkText: document.querySelector('#byok-skip-link')?.textContent,
+    historyRole: document.querySelector('#byok-history-items')?.getAttribute('role'),
+    announcementLive: document.querySelector('#announcement')?.getAttribute('aria-live'),
+    announcementAtomic: document.querySelector('#announcement')?.getAttribute('aria-atomic'),
+    messageShortcut: document.querySelector('#byok-message')?.getAttribute('aria-keyshortcuts'),
+    sendShortcut: document.querySelector('#byok-send')?.getAttribute('aria-keyshortcuts')
+  })`);
+  assert.equal(report.accessibility.skipLinkText, text.skipToComposer);
+  assert.equal(report.accessibility.historyRole, 'list');
+  assert.equal(report.accessibility.announcementLive, 'polite');
+  assert.equal(report.accessibility.announcementAtomic, 'true');
+  assert.equal(report.accessibility.messageShortcut, 'Control+Enter');
+  assert.equal(report.accessibility.sendShortcut, 'Control+Enter');
   report.negative = await evaluate(`new Promise(resolve=>{
     const id=crypto.randomUUID();const handler=e=>{if(e.data.id!==id)return;chrome.webview.removeEventListener('message',handler);resolve(e.data);};
     chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({version:1,id,type:'byok.chat',payload:{text:'unauthorized'}});
@@ -258,6 +286,9 @@ try {
   await writeFile(new URL('../artifacts/byok-webview.json',import.meta.url),JSON.stringify(report,null,2)+'\n');
   console.log(JSON.stringify(report,null,2));
 } finally {
+  for (const conversationId of ownedConversations) {
+    await evaluate(`new Promise((resolve,reject)=>{const id=crypto.randomUUID();const timer=setTimeout(()=>reject(new Error('History fixture cleanup failed')),10000);const handler=e=>{if(e.data.id!==id)return;clearTimeout(timer);chrome.webview.removeEventListener('message',handler);if(e.data.type==='error')reject(new Error('History fixture cleanup rejected'));else resolve(true);};chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({version:1,id,type:'byok.history.delete',payload:{conversationId:${JSON.stringify(conversationId)},confirm:true}});})`);
+  }
   for (const configurationId of ownedIds) {
     await evaluate(`new Promise((resolve,reject)=>{const id=crypto.randomUUID();const timer=setTimeout(()=>reject(new Error('Fixture cleanup failed')),10000);const handler=e=>{if(e.data.id!==id)return;clearTimeout(timer);chrome.webview.removeEventListener('message',handler);if(e.data.type==='error')reject(new Error('Fixture cleanup rejected'));else resolve(true);};chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({version:1,id,type:'byok.remove',payload:{configurationId:${JSON.stringify(configurationId)}}});})`);
   }

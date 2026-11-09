@@ -5,6 +5,9 @@ export const PROBE_PROVIDER_KINDS = Object.freeze(['OpenAI', 'OpenRouter', 'LMSt
 export const MAX_PROBE_BUDGET = 5;
 export const IMAGE_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_CONTEXTS = 8;
+export const MAX_CONTEXT_TEXT = 65536;
+export const MAX_CONTEXT_TOTAL = 131072;
 const MAX_WIRE_SIZE = 8 * 1024 * 1024;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const guid = value => typeof value === 'string' && uuid.test(value) && value !== '00000000-0000-0000-0000-000000000000';
@@ -15,14 +18,27 @@ const fields = (value, required, optional = []) => record(value)
 const string = (value, limit, empty = false) => typeof value === 'string' && value.length <= limit && (empty || Boolean(value.trim()));
 const list = (value, maximum, predicate) => Array.isArray(value) && value.length <= maximum && value.every(predicate);
 const unique = (value, select = item => item) => new Set(value.map(select)).size === value.length;
+const contextKinds = ['file', 'solution', 'selection', 'output'];
+const contextIds = value => list(value, MAX_CONTEXTS, guid) && unique(value, id => id.toLowerCase());
+const context = value => fields(value, ['id', 'kind', 'label', 'text']) && guid(value.id)
+  && contextKinds.includes(value.kind) && typeof value.label === 'string' && value.label.length > 0 && value.label.length <= 1024
+  && !/[\u0000-\u001f\u007f-\u009f]/.test(value.label)
+  && typeof value.text === 'string' && value.text.length > 0 && value.text.length <= MAX_CONTEXT_TEXT;
 const codes = new Set(['invalid_message', 'invalid_response', 'bridge_unavailable', 'bridge_busy', 'timeout', 'cancelled',
   'invalid_key', 'permission_denied', 'invalid_url', 'rate_limited', 'insufficient_credit', 'network_error', 'unsafe_url',
   'redirect_rejected', 'provider_error', 'provider_not_found', 'model_not_found', 'vision_not_supported', 'tools_not_supported',
-  'invalid_image_type', 'image_too_large', 'payload_too_large', 'stream_too_large', 'unsupported_type']);
+  'invalid_image_type', 'image_too_large', 'payload_too_large', 'stream_too_large', 'unsupported_type',
+  'history_corrupt', 'history_too_large', 'history_write_failed', 'conversation_not_found',
+  'context_unavailable', 'context_outside_workspace', 'context_too_large', 'context_stale']);
 export const safeErrorCode = code => codes.has(code) ? code : 'unknown';
 
 export class ByokError extends Error {
-  constructor(code) { super(safeErrorCode(code)); this.name = 'ByokError'; this.code = safeErrorCode(code); }
+  constructor(code, retryAfter = null) {
+    super(safeErrorCode(code));
+    this.name = 'ByokError';
+    this.code = safeErrorCode(code);
+    this.retryAfter = Number.isSafeInteger(retryAfter) && retryAfter >= 0 ? retryAfter : null;
+  }
 }
 
 export function normalizeBaseUrl(value) {
@@ -77,10 +93,24 @@ export function isByokEvent(value) {
     case 'ToolCallEnd': return fields(value, ['kind', 'id', 'arguments']) && string(value.id, 512) && record(value.arguments) && boundedJson(value.arguments);
     case 'Usage': return fields(value, ['kind', 'input', 'output']) && tokenCount(value.input) && tokenCount(value.output);
     case 'Done': return fields(value, ['kind', 'reason']) && ['Stop', 'MaxTokens', 'ToolUse', 'ContentFiltered', 'Cancelled', 'Other'].includes(value.reason);
-    case 'Error': return fields(value, ['kind', 'code']) && errorCode(value.code);
+    case 'Error': return fields(value, ['kind', 'code'], ['retryAfter']) && errorCode(value.code)
+      && (!Object.hasOwn(value, 'retryAfter') || value.retryAfter === null || (Number.isSafeInteger(value.retryAfter) && value.retryAfter >= 0));
     default: return false;
   }
 }
+
+const summary = value => fields(value, ['id', 'title', 'configurationId', 'modelId', 'updatedAtUtc', 'turnCount'])
+  && guid(value.id) && guid(value.configurationId) && string(value.title, 160, true) && string(value.modelId, 512)
+  && string(value.updatedAtUtc, 64) && Number.isFinite(Date.parse(value.updatedAtUtc))
+  && Number.isInteger(value.turnCount) && value.turnCount >= 0 && value.turnCount <= 10000;
+const historyTurn = value => fields(value, ['index', 'userText', 'hasImage', 'text', 'reasoning', 'tools', 'status'], ['contextText'])
+  && (!Object.hasOwn(value, 'contextText') || string(value.contextText, 140000, true))
+  && Number.isInteger(value.index) && value.index >= 0 && value.index < 10000
+  && string(value.userText, 4096, true) && typeof value.hasImage === 'boolean'
+  && string(value.text, MAX_WIRE_SIZE, true) && string(value.reasoning, MAX_WIRE_SIZE, true)
+  && list(value.tools, 128, call => fields(call, ['id', 'name', 'arguments']) && string(call.id, 512)
+    && typeof call.name === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(call.name) && record(call.arguments) && boundedJson(call.arguments))
+  && unique(value.tools, call => call.id) && ['completed', 'cancelled', 'failed'].includes(value.status);
 
 export function isByokEnvelope(value) {
   if (!fields(value, ['version', 'id', 'type', 'payload']) || value.version !== 1 || !guid(value.id) || !boundedJson(value)) return false;
@@ -90,15 +120,26 @@ export function isByokEnvelope(value) {
     case 'byok.list.result': return fields(p, ['configurations', 'remainingBudget']) && probeBudget(p.remainingBudget)
       && list(p.configurations, 256, configuration) && unique(p.configurations, item => item.id);
     case 'byok.configure.result': case 'byok.discover.result':
-      return fields(p, ['configuration', 'models', 'credentialValid', 'code']) && configuration(p.configuration)
+      return fields(p, ['configuration', 'models', 'credentialValid', 'code'], ['retryAfter']) && configuration(p.configuration)
         && list(p.models, 8192, isModel) && unique(p.models, item => item.id)
-        && (p.credentialValid === null || typeof p.credentialValid === 'boolean') && (p.code === null || errorCode(p.code));
+        && (p.credentialValid === null || typeof p.credentialValid === 'boolean') && (p.code === null || errorCode(p.code))
+        && (!Object.hasOwn(p, 'retryAfter') || p.retryAfter === null || (Number.isSafeInteger(p.retryAfter) && p.retryAfter >= 0));
     case 'byok.select.result': return fields(p, ['configuration']) && configuration(p.configuration);
     case 'byok.override.result': return fields(p, ['model']) && isModel(p.model);
-    case 'byok.probe.result': return fields(p, ['model', 'supported', 'remainingBudget']) && isModel(p.model)
-      && (p.supported === null || typeof p.supported === 'boolean') && probeBudget(p.remainingBudget);
-    case 'byok.chat.result': return fields(p, ['completed']) && typeof p.completed === 'boolean';
+    case 'byok.probe.result': return fields(p, ['model', 'supported', 'remainingBudget'], ['retryAfter']) && isModel(p.model)
+      && (p.supported === null || typeof p.supported === 'boolean') && probeBudget(p.remainingBudget)
+      && (!Object.hasOwn(p, 'retryAfter') || p.retryAfter === null || (Number.isSafeInteger(p.retryAfter) && p.retryAfter >= 0));
+    case 'byok.history.list.result': return fields(p, ['conversations']) && list(p.conversations, 256, summary) && unique(p.conversations, item => item.id);
+    case 'byok.history.open.result': return fields(p, ['conversation', 'offset', 'total', 'turns']) && summary(p.conversation)
+      && Number.isInteger(p.offset) && p.offset >= 0 && Number.isInteger(p.total) && p.total === p.conversation.turnCount && p.offset <= p.total
+      && list(p.turns, 10, historyTurn) && p.offset + p.turns.length <= p.total && p.turns.every((turn, index) => turn.index === p.offset + index);
+    case 'byok.history.rename.result': return fields(p, ['conversation']) && summary(p.conversation);
+    case 'byok.history.new.result': return fields(p, ['created']) && p.created === true;
+    case 'byok.history.delete.result': return fields(p, ['deleted']) && p.deleted === true;
+    case 'byok.chat.result': return fields(p, ['completed', 'conversation']) && typeof p.completed === 'boolean' && summary(p.conversation);
     case 'byok.cancel.result': return fields(p, ['cancelled']) && p.cancelled === true;
+    case 'byok.context.capture.result': return fields(p, ['context']) && context(p.context);
+    case 'byok.context.release.result': return fields(p, ['released']) && p.released === true;
     case 'byok.event': return isByokEvent(p);
     default: return false;
   }
@@ -106,7 +147,15 @@ export function isByokEnvelope(value) {
 
 function validRequest(type, p) {
   switch (type) {
-    case 'byok.list': case 'byok.cancel': return fields(p, []);
+    case 'byok.list': case 'byok.cancel': case 'byok.history.new': return fields(p, []);
+    case 'byok.context.capture': return fields(p, ['kind'], ['path']) && contextKinds.includes(p.kind)
+      && (!Object.hasOwn(p, 'path') || (p.kind === 'file' && string(p.path, 1024, true)));
+    case 'byok.context.release': return fields(p, ['ids']) && contextIds(p.ids);
+    case 'byok.history.list': return fields(p, ['query']) && string(p.query, 256, true);
+    case 'byok.history.open': return fields(p, ['conversationId', 'offset', 'limit']) && guid(p.conversationId)
+      && Number.isInteger(p.offset) && p.offset >= 0 && p.offset <= 10000 && Number.isInteger(p.limit) && p.limit >= 1 && p.limit <= 10;
+    case 'byok.history.rename': return fields(p, ['conversationId', 'title']) && guid(p.conversationId) && string(p.title, 160);
+    case 'byok.history.delete': return fields(p, ['conversationId', 'confirm']) && guid(p.conversationId) && p.confirm === true;
     case 'byok.configure': return fields(p, ['id', 'providerId', 'kind', 'baseUrl', 'key'], ['deploymentNames'])
       && guid(p.id) && string(p.providerId, 64) && PROVIDER_KINDS.includes(p.kind) && validUrl(p.baseUrl)
       && string(p.key, 4096, true) && !/[\r\n]/.test(p.key) && (!Object.hasOwn(p, 'deploymentNames') || deployments(p.deploymentNames));
@@ -116,7 +165,8 @@ function validRequest(type, p) {
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
-    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image']) && guid(p.configurationId)
+    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds']) && guid(p.configurationId)
+      && (!Object.hasOwn(p, 'contextIds') || contextIds(p.contextIds))
       && string(p.text, 4096) && EFFORTS.includes(p.effort) && (!Object.hasOwn(p, 'image') || (fields(p.image, ['mediaType', 'base64Data'])
         && IMAGE_TYPES.includes(p.image.mediaType) && string(p.image.base64Data, Math.ceil(MAX_IMAGE_BYTES / 3) * 4)
         && p.image.base64Data.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(p.image.base64Data)
@@ -140,7 +190,9 @@ export class ByokBridge {
 
   request(type, payload = {}, { onEvent = () => {}, expectedModelId } = {}) {
     if (!this.available || !this.isConnected()) return Promise.reject(new ByokError('bridge_unavailable'));
-    if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
+    if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel',
+      'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
+      'byok.context.capture', 'byok.context.release'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size && (type !== 'byok.cancel' || [...this.pending.values()].some(value => value.type === 'byok.cancel'))) return Promise.reject(new ByokError('bridge_busy'));
     if (this.usedIds.size >= 16384) return Promise.reject(new ByokError('bridge_busy'));
@@ -149,7 +201,8 @@ export class ByokBridge {
     // Do not evict IDs during this bridge's lifetime: delayed completions cannot become new requests.
     this.usedIds.add(id);
     const expected = type === 'byok.configure' ? { configurationId: payload.id, providerId: payload.providerId, kind: payload.kind }
-      : { configurationId: payload.configurationId, modelId: type === 'byok.probe' ? expectedModelId : payload.modelId };
+      : { configurationId: payload.configurationId, modelId: type === 'byok.probe' ? expectedModelId : payload.modelId,
+        conversationId: payload.conversationId, offset: payload.offset, limit: payload.limit, kind: payload.kind };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.finish(id, new ByokError('timeout')), this.timeoutMs);
       this.pending.set(id, { type, expected, onEvent, resolve, reject, timer, terminal: null, tools: new Map(), streamSize: 0, eventCount: 0 });
@@ -172,7 +225,7 @@ export class ByokBridge {
     if (!record(message) || !this.pending.has(message.id)) return false;
     const pending = this.pending.get(message.id);
     if (!isByokEnvelope(message)) { this.finish(message.id, new ByokError('invalid_response')); return false; }
-    if (message.type === 'error') { this.finish(message.id, new ByokError(message.payload.code)); return true; }
+    if (message.type === 'error') { this.finish(message.id, new ByokError(message.payload.code, message.payload.retryAfter)); return true; }
     const p = message.payload;
     if (message.type === 'byok.event') {
       if (pending.type !== 'byok.chat' || pending.terminal) { this.finish(message.id, new ByokError('invalid_response')); return false; }
@@ -187,7 +240,7 @@ export class ByokBridge {
       pending.streamSize += (p.text?.length || p.chunk?.length || 0) + (p.arguments ? JSON.stringify(p.arguments).length : 0);
       if (pending.streamSize > MAX_WIRE_SIZE) { this.finish(message.id, new ByokError('stream_too_large')); return false; }
       if (p.kind === 'Done' || p.kind === 'Error') pending.terminal = p.kind;
-      try { pending.onEvent(p.kind === 'Error' ? { kind: 'Error', code: safeErrorCode(p.code) } : p); }
+      try { pending.onEvent(p.kind === 'Error' ? { kind: 'Error', code: safeErrorCode(p.code), retryAfter: p.retryAfter ?? null } : p); }
       catch { this.finish(message.id, new ByokError('invalid_response')); return false; }
       return true;
     }
@@ -196,9 +249,12 @@ export class ByokBridge {
       || (p.configuration && expected.configurationId && p.configuration.id !== expected.configurationId)
       || (pending.type === 'byok.configure' && (p.configuration.providerId !== expected.providerId || p.configuration.kind !== expected.kind))
       || (pending.type === 'byok.select' && p.configuration.selectedModelId !== expected.modelId)
+      || (pending.type === 'byok.context.capture' && p.context.kind !== expected.kind)
       || (pending.type === 'byok.override' && p.model.id !== expected.modelId)
       || (pending.type === 'byok.probe' && expected.modelId !== undefined && p.model.id !== expected.modelId)
-      || (pending.type === 'byok.chat' && pending.terminal === 'Error' && p.completed)) {
+      || (p.conversation && expected.conversationId && p.conversation.id !== expected.conversationId)
+      || (pending.type === 'byok.history.open' && (p.offset !== expected.offset || p.turns.length !== Math.min(expected.limit, p.total - p.offset)))
+      || (pending.type === 'byok.chat' && (p.conversation.configurationId !== expected.configurationId || (pending.terminal === 'Error' && p.completed)))) {
       this.finish(message.id, new ByokError('invalid_response')); return false;
     }
     this.finish(message.id, null, p);

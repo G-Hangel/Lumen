@@ -53,6 +53,30 @@ public sealed class OpenAIProviderTests
         if (status == 429) Assert.All(waits, wait => Assert.Equal(TimeSpan.FromSeconds(2), wait));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ChatRateLimitCarriesRetryAfterSecondsOnlyWhenPresent(bool hasHeader)
+    {
+        var handler = new Handler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("synthetic rejection") };
+            if (hasHeader) response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(90));
+            return response;
+        });
+        var events = new List<StreamEvent>();
+        var configuration = Configuration();
+        await Provider(handler).StreamAsync(
+            new ChatRequest(configuration, new ModelInfo("openai", "fixture", ModelCapabilities.Text), new[] { new Message(MessageRole.User, new ContentPart[] { new TextPart("hi") }) }), Secret,
+            value => { events.Add(value); return Task.CompletedTask; }, CancellationToken.None);
+        var error = Assert.Single(events.OfType<StreamError>());
+        Assert.Equal("rate_limited", error.Code);
+        Assert.Equal(hasHeader ? 90L : (long?)null, error.RetryAfterSeconds);
+        Assert.Equal(1, handler.Requests);
+        Assert.DoesNotContain(Secret, error.Message);
+        Assert.Empty(events.OfType<Done>());
+    }
+
     [Fact]
     public async Task ListingAuthenticatesWithoutChatOrProbesAndKeepsUnknownCapabilitiesUnknown()
     {

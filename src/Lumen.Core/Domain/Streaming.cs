@@ -145,13 +145,15 @@ public sealed class Done : StreamEvent
 
 public sealed class StreamError : StreamEvent
 {
-    public StreamError(string code, string message)
+    public StreamError(string code, string message, long? retryAfterSeconds = null)
     {
         Code = string.IsNullOrEmpty(code) ? throw new ArgumentNullException(nameof(code)) : code;
         Message = message ?? throw new ArgumentNullException(nameof(message));
+        RetryAfterSeconds = retryAfterSeconds;
     }
 
     public override StreamEventKind Kind => StreamEventKind.Error;
+    public long? RetryAfterSeconds { get; }
     public string Code { get; }
 
     // Must never carry a credential: providers echo request bodies in some errors.

@@ -147,7 +147,7 @@ public class OpenAIProvider : IModelCatalog, IChatProvider
         {
             var body = BuildPayload(request);
             using var response = await Transport.SendAsync(request.Configuration, ChatPath(request), credential, HttpMethod.Post, body, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) { await onEvent(new StreamError(HttpTransport.ErrorCode(response.StatusCode), HttpTransport.ErrorCode(response.StatusCode))).ConfigureAwait(false); return; }
+            if (!response.IsSuccessStatusCode) { await onEvent(new StreamError(HttpTransport.ErrorCode(response.StatusCode), HttpTransport.ErrorCode(response.StatusCode), HttpTransport.RetryAfterSeconds(response))).ConfigureAwait(false); return; }
             using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
             var parser = new OpenAIStreamParser(onEvent);
             await StreamFrames.ReadAsync(stream, false, parser.AcceptAsync, cancellationToken).ConfigureAwait(false);

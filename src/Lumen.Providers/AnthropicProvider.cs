@@ -189,7 +189,7 @@ public sealed class AnthropicProvider : IModelCatalog, IChatProvider
             if (!response.IsSuccessStatusCode)
             {
                 var code = HttpTransport.ErrorCode(response.StatusCode);
-                await onEvent(new StreamError(code, code)).ConfigureAwait(false);
+                await onEvent(new StreamError(code, code, HttpTransport.RetryAfterSeconds(response))).ConfigureAwait(false);
                 return;
             }
             using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);

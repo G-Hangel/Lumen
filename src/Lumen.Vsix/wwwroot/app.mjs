@@ -89,6 +89,10 @@ byokUI = startByok({ transport: window.chrome?.webview, connected: () => state =
 applyLocale(culture);
 document.querySelector('.app').setAttribute('aria-busy', 'false');
 element('retry').addEventListener('click', connect);
+element('byok-skip-link')?.addEventListener('click', () => {
+  const target = element('byok-message').disabled ? element('byok-output') : element('byok-message');
+  target?.focus({ preventScroll: true });
+});
 for (const eventName of ['click', 'auxclick', 'contextmenu']) document.addEventListener(eventName, handleLink);
 window.addEventListener('pagehide', () => {
   bridge.dispose();

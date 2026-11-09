@@ -208,30 +208,112 @@ test('virtual ranges cover 500 records with a bounded window, including overscro
   assert.equal(seen.size, 500);
 });
 
-test('virtualizer mounts only the current slice (DOM adapter fake, not a browser test)', t => {
-  const original = { document: globalThis.document, ResizeObserver: globalThis.ResizeObserver, cancelAnimationFrame: globalThis.cancelAnimationFrame };
-  t.after(() => {
-    for (const [key, value] of Object.entries(original)) {
-      if (value === undefined) delete globalThis[key];
-      else globalThis[key] = value;
-    }
-  });
+function expectedRange(heights, scrollTop, height) {
+  let position = 0;
+  const boxes = heights.map(size => { const box = { top: position, bottom: position + size }; position += size; return box; });
+  const top = Math.max(0, Math.min(scrollTop, Math.max(0, position - height)));
+  const visible = boxes.map((box, index) => ({ ...box, index })).filter(box => box.bottom > top && box.top < top + height);
+  const start = Math.max(0, (visible[0]?.index ?? heights.length) - OVERSCAN);
+  const end = Math.min(heights.length, (visible.at(-1)?.index ?? heights.length - 1) + 1 + OVERSCAN);
+  return { start, end, offset: boxes[start]?.top ?? position, totalHeight: position };
+}
+
+test('variable-height ranges match an independent geometric oracle at boundaries, overscroll and every visible turn', () => {
+  const heights = Array.from({ length: 500 }, (_, index) => [24, 113, 900, 47, 301][index % 5]);
+  const total = heights.reduce((sum, height) => sum + height, 0), seen = new Set();
+  for (const offset of [-1000, 0, 24, 137, 1037, ...Array.from({ length: Math.ceil(total / 80) }, (_, index) => index * 80), total, total + 9999]) {
+    const actual = visibleRange(500, offset, 280, heights), expected = expectedRange(heights, offset, 280);
+    assert.deepEqual(actual, expected, `scrollTop=${offset}`);
+    assert.ok(actual.end - actual.start <= Math.ceil(280 / 24) + 1 + OVERSCAN * 2);
+    for (let index = actual.start; index < actual.end; index++) seen.add(index);
+  }
+  assert.equal(seen.size, 500);
+  const mixed = [24, undefined, 900, 0, 47];
+  assert.deepEqual(visibleRange(mixed.length, 150, 280, mixed), expectedRange([24, ROW_HEIGHT, 900, ROW_HEIGHT, 47], 150, 280));
+  const expected = expectedRange(heights, 4000, 280);
+  const deliberatelyWrong = visibleRange(500, 4000, 280, Array(500).fill(ROW_HEIGHT));
+  assert.throws(() => assert.deepEqual(deliberatelyWrong, expected), assert.AssertionError, 'the oracle must reject fixed/wrong heights');
+});
+
+function virtualFixture(t, sizes = Array(500).fill(ROW_HEIGHT)) {
+  const keys = ['document', 'ResizeObserver', 'requestAnimationFrame', 'cancelAnimationFrame'];
+  const original = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const frames = new Map(), observers = [], ranges = [], renders = []; let nextFrame = 0;
   globalThis.document = { createDocumentFragment: () => ({ children: [], append(row) { this.children.push(row); } }) };
-  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
-  globalThis.cancelAnimationFrame = () => {};
-  const viewport = { clientHeight: 280, scrollTop: 0, addEventListener() {}, removeEventListener() {}, focus() {} };
-  const layer = { style: {}, children: [], replaceChildren(fragment) { this.children = fragment.children; } };
+  globalThis.requestAnimationFrame = callback => { frames.set(++nextFrame, callback); return nextFrame; };
+  globalThis.cancelAnimationFrame = id => frames.delete(id);
+  globalThis.ResizeObserver = class {
+    targets = new Set();
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.targets.add(target); }
+    disconnect() { this.targets.clear(); }
+  };
+  const scrollListeners = new Set();
+  const viewport = { clientHeight: 280, scrollTop: 0,
+    addEventListener(type, callback) { assert.equal(type, 'scroll'); scrollListeners.add(callback); },
+    removeEventListener(type, callback) { assert.equal(type, 'scroll'); scrollListeners.delete(callback); },
+    focus() { this.focused = true; } };
+  const layer = { style: {}, children: [], replaceChildren(fragment) { this.children = [...fragment.children]; fragment.children.length = 0; } };
   const spacer = { style: {} };
-  const history = new VirtualHistory(viewport, spacer, layer, (_, index) => ({ index, style: {}, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; } }), () => {});
-  history.setItems(Array.from({ length: 500 }));
-  assert.ok(layer.children.length < 12);
-  assert.equal(layer.children[0].attributes['aria-setsize'], '500');
-  assert.equal(spacer.style.height, `${500 * ROW_HEIGHT}px`);
-  history.jump(true);
-  assert.equal(layer.children.at(-1).index, 499);
-  assert.ok(layer.children.length < 12);
-  assert.equal(layer.children.at(-1).attributes['aria-posinset'], '500');
-  history.dispose();
+  const history = new VirtualHistory(viewport, spacer, layer, (item, index) => {
+    renders.push(index);
+    return { item, index, style: {}, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; },
+      getAttribute(key) { return this.attributes[key] ?? null; }, getBoundingClientRect() { return { height: sizes[index] }; } };
+  }, range => ranges.push(range));
+  const flush = () => {
+    for (let step = 0; frames.size && step < 100; step++) {
+      const pending = [...frames]; frames.clear(); for (const [, callback] of pending) callback(0);
+    }
+    assert.equal(frames.size, 0, 'measurement must converge, not schedule an endless render loop');
+  };
+  t.after(() => {
+    try { history.dispose(); assert.equal(frames.size, 0); assert.equal(scrollListeners.size, 0); assert.ok(observers.every(observer => !observer.targets.size)); }
+    finally { for (const [key, descriptor] of original) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; } }
+  });
+  return { history, viewport, layer, spacer, sizes, frames, observers, ranges, renders, flush,
+    scroll(top) { viewport.scrollTop = top; for (const callback of scrollListeners) callback(); },
+    resize() { for (const observer of observers) observer.callback([]); } };
+}
+
+test('virtualizer mounts only the current slice and coalesces/cancels RAF (DOM adapter, not a browser test)', t => {
+  const f = virtualFixture(t); f.history.setItems(Array.from({ length: 500 })); f.flush();
+  assert.ok(f.layer.children.length < 12);
+  assert.equal(f.layer.children[0].getAttribute('aria-setsize'), '500');
+  assert.equal(f.spacer.style.height, `${500 * ROW_HEIGHT}px`);
+  const mounted = [...f.layer.children]; f.history.render(); assert.deepEqual(f.layer.children, mounted);
+  f.scroll(112); f.scroll(224); f.scroll(336); assert.equal(f.frames.size, 1); f.flush();
+  f.history.jump(true); f.flush();
+  assert.equal(f.layer.children.at(-1).index, 499); assert.ok(f.layer.children.length < 12);
+  assert.equal(f.layer.children.at(-1).getAttribute('aria-posinset'), '500'); assert.equal(f.viewport.focused, true);
+  f.scroll(0); assert.equal(f.frames.size, 1); f.history.dispose(); assert.equal(f.frames.size, 0);
+});
+
+test('measured variable heights update spacer/translation, preserve exact visible coverage and reject wrong-height verification', t => {
+  const sizes = Array.from({ length: 500 }, (_, index) => [23.2, 150.1, 800, 51.9, 305.4][index % 5]);
+  const f = virtualFixture(t, sizes); f.history.setItems(Array.from({ length: 500 }, (_, index) => index)); f.flush();
+  const verify = () => {
+    const measured = Array.from({ length: 500 }, (_, index) => f.history.heights[index] || ROW_HEIGHT);
+    const range = expectedRange(measured, f.viewport.scrollTop, f.viewport.clientHeight);
+    assert.equal(f.spacer.style.height, `${range.totalHeight}px`);
+    assert.equal(f.layer.style.transform, `translateY(${range.offset}px)`);
+    assert.deepEqual(f.layer.children.map(row => row.index), Array.from({ length: range.end - range.start }, (_, index) => range.start + index));
+    assert.ok(f.layer.children.length <= Math.ceil(280 / 24) + 1 + OVERSCAN * 2);
+    for (const row of f.layer.children) assert.equal(f.history.heights[row.index], Math.ceil(sizes[row.index]));
+  };
+  verify();
+  for (const top of [200, 1000, 2200, 4000, 7000, 10000, 15000, 25000, 50000]) { f.scroll(top); f.flush(); verify(); }
+  f.history.jump(true); f.flush(); verify(); assert.equal(f.layer.children.at(-1).index, 499);
+  assert.notEqual(f.spacer.style.height, `${500 * ROW_HEIGHT}px`);
+  const measuredIndex = f.layer.children[0].index, correctHeight = f.history.heights[measuredIndex];
+  f.history.heights[measuredIndex] = correctHeight + 99;
+  assert.throws(verify, assert.AssertionError, 'verifier must reject deliberately wrong measurement');
+  f.history.heights[measuredIndex] = correctHeight;
+  verify();
+  assert.equal(f.history.measure(), false, 'unchanged rows do not invalidate repeatedly');
+  sizes[measuredIndex] += 211.4; f.resize(); assert.equal(f.frames.size, 1); f.flush(); verify();
+  assert.equal(f.history.heights[measuredIndex], Math.ceil(sizes[measuredIndex]));
+  f.history.setItems([]); f.flush(); assert.equal(f.layer.children.length, 0); assert.equal(f.spacer.style.height, '0px');
+  assert.deepEqual(f.history.heights, []);
 });
 
 test('theme tokens preserve host colors and reject low-contrast accents for focus and text', () => {
@@ -265,6 +347,27 @@ test('local resources cover all static labels and have matching translations/pla
   assert.doesNotMatch(application, /connected: \(\) => true/);
   const byok = await readFile(path.join(webRoot, 'byok.mjs'), 'utf8');
   assert.match(byok, /isComposing/);
+});
+
+test('context controls remain a collapsed native composer section with labelled bounds and explicit privacy guidance', async () => {
+  const html = await readFile(path.join(webRoot, 'index.html'), 'utf8');
+  const css = await readFile(path.join(webRoot, 'styles.css'), 'utf8');
+  const composer = html.slice(html.indexOf('<footer class="composer-panel">'), html.indexOf('</footer>'));
+  assert.match(composer, /<details id="byok-context"[^>]*>\s*<summary data-i18n="contextTitle">/);
+  assert.doesNotMatch(composer.match(/<details id="byok-context"[^>]*>/)[0], /\bopen\b/);
+  assert.match(composer, /<label for="byok-context-path" data-i18n="contextPath">/);
+  assert.match(composer, /<input id="byok-context-path" type="text" maxlength="1024"[^>]*disabled/);
+  assert.match(composer, /<textarea id="byok-message"[^>]*maxlength="4096"/);
+  for (const id of ['reference', 'file', 'solution', 'selection', 'output']) {
+    assert.match(composer, new RegExp(`<button id="byok-context-${id}" type="button"[^>]*disabled`));
+  }
+  for (const locale of [pt, en]) {
+    assert.match(locale.contextHelp, /64K/); assert.match(locale.contextHelp, /128K/);
+    assert.match(locale.contextHelp, /snapshot/i); assert.match(locale.contextHelp, /inventário|inventory/i);
+  }
+  assert.equal(pt.contextTitle, 'Contexto'); assert.equal(en.contextTitle, 'Context');
+  assert.match(css, /\.context-controls input\s*\{[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
+  assert.match(css, /\.context-list pre, \.context-history pre\s*\{[^}]*max-height: 240px;[^}]*overflow: auto/);
 });
 
 test('CSP and asset graph contain no CDN, fonts, inline script or tracking images', async () => {

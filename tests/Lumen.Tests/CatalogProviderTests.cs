@@ -478,6 +478,25 @@ public sealed class CatalogProviderTests
         Assert.Equal(status == 429 ? 3 : 1, handler.Requests.Count);
     }
 
+    [Fact]
+    public async Task Catalog429SurfacesTheLastResponseRetryAfterNotTheFirst()
+    {
+        var attempt = 0;
+        using var handler = new FakeHandler(_ =>
+        {
+            attempt++;
+            var response = Json("{\"error\":\"synthetic rejection\"}", HttpStatusCode.TooManyRequests);
+            // The two retried responses ask for no wait; only the final response carries the real wait.
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(attempt % 3 == 0 ? 90 : 0));
+            return response;
+        });
+        using var client = new HttpClient(handler);
+        var result = await Catalog(ProviderKind.OpenRouter, Transport(client)).DiscoverAsync(Configuration(ProviderKind.OpenRouter), Secret, CancellationToken.None);
+        Assert.Equal("rate_limited", result.ErrorCode);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(TimeSpan.FromSeconds(90), result.RetryAfter);
+    }
+
     [Theory]
     [InlineData(ProviderKind.OpenRouter)]
     [InlineData(ProviderKind.Ollama)]

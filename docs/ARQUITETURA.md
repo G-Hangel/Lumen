@@ -161,6 +161,22 @@ chat **não** compete com a UI thread do VS.
 | Tema do VS | `VsColors` / `VsResourceKeys`, evento `VSColorTheme.ThemeChanged` → republica CSS variables |
 | Status bar | `IVsStatusbar` |
 
+**Contexto explícito (3c):** `VisualStudioContextSource` captura arquivo aberto
+(incluindo buffer não salvo), seleção, inventário da solução ou Output ativo.
+`ByokSession` guarda até oito `ContextSnapshot` imutáveis (65.536 caracteres cada,
+131.072 no total). A UI recebe prévia em texto puro e envia apenas IDs no chat;
+validação da solução/path ocorre antes de credenciais e HTTP. Contexto enviado
+é um `TextPart` separado do prompt, persistido no histórico sem recaptura.
+Falha/cancelamento retém IDs para retry; resultado de chat os consome. IDs
+liberados, consumidos ou de outra sessão são obsoletos. Troca/fechamento da
+solução impede enviar snapshots ainda pendentes. Não há coleta automática.
+
+Disco é lido em background com encoding estrito e handle validado; documentos
+abertos não caem silenciosamente para disco. Inventário é limitado a 256
+arquivos e 1.024 nós/nomes, sem leitura de conteúdo em massa. O histórico local
+continua JSON não criptografado: contexto sensível deve ser removido antes de
+Enviar. Limites por caracteres não substituem orçamento de tokens (Fase 5).
+
 **Terminal: não existe API pública** em nenhum dos dois modelos. O
 `Microsoft.VisualStudio.Terminal.dll` local é um serviço pty interno do
 ServiceHub, **não verificado** para uso por extensão.

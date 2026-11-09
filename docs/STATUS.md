@@ -1,11 +1,11 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-07**.
+Atualizado em **2026-11-09**.
 
 ## Estado atual
 
-**Fases 0, 1 e 2 concluídas; Fase 3 em andamento — fatia 3a concluída em
-2026-11-07.** A Fase 2 foi fechada com limites explicitamente aceitos pelo
+**Fases 0, 1 e 2 concluídas; Fase 3 em andamento — fatias 3a, 3b, 3c e 3d
+concluídas; 3d verificada em 2026-11-09.** A Fase 2 foi fechada com limites explicitamente aceitos pelo
 usuário em 2026-11-07: ele testou com chave real na UI (listagem e chat
 funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
 (B8). Nenhum remote nem push foi realizado.
@@ -16,8 +16,151 @@ funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
 | Fase 0 — Spike de toolchain e UI | **concluído** |
 | Fase 1 — Núcleo de domínio | **concluído** |
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
-| Fase 3 — UI do chat | **em andamento — 3a concluída; 3b–3d pendentes** |
+| Fase 3 — UI do chat | **em andamento — 3a, 3b, 3c e 3d concluídas** |
 | Fases 4–8 | não iniciadas |
+
+## Evidências verificadas da fatia 3d (2026-11-09)
+
+- **Acessibilidade estrutural verificada no WebView2 real:** skip link
+  (`Pular para o campo de mensagem`) que foca o composer, `aria-keyshortcuts`
+  `Control+Enter` no composer e no enviar, região de anúncio `aria-live="polite"`
+  `aria-atomic="true"`, histórico com `role="list"`, `:focus-visible`,
+  `forced-colors` e `prefers-reduced-motion`. O verificador estendido confirmou
+  esses atributos no DOM da Exp e o foco real do botão de erro (`byok-url`).
+- **Estados de erro acionáveis:** `invalid_key`/`permission_denied` focam a chave;
+  `invalid_url`/`unsafe_url` focam a URL; o botão de erro abre o painel e move o
+  foco (verificado: `panelOpen:true`, `activeId:byok-url`). `429` não é acionável
+  e mostra o tempo de espera.
+- **Contrato `Retry-After` de ponta a ponta:** o host faz GET com até 3 tentativas
+  em 429 (POST nunca é repetido); o fixture devolve `Retry-After` 0, 0, 90 e a Exp
+  surfaced **`retryAfter:90`** com a mensagem "aguardar 90 s" em pt-BR,
+  `rateLimitAttempts:3` e `credentialValid:true`. O wire carrega segundos inteiros
+  (`Math.Ceiling`), `null` quando o provedor não envia o header; o validador JS
+  aceita `null`/inteiro≥0 e rejeita negativo, fracionário, string, booleano e NaN.
+- **Controles negativos provados:** a mutação que desativa o retry fez o teste
+  `Catalog429SurfacesTheLastResponseRetryAfterNotTheFirst` falhar
+  (`Expected:3, Actual:1`) antes de reverter; o validador JS rejeita `retryAfter`
+  inválido; mensagem forjada sem modelo continua `invalid_message`; layout
+  forçado ainda é detectado. O teste de contraste recusa accent de baixo contraste.
+- **Verificação final:** clean/build Release **0 erros/0 avisos**, **1.121 testes
+  C# + 160 JS** verdes. Regressão completa na Exp: `verify-webview`,
+  `verify-byok` (acessibilidade/erro/429), histórico prepare→restart→resume→cleanup
+  (3 turnos, replay 3 mensagens, exclusão confirmada) e contexto (buffer não salvo,
+  seleção `Sample.cs:2-2`, traversal/tamanho/binário/stale rejeitados). Todos os
+  relatórios com **0 exceções JS, 0 probes, 0 serviços pagos**.
+- **Instalação final:** SHA-256 de todos os arquivos em `Extensions\nyyefehw.l21`,
+  revalidado após reinício e ao fechar. Exp e servidor de fixtures próprios
+  encerrados; preview 4173 intocado. Conversas/configurações/credenciais sintéticas
+  removidas por IDs do manifesto; as **três configurações reais** (Xkiro, ChatGPT,
+  gemini) e seus modelos preservados; cache de probes `{"version":1,"entries":[]}`.
+  Nenhum commit, remote ou push da 3d.
+- **Limites honestos:** a suportação a screen reader é estrutural (ARIA/live
+  region conferidos no DOM), não uma passada manual com NVDA/Narrator; o contraste
+  é verificado pelos tokens/teste (≥3:1 foco, ≥4,5:1 texto), não medido à mão.
+  Navegação por teclado exercitada nos atalhos/foco verificáveis; uma passada
+  assistiva completa fica para revisão manual do usuário.
+
+Evidências: `artifacts/phase3d.binlog`, `artifacts/tests/phase3d.trx`,
+`artifacts/byok-webview.json`, `artifacts/byok-webview.png`,
+`artifacts/history-webview.json`, `artifacts/history-webview.png`,
+`artifacts/context-webview.json`, `artifacts/context-webview.png`,
+`artifacts/webview-verification.json`. Reprodução em `COMANDOS.md`.
+
+## Evidências verificadas da fatia 3c (2026-11-08)
+
+- **Captura somente por ação explícita:** `@arquivo` / `@file`, `@solução` /
+  `@solution`, seleção e Output, com prévia plaintext e remoção antes de Enviar.
+  Caminho vazio captura o documento ativo. Buffer aberto não salvo prevalece
+  sobre disco; arquivo aberto ilegível não cai silenciosamente para disco.
+- **Snapshots nativos imutáveis:** UI envia apenas GUIDs, não texto forjado;
+  máximo 8 anexos, 65.536 caracteres cada e 131.072 no total. Inventário da
+  solução contém nomes relativos, não conteúdo de todos os arquivos (256 arquivos,
+  orçamento de 1.024 nós/nomes). Não há coleta automática nem ferramentas executáveis.
+- **Confinamento:** raiz da solução carregada, paths canônicos, rejeição de
+  traversal, ADS/UNC/device paths e reparse points; disco valida também o handle
+  aberto antes de leitura. Mudança/fechamento da solução rejeita anexos pendentes
+  com `context_stale` antes de credenciais/HTTP. Histórico existente não recaptura
+  contexto. Cancelamento/erro retém IDs para retry; resultado do chat os consome.
+- **Persistência:** prompt e contexto são `TextPart`s separados; `contextText`
+  opcional na página de histórico, sem alterar o schema de mensagens antigas.
+  Contexto arquivado é replayado sem leitura do editor. Chave selecionada no
+  prompt/contexto é bloqueada antes de HTTP, e eco de credencial não persiste.
+- **Verificação final:** clean/build Release com **0 erros/avisos**, **1.115 testes
+  C# + 151 JS** verdes. Controles negativos cobrem schema/GUIDs, stale, orçamento,
+  cancelamento, Unicode inválido, traversal/ADS e junction real. O teste de symlink
+  de arquivo não pôde criar o link por permissão; esse controle específico não
+  foi exercitado (não é evidência de aprovação de symlink de arquivo).
+- **VS/WebView2 reais:** arquivo não salvo (disco permaneceu com marcador antigo),
+  arquivo ativo com caminho vazio, seleção `Sample.cs:2-2`, inventário e Output;
+  UI de referência/remoção e envio; hash do contexto no wire igual ao arquivo
+  persistido e à página de histórico. Traversal, arquivo >65.536, binário e
+  fechamento da solução foram rejeitados; captura e stale não mudaram contadores
+  HTTP. **0 probes, 0 serviços pagos e 0 exceções JS** na verificação final.
+- **Ajustes demonstrados na Exp:** seleção por text manager/MEF ficou indisponível
+  após Output; produto usa `DTE.ActiveDocument` / `Document.Selection`. Fixture
+  usa DTE2 público em helper C# e lê seu manifesto como UTF-8; expressão de
+  screenshot isolada evita declarações globais entre reexecuções do verificador.
+- **Instalação final:** todos os arquivos comparados por SHA-256 em
+  `Extensions\azw1lxof.mmi`. Exp fechada; fixtures/configuração/credencial/conversas
+  próprias removidas. As três configurações originais e seus modelos foram preservados.
+  Nenhum commit, remote ou push da 3c; 3d concluída em 2026-11-09 (ver acima).
+
+Evidências: `artifacts/phase3c.binlog`, `artifacts/tests/phase3c.trx`,
+`artifacts/phase3c-js.log`, `artifacts/context-webview.json`,
+`artifacts/context-webview.png`, `artifacts/webview-verification.json` e
+`artifacts/byok-webview.json`. Reprodução em `COMANDOS.md`.
+
+**Limites:** histórico continua JSON local não criptografado. Prévia pode conter
+texto sensível capturado explicitamente; revisar/remover antes de Enviar. Limite
+por caracteres não garante encaixe na janela de tokens do modelo (Fase 5).
+Snapshots não são atualizados automaticamente; novo rascunho mantém anexos.
+DTE usa margem conservadora de CRLF, podendo rejeitar perto do limite sem truncar.
+
+## Evidências verificadas da fatia 3b (2026-11-08)
+
+- **Arquivo de conversas pelo host:** `%LocalAppData%\Lumen\conversations\<guid>.json`,
+  versão 1, gravação temporária + substituição atômica. Preserva imagens,
+  raciocínio e estados assinados/opacos sem convertê-los para texto da UI.
+  Títulos, pares user/assistant, estados, GUIDs, Unicode e arquivos são validados;
+  reparse points de diretório/ancestrais são recusados. Teste de symlink de arquivo
+  não disponível neste Windows, sem alegar cobertura real desse caso.
+- Busca por título e texto das mensagens, abrir, renomear, nova conversa e
+  exclusão com confirmação explícita. Abrir/buscar não consultam credenciais
+  nem fazem HTTP; o arquivo continua legível mesmo sem o provedor configurado.
+  A mesma seleção mantém a conversa; selecionar outro modelo inicia contexto novo
+  sem excluir arquivos anteriores.
+- Cancelamentos/falhas ficam visíveis e persistidos, mas seus pares são excluídos
+  do replay. Ecos da credencial, inclusive com escapes JSON, impedem a gravação.
+  Argumentos de tool incompleta ficam como parte opaca; nenhuma tool é executada.
+- **Virtualização medida:** páginas de até 10 turnos, cache de 40 turnos na UI,
+  DOM limitado à janela visível com overscan. No WebView2 real, 500 turnos com
+  alturas distintas (147–656 px na amostra) montaram **4 itens no início / 8 no
+  fim**, alcançando o turno 500. Expandir raciocínio não o recolapsa ao medir.
+  Testes JS percorrem os 500 turnos e verificam a expulsão da quinta página do cache.
+- **Reinício real da Exp:** conversa concluída + cancelada voltou do disco;
+  selecionar o mesmo provedor/modelo preservou o histórico. Continuação explícita
+  ficou com 3 turnos salvos e enviou **3 mensagens**, não 5: o par cancelado não
+  foi reenviado. Busca/abrir/renomear/nova conversa/excluir não aumentaram os
+  contadores HTTP das fixtures. Exclusão sem confirmação foi rejeitada e o
+  verificador de layout detectou sobreposição deliberada antes do resultado verde.
+- Build limpo Release **0 erros / 0 avisos**, **982 testes C# / 121 testes JS**,
+  sem falhas ou ignorados. Evidências: `artifacts/phase3b.binlog`,
+  `artifacts/tests/phase3b.trx`, `artifacts/history-webview.json`.
+  `verify-webview.mjs`, `verify-byok-webview.mjs` e as etapas prepare/resume/cleanup
+  de `verify-history-webview.mjs` passaram; relatórios reais sem exceções JS.
+- Install SHA-256 em `Extensions\1tzvqmde.asw`, verificado após reinício e ao
+  fechar a Exp. Fixtures e credenciais sintéticas removidas por IDs próprios;
+  as três configurações reais do usuário foram preservadas. Sem APIs pagas,
+  remote, push ou alterações ao perfil principal. As alterações da 3b estão locais,
+  ainda sem novo commit.
+- **Limites explícitos:** arquivo até 64 MiB / 10.000 turnos, listagem até 256
+  conversas, página serializada até 4 Mi caracteres (erro controlado, sem truncar).
+  Conversas ficam em JSON local **não criptografado**, avisado na UI; chaves
+  continuam no cofre nativo. Anexos mostram aviso, sem preview. Tokens de uso não
+  são parte persistida. Busca lê os arquivos locais completos; paginação limita o
+  tráfego C#↔JS e a memória/DOM do navegador, não a leitura interna do host.
+  Em alturas pequenas, a página precisa de rolagem vertical para acomodar composer
+  e painéis; acessibilidade final permanece na 3d.
 
 ## Evidências verificadas da fatia 3a (2026-11-07)
 
@@ -174,12 +317,16 @@ funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
 ## Evidências locais (ignoradas pelo Git)
 
 - `artifacts/phase0.binlog`, `artifacts/phase1.binlog`, `artifacts/phase2.binlog`,
-  `artifacts/phase3a.binlog`, `artifacts/net48-probe.binlog`.
+  `artifacts/phase3a.binlog`, `artifacts/phase3b.binlog`, `artifacts/phase3c.binlog`,
+  `artifacts/phase3d.binlog`, `artifacts/net48-probe.binlog`.
 - `artifacts/tests/phase0.trx`, `artifacts/tests/phase2.trx`,
-  `artifacts/tests/phase3a.trx`.
+  `artifacts/tests/phase3a.trx`, `artifacts/tests/phase3b.trx`,
+  `artifacts/tests/phase3c.trx`, `artifacts/tests/phase3d.trx`.
 - `artifacts/webview-verification.json`, `artifacts/webview-offline.png`.
 - `artifacts/webview-theme.json`, `artifacts/byok-webview.json`,
-  `artifacts/byok-webview.png`.
+  `artifacts/byok-webview.png`, `artifacts/history-webview.json`,
+  `artifacts/history-webview.png`, `artifacts/context-webview.json`,
+  `artifacts/context-webview.png`.
 - `artifacts/vs-activity.xml`, `artifacts/vs-update.xml` e logs `lumen-*.log`.
 
 O preview em navegador nunca simula conexão C#: sem host, enviar fica
@@ -193,11 +340,16 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fase 3 — fatia 3b (persistência de conversas), aguardando autorização do
-usuário.** Histórico persistente com busca/renomear/excluir e virtualização do
-log (o limite atual de 20 turnos é provisório da 3a). Depois 3c (contexto
-`@arquivo`, `@solução`, seleção do editor) e 3d (acessibilidade final), cada
-fatia com seu commit. A 3a foi autorizada e concluída em 2026-11-07.
+**Fase 3 — fatia 3d (acessibilidade final) concluída e verificada em 2026-11-09;
+aguardando autorização para o próximo passo.**
+A 3c (`@arquivo`, `@solução`, seleção do editor e Output) foi autorizada e
+verificada no VS em 2026-11-08; a 3d (acessibilidade + estados de erro acionáveis)
+foi autorizada e verificada em 2026-11-09. Não avançar para a Fase 4 sem nova
+autorização. Itens da Fase 3 que dependem de ferramentas (tool cards,
+cancelamento durante tool) ficam para a Fase 4. A 3a foi autorizada e concluída
+em 2026-11-07; a 3b foi autorizada e verificada em 2026-11-08. O histórico não
+tem mais o limite provisório de 20 turnos da 3a.
+Nenhum remote, push ou commit das fatias 3b/3c/3d foi realizado.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

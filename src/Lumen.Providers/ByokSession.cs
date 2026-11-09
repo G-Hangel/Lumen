@@ -16,18 +16,19 @@ public sealed class ByokSession : IDisposable
     private readonly SettingsStore settings;
     private readonly CapabilityProbe probe;
     private readonly bool canProbe;
+    private readonly IContextSource? contextSource;
+    private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
     private readonly Dictionary<string, IReadOnlyList<ModelInfo>> models = new Dictionary<string, IReadOnlyList<ModelInfo>>();
-    private readonly List<Message> history = new List<Message>();
+    private StoredConversation? conversation;
     private readonly object activeGate = new object();
     private CancellationTokenSource? active;
     private bool loaded;
-    private string? historyModel;
     private readonly HashSet<string> requestIds = new HashSet<string>();
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null)
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -103,6 +104,63 @@ public sealed class ByokSession : IDisposable
             }
             switch (type)
             {
+                case "byok.context.capture":
+                    Require(payload, new[] { "kind" }, new[] { "path" });
+                    var contextKind = RequiredString(payload, "kind", 16);
+                    if (!new[] { "file", "solution", "selection", "output" }.Contains(contextKind)) throw new ProviderException("invalid_message");
+                    var contextPath = JsonWire.Get(payload, "path").ValueKind == JsonValueKind.Undefined ? null : RequiredString(payload, "path", 1024, true);
+                    if (contextKind != "file" && contextPath is not null) throw new ProviderException("invalid_message");
+                    if (contextSource is null) throw new ProviderException("context_unavailable");
+                    if (contexts.Count >= 8) throw new ProviderException("context_too_large");
+                    var snapshot = await contextSource.CaptureAsync(contextKind, contextPath, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (contexts.Values.Sum(value => value.Text.Length) + snapshot.Text.Length > 131072) throw new ProviderException("context_too_large");
+                    var contextId = Guid.NewGuid().ToString("D");
+                    contexts.Add(contextId, snapshot);
+                    await Reply(send, id, type + ".result", new { context = new { id = contextId, kind = snapshot.Kind, label = snapshot.Label, text = snapshot.Text } }).ConfigureAwait(false);
+                    break;
+                case "byok.context.release":
+                    Require(payload, new[] { "ids" });
+                    foreach (var releasedContext in ContextIds(payload, "ids")) contexts.Remove(releasedContext);
+                    await Reply(send, id, type + ".result", new { released = true }).ConfigureAwait(false);
+                    break;
+                case "byok.history.list":
+                    Require(payload, new[] { "query" });
+                    var saved = await settings.Conversations.ListAsync(RequiredString(payload, "query", 256, true), cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { conversations = saved.Take(256).Select(ConversationView).ToArray() }).ConfigureAwait(false);
+                    break;
+                case "byok.history.open":
+                    Require(payload, new[] { "conversationId", "offset", "limit" });
+                    var offset = JsonWire.Int(payload, "offset");
+                    var limit = JsonWire.Int(payload, "limit");
+                    if (!offset.HasValue || offset < 0 || !limit.HasValue || limit < 1 || limit > 10) throw new ProviderException("invalid_message");
+                    var opened = await settings.Conversations.ReadAsync(RequiredString(payload, "conversationId", 36), cancellationToken).ConfigureAwait(false);
+                    if (offset > opened.TurnStates.Count) throw new ProviderException("invalid_message");
+                    var page = new { conversation = ConversationView(opened), offset, total = opened.TurnStates.Count,
+                        turns = Enumerable.Range(offset.Value, Math.Min(limit.Value, opened.TurnStates.Count - offset.Value)).Select(index => TurnView(opened, index)).ToArray() };
+                    if (JsonWire.Serialize(page).Length > 4 * 1024 * 1024) throw new ProviderException("history_too_large");
+                    conversation = opened;
+                    await Reply(send, id, type + ".result", page).ConfigureAwait(false);
+                    break;
+                case "byok.history.new":
+                    Require(payload, Array.Empty<string>());
+                    conversation = null;
+                    await Reply(send, id, type + ".result", new { created = true }).ConfigureAwait(false);
+                    break;
+                case "byok.history.rename":
+                    Require(payload, new[] { "conversationId", "title" });
+                    var renamed = await settings.Conversations.RenameAsync(RequiredString(payload, "conversationId", 36), RequiredString(payload, "title", 160), cancellationToken).ConfigureAwait(false);
+                    if (conversation?.Conversation.Id == renamed.Conversation.Id) conversation = renamed;
+                    await Reply(send, id, type + ".result", new { conversation = ConversationView(renamed) }).ConfigureAwait(false);
+                    break;
+                case "byok.history.delete":
+                    Require(payload, new[] { "conversationId", "confirm" });
+                    if (JsonWire.Get(payload, "confirm").ValueKind != JsonValueKind.True) throw new ProviderException("invalid_message");
+                    var deletedId = RequiredString(payload, "conversationId", 36);
+                    await settings.Conversations.DeleteAsync(deletedId, cancellationToken).ConfigureAwait(false);
+                    if (conversation?.Conversation.Id == deletedId) conversation = null;
+                    await Reply(send, id, type + ".result", new { deleted = true }).ConfigureAwait(false);
+                    break;
                 case "byok.list":
                     Require(payload, Array.Empty<string>());
                     await Reply(send, id, type + ".result", new { configurations = configurations.Select(ConfigurationView).ToArray(), remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
@@ -151,7 +209,7 @@ public sealed class ByokSession : IDisposable
                     configurations.Remove(removed);
                     models.Remove(removed.Id);
                     probe.Store.RemoveProvider(removed.Id);
-                    history.Clear(); historyModel = null;
+                    if (conversation?.ConfigurationId == removed.Id) conversation = null;
                     await settings.WriteProbeCacheAsync(probe.Store, cancellationToken).ConfigureAwait(false);
                     await settings.WriteAsync(configurations, cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { removed = true }).ConfigureAwait(false);
@@ -163,7 +221,7 @@ public sealed class ByokSession : IDisposable
                     FindModel(selected, modelId);
                     var replacement = new ProviderConfiguration(selected.Id, selected.ProviderId, selected.Kind, selected.BaseUrl, modelId, selected.DeploymentNames);
                     configurations[configurations.IndexOf(selected)] = replacement;
-                    history.Clear(); historyModel = null;
+                    if (conversation is not null && (conversation.ConfigurationId != selected.Id || conversation.Conversation.ModelId != modelId)) conversation = null;
                     await settings.WriteAsync(configurations, cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { configuration = ConfigurationView(replacement) }).ConfigureAwait(false);
                     break;
@@ -203,30 +261,51 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { model = ModelView(probedModel), supported = support, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.chat":
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image" });
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
                     if (!Enum.TryParse<ReasoningIntent>(RequiredString(payload, "effort", 16), out var effort) || !Enum.IsDefined(typeof(ReasoningIntent), effort)) throw new ProviderException("invalid_message");
                     var text = RequiredString(payload, "text", 4096);
                     var parts = new List<ContentPart> { new TextPart(text) };
+                    var selectedContexts = JsonWire.Get(payload, "contextIds").ValueKind == JsonValueKind.Undefined ? Array.Empty<string>() : ContextIds(payload, "contextIds");
+                    var attachedContexts = new List<ContextSnapshot>();
+                    foreach (var selectedContext in selectedContexts)
+                    {
+                        if (contextSource is null || !contexts.TryGetValue(selectedContext, out var captured)) throw new ProviderException("context_stale");
+                        await contextSource.ValidateAsync(captured, cancellationToken).ConfigureAwait(false);
+                        attachedContexts.Add(captured);
+                    }
+                    if (attachedContexts.Count > 0) parts.Add(new TextPart(string.Join("\n\n", attachedContexts.Select(value => "[Context: " + value.Label + "]\n" + value.Text))));
                     var image = JsonWire.Get(payload, "image");
                     if (image.ValueKind != JsonValueKind.Undefined)
                     {
                         Require(image, new[] { "mediaType", "base64Data" });
                         parts.Add(new ImagePart(RequiredString(image, "mediaType", 32), RequiredString(image, "base64Data", 6 * 1024 * 1024)));
                     }
-                    if (historyModel != chatConfiguration.Id + "/" + chatModel.ModelId) { history.Clear(); historyModel = chatConfiguration.Id + "/" + chatModel.ModelId; }
+                    if (conversation is not null && (conversation.ConfigurationId != chatConfiguration.Id || conversation.Conversation.ModelId != chatModel.ModelId)) conversation = null;
                     var userMessage = new Message(MessageRole.User, parts);
+                    var titleText = text.Trim();
+                    var titleLength = Math.Min(80, titleText.Length);
+                    if (char.IsHighSurrogate(titleText[titleLength - 1])) titleLength--;
+                    var currentConversation = conversation ?? new StoredConversation(chatConfiguration.Id,
+                        new Conversation(Guid.NewGuid().ToString("D"), ChatMode.Ask, Array.Empty<Message>(), titleText.Substring(0, titleLength), chatModel.ModelId, effort), Array.Empty<string>());
+                    if (currentConversation.TurnStates.Count >= 10000) throw new ProviderException("history_too_large");
+                    var replay = currentConversation.Conversation.Messages.Where((_, index) => currentConversation.TurnStates[index / 2] == "completed").ToArray();
+                    var chatSecret = await credentials.ReadAsync(chatConfiguration.Id, cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(chatSecret) && parts.OfType<TextPart>().Any(part => part.Text.IndexOf(chatSecret!, StringComparison.Ordinal) >= 0)) throw new ProviderException("invalid_response");
                     var assistant = new List<ContentPart>();
                     var callNames = new Dictionary<string, string>();
+                    var callChunks = new Dictionary<string, string>();
                     var callIds = new HashSet<string>();
                     long streamSize = 0;
                     var eventCount = 0;
                     var failed = false;
+                    var turnState = "failed";
+                    try
                     {
                         var outputTokens = chatModel.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024;
-                        await providers.Chat(chatConfiguration.Kind).StreamAsync(new ChatRequest(chatConfiguration, chatModel, history.Concat(new[] { userMessage }).ToArray(), effort, maxOutputTokens: outputTokens),
-                            await credentials.ReadAsync(chatConfiguration.Id, cancellationToken).ConfigureAwait(false), async streamEvent =>
+                        await providers.Chat(chatConfiguration.Kind).StreamAsync(new ChatRequest(chatConfiguration, chatModel, replay.Concat(new[] { userMessage }).ToArray(), effort, maxOutputTokens: outputTokens),
+                            chatSecret, async streamEvent =>
                             {
                                 streamSize += streamEvent switch
                                 {
@@ -252,21 +331,49 @@ public sealed class ByokSession : IDisposable
                                         break;
                                     case ToolCallStart call:
                                         if (!callIds.Add(call.Id) || callIds.Count > 128) throw new ProviderException("invalid_stream");
-                                        callNames.Add(call.Id, call.Name);
+                                        callNames.Add(call.Id, call.Name); callChunks.Add(call.Id, string.Empty);
+                                        break;
+                                    case ToolCallArgsDelta delta:
+                                        if (!callChunks.ContainsKey(delta.Id)) throw new ProviderException("invalid_stream");
+                                        callChunks[delta.Id] += delta.Chunk;
                                         break;
                                     case ToolCallEnd call:
                                         if (!callNames.TryGetValue(call.Id, out var callName)) throw new ProviderException("invalid_stream");
                                         assistant.Add(new ToolCallPart(call.Id, callName, call.ParsedArgs, call.ProviderState));
-                                        callNames.Remove(call.Id);
+                                        callNames.Remove(call.Id); callChunks.Remove(call.Id);
                                         break;
                                     case StreamError _: failed = true; break;
                                 }
                                 await Reply(send, id, "byok.event", EventView(streamEvent)).ConfigureAwait(false);
                             }, cancellationToken).ConfigureAwait(false);
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (!failed && assistant.Count > 0) { history.Add(userMessage); history.Add(new Message(MessageRole.Assistant, assistant, chatModel.ModelId)); }
-                        await Reply(send, id, type + ".result", new { completed = !failed }).ConfigureAwait(false);
+                        if (!failed && callNames.Count == 0 && assistant.Count > 0) turnState = "completed";
                     }
+                    catch (OperationCanceledException) { turnState = "cancelled"; throw; }
+                    finally
+                    {
+                        foreach (var pendingCall in callNames)
+                        {
+                            using var rawCall = JsonDocument.Parse(JsonWire.Serialize(new { kind = "incompleteToolCall", id = pendingCall.Key, name = pendingCall.Value, argumentsText = callChunks[pendingCall.Key] }));
+                            assistant.Add(new UnknownPart("incompleteToolCall", rawCall.RootElement.Clone()));
+                        }
+                        if (assistant.Count == 0) assistant.Add(new TextPart(string.Empty));
+                        var domain = currentConversation.Conversation;
+                        var updated = new Conversation(domain.Id, domain.Mode,
+                            domain.Messages.Concat(new[] { userMessage, new Message(MessageRole.Assistant, assistant, chatModel.ModelId) }).ToArray(),
+                            domain.Title, chatModel.ModelId, effort, domain.CreatedAtUtc, DateTimeOffset.UtcNow);
+                        if (!string.IsNullOrEmpty(chatSecret))
+                        {
+                            using var archiveJson = JsonDocument.Parse(ConversationSerializer.ToJson(updated));
+                            if (ContainsSecret(archiveJson.RootElement, chatSecret!)) throw new ProviderException("invalid_response");
+                        }
+                        var stored = new StoredConversation(chatConfiguration.Id, updated, currentConversation.TurnStates.Concat(new[] { turnState }).ToArray());
+                        try { await settings.Conversations.SaveAsync(stored, CancellationToken.None).ConfigureAwait(false); }
+                        catch (Exception exception) when (exception is System.IO.IOException || exception is UnauthorizedAccessException) { throw new ProviderException("history_write_failed"); }
+                        conversation = stored;
+                    }
+                    foreach (var selectedContext in selectedContexts) contexts.Remove(selectedContext);
+                    await Reply(send, id, type + ".result", new { completed = turnState == "completed", conversation = ConversationView(conversation!) }).ConfigureAwait(false);
                     break;
                 default: throw new ProviderException("invalid_message");
             }
@@ -280,6 +387,37 @@ public sealed class ByokSession : IDisposable
             gate.Release();
         }
         return true;
+    }
+
+    private static bool ContainsSecret(JsonElement value, string secret) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString()!.IndexOf(secret, StringComparison.Ordinal) >= 0,
+        JsonValueKind.Array => value.EnumerateArray().Any(item => ContainsSecret(item, secret)),
+        JsonValueKind.Object => value.EnumerateObject().Any(property => property.Name.IndexOf(secret, StringComparison.Ordinal) >= 0 || ContainsSecret(property.Value, secret)),
+        _ => false
+    };
+
+    private static object ConversationView(StoredConversation value) => new
+    {
+        id = value.Conversation.Id, title = value.Conversation.Title ?? string.Empty, configurationId = value.ConfigurationId,
+        modelId = value.Conversation.ModelId, updatedAtUtc = value.Conversation.UpdatedAtUtc.ToString("O"), turnCount = value.TurnStates.Count
+    };
+
+    private static object TurnView(StoredConversation value, int index)
+    {
+        var user = value.Conversation.Messages[index * 2];
+        var assistant = value.Conversation.Messages[index * 2 + 1];
+        var userText = user.Parts.OfType<TextPart>().ToArray();
+        var view = new Dictionary<string, object>
+        {
+            ["index"] = index, ["userText"] = userText.FirstOrDefault()?.Text ?? string.Empty, ["hasImage"] = user.Parts.OfType<ImagePart>().Any(),
+            ["text"] = string.Concat(assistant.Parts.OfType<TextPart>().Select(part => part.Text)),
+            ["reasoning"] = string.Concat(assistant.Parts.OfType<ReasoningPart>().Select(part => part.Text)),
+            ["tools"] = assistant.Parts.OfType<ToolCallPart>().Select(call => new { id = call.Id, name = call.Name, arguments = call.Arguments }).ToArray(),
+            ["status"] = value.TurnStates[index]
+        };
+        if (userText.Length > 1) view["contextText"] = string.Concat(userText.Skip(1).Select(part => part.Text));
+        return view;
     }
 
     private CatalogResult ApplyProbeCatalog(ProviderConfiguration configuration, CatalogResult catalog) =>
@@ -325,7 +463,14 @@ public sealed class ByokSession : IDisposable
         if (parts.LastOrDefault() is TextPart previous) parts[parts.Count - 1] = new TextPart(previous.Text + text); else parts.Add(new TextPart(text));
     }
     private static object ConfigurationView(ProviderConfiguration configuration) => new { id = configuration.Id, providerId = configuration.ProviderId, kind = configuration.Kind.ToString(), baseUrl = configuration.BaseUrl, selectedModelId = configuration.SelectedModelId, deploymentNames = configuration.DeploymentNames };
-    private static object CatalogView(ProviderConfiguration configuration, CatalogResult result) => new { configuration = ConfigurationView(configuration), models = result.Models.Select(ModelView).ToArray(), credentialValid = result.CredentialValid, code = result.ErrorCode };
+    private static object CatalogView(ProviderConfiguration configuration, CatalogResult result) => new
+  {
+    configuration = ConfigurationView(configuration),
+    models = result.Models.Select(ModelView).ToArray(),
+    credentialValid = result.CredentialValid,
+    code = result.ErrorCode,
+    retryAfter = result.RetryAfter is TimeSpan wait ? (long)Math.Ceiling(wait.TotalSeconds) : (long?)null
+  };
     private static object ModelView(ModelInfo model) => new
     {
         id = model.ModelId, name = model.DisplayName ?? model.ModelId,
@@ -342,7 +487,7 @@ public sealed class ByokSession : IDisposable
         ToolCallEnd call => new { kind = "ToolCallEnd", id = call.Id, arguments = call.ParsedArgs },
         Usage usage => new { kind = "Usage", input = usage.InputTokens, output = usage.OutputTokens },
         Done done => new { kind = "Done", reason = done.FinishReason.ToString() },
-        StreamError error => new { kind = "Error", code = error.Code },
+        StreamError error => new { kind = "Error", code = error.Code, retryAfter = error.RetryAfterSeconds is long seconds ? seconds : (long?)null },
         _ => throw new InvalidOperationException()
     };
     private static Task Reply(Func<string, Task> send, string? id, string type, object payload) => send(JsonWire.Serialize(new { version = 1, id, type, payload }));
@@ -351,6 +496,19 @@ public sealed class ByokSession : IDisposable
         var value = JsonWire.String(payload, name);
         if (value is null || value.Length > maximum || (!allowEmpty && string.IsNullOrWhiteSpace(value))) throw new ProviderException("invalid_message");
         return value;
+    }
+    private static string[] ContextIds(JsonElement payload, string name)
+    {
+        var value = JsonWire.Get(payload, name);
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > 8) throw new ProviderException("invalid_message");
+        var ids = new HashSet<string>();
+        var ordered = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || !Guid.TryParseExact(item.GetString(), "D", out var guid) || guid == Guid.Empty || !ids.Add(guid.ToString("D"))) throw new ProviderException("invalid_message");
+            ordered.Add(guid.ToString("D"));
+        }
+        return ordered.ToArray();
     }
     private static void Require(JsonElement value, string[] required, string[]? optional = null) { if (!Fields(value, required, optional)) throw new ProviderException("invalid_message"); }
     private static bool Fields(JsonElement value, string[] required, string[]? optional = null)

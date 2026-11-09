@@ -11,6 +11,7 @@
 </head>
 <body>
   <div class="app" aria-busy="true">
+    <button id="byok-skip-link" type="button" class="skip-link" data-i18n="skipToComposer"></button>
     <header class="topbar">
       <div class="brand">
         <span class="brand-rule" aria-hidden="true"></span>
@@ -24,6 +25,7 @@
       <div class="byok-scroll" tabindex="0" data-i18n-label="byokTitle">
         <p id="byok-status" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
         <p id="byok-error" class="error" role="alert" hidden></p>
+        <button id="byok-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
         <form id="byok-configure" autocomplete="off">
           <fieldset id="byok-config-fields" disabled>
             <legend data-i18n="byokAddProvider"></legend>
@@ -81,10 +83,45 @@
       </div>
     </details>
 
+    <details id="byok-history" class="byok-history">
+      <summary data-i18n="historyTitle"></summary>
+      <div class="history-controls">
+        <form id="byok-history-search-form">
+          <label for="byok-history-query" data-i18n="historySearch"></label>
+          <input id="byok-history-query" type="search" maxlength="256" disabled>
+          <button id="byok-history-search" type="submit" class="text-button" data-i18n="historySearch" disabled></button>
+        </form>
+        <label for="byok-history-list" data-i18n="historySaved"></label>
+        <select id="byok-history-list" disabled></select>
+        <form id="byok-history-rename-form">
+          <label for="byok-history-name" data-i18n="historyName"></label>
+          <input id="byok-history-name" type="text" maxlength="160" disabled>
+          <button id="byok-history-rename" type="submit" class="text-button" data-i18n="historyRename" disabled></button>
+        </form>
+        <button id="byok-history-delete" type="button" class="text-button" data-i18n="historyDelete" disabled></button>
+        <div id="byok-history-confirmation" hidden>
+          <p data-i18n="historyDeleteWarning"></p>
+          <button id="byok-history-confirm" type="button" class="text-button" data-i18n="historyConfirmDelete"></button>
+          <button id="byok-history-keep" type="button" class="text-button" data-i18n="historyKeep"></button>
+        </div>
+        <p class="secondary" data-i18n="historyPrivacy"></p>
+      </div>
+    </details>
+
     <main class="chat-main" aria-labelledby="byok-chat-title">
       <h2 id="byok-chat-title" class="sr-only" data-i18n="byokChatTitle"></h2>
       <p id="byok-empty" class="empty-state" data-i18n="byokEmpty"></p>
-      <div id="byok-output" class="byok-output" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0" data-i18n-label="byokChatTitle"></div>
+      <div class="history-toolbar">
+        <button id="byok-history-new" type="button" class="text-button" data-i18n="historyNew" disabled></button>
+        <button id="byok-history-first" type="button" class="text-button" data-i18n="historyFirst" disabled></button>
+        <button id="byok-history-last" type="button" class="text-button" data-i18n="historyLast" disabled></button>
+      </div>
+      <p id="byok-history-status" class="secondary" role="status" aria-live="polite"></p>
+      <button id="byok-history-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
+      <div id="byok-output" class="byok-output" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0" data-i18n-label="byokChatTitle">
+        <div id="byok-history-spacer" class="history-spacer"><div id="byok-history-items" class="history-items" role="list" data-i18n-label="historyTitle"></div></div>
+        <div id="byok-live"></div>
+      </div>
     </main>
 
     <footer class="composer-panel">
@@ -98,8 +135,25 @@
           <label for="byok-message" data-i18n="byokMessage"></label>
           <span id="byok-count" class="secondary"></span>
         </div>
-        <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost"></textarea>
+        <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter"></textarea>
         <p id="byok-active-model" class="secondary" role="status"></p>
+        <details id="byok-context" class="send-options context-panel" aria-busy="false">
+          <summary data-i18n="contextTitle"></summary>
+          <div class="context-controls">
+            <label for="byok-context-path" data-i18n="contextPath"></label>
+            <input id="byok-context-path" type="text" maxlength="1024" autocomplete="off" spellcheck="false" disabled data-i18n-placeholder="contextPathPlaceholder" aria-describedby="byok-context-help">
+            <button id="byok-context-reference" type="button" class="text-button" data-i18n="contextReference" disabled></button>
+            <div class="byok-actions">
+              <button id="byok-context-file" type="button" class="text-button" data-i18n="contextFile" disabled></button>
+              <button id="byok-context-solution" type="button" class="text-button" data-i18n="contextSolution" disabled></button>
+              <button id="byok-context-selection" type="button" class="text-button" data-i18n="contextSelection" disabled></button>
+              <button id="byok-context-output" type="button" class="text-button" data-i18n="contextOutput" disabled></button>
+            </div>
+            <p id="byok-context-help" class="secondary" data-i18n="contextHelp"></p>
+            <p id="byok-context-count" class="secondary" role="status" aria-live="polite"></p>
+            <ul id="byok-context-list" class="context-list"></ul>
+          </div>
+        </details>
         <details id="byok-send-options" class="send-options">
           <summary data-i18n="byokSendOptions"></summary>
           <div class="composer-options">
@@ -118,12 +172,12 @@
           <p id="byok-cost" class="byok-cost" data-i18n="byokCost"></p>
         </details>
         <div class="byok-actions">
-          <button id="byok-send" type="submit" class="primary-button" data-i18n="byokSend" disabled></button>
+          <button id="byok-send" type="submit" class="primary-button" data-i18n="byokSend" disabled aria-keyshortcuts="Control+Enter"></button>
           <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancel" disabled></button>
         </div>
       </form>
     </footer>
-    <p id="announcement" class="sr-only" role="status"></p>
+    <p id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
   </div>
 </body>
 </html>

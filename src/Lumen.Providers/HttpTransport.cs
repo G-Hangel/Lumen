@@ -67,6 +67,8 @@ public sealed class HttpTransport
         var wait = retry?.Delta ?? (retry?.Date - DateTimeOffset.UtcNow);
         return wait is null ? null : wait.Value < TimeSpan.Zero ? TimeSpan.Zero : wait;
     }
+    // The wire contract carries whole seconds; round up so the UI never under-reports the provider's wait.
+    public static long? RetryAfterSeconds(HttpResponseMessage response) => RetryAfter(response) is TimeSpan wait ? (long)Math.Ceiling(wait.TotalSeconds) : null;
     public static CatalogResult CatalogError(HttpResponseMessage response) => new CatalogResult(Array.Empty<ModelInfo>(),
         (int)response.StatusCode == 429 || (int)response.StatusCode == 402 ? true :
         (int)response.StatusCode == 401 || (int)response.StatusCode == 403 ? false : (bool?)null,

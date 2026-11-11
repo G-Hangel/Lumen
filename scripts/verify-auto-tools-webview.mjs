@@ -105,6 +105,14 @@ async function collectOwnedConversations() {
 async function send(text, enabled = true) {
   return action('byok.chat.result', `const input=document.querySelector('#byok-message');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input'));const consent=document.querySelector('#byok-auto-read-tools');consent.checked=${enabled};consent.dispatchEvent(new Event('change'));document.querySelector('#byok-send').click();`);
 }
+function validateScreenshot(data) {
+  const bytes = Buffer.from(data, 'base64');
+  assert.ok(bytes.length >= 33, 'Screenshot is too short for a PNG header.');
+  assert.deepEqual(bytes.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  assert.equal(bytes.toString('ascii', 12, 16), 'IHDR');
+  assert.ok(bytes.readUInt32BE(16) > 0 && bytes.readUInt32BE(20) > 0, 'Screenshot dimensions must be positive.');
+  return bytes;
+}
 const report = { startedAt: new Date().toISOString(), source: 'real VS Exp/WebView2 + owned loopback provider; no paid APIs' };
 try {
   if (stage === 'verify') await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -197,7 +205,11 @@ try {
     report.narrowLayout = await evaluate('({width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth})'); assert.equal(report.narrowLayout.overflow, false);
     await command('Emulation.clearDeviceMetricsOverride');
     const shot = await command('Page.captureScreenshot', { format: 'png' });
-    await writeFile(new URL('../artifacts/auto-tools-webview.png', import.meta.url), Buffer.from(shot.data, 'base64'));
+    const screenshot = validateScreenshot(shot.data);
+    const corrupted = Buffer.from(screenshot); corrupted[0] = 0;
+    assert.throws(() => validateScreenshot(corrupted.toString('base64')), assert.AssertionError);
+    report.screenshotNegativeDetected = true;
+    await writeFile(new URL('../artifacts/auto-tools-webview.png', import.meta.url), screenshot);
     assert.deepEqual(exceptions, []); report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
     await writeFile(new URL('../artifacts/auto-tools-webview.json', import.meta.url), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
   }

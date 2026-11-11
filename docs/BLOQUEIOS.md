@@ -8,25 +8,6 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
-### B9 — Captura CDP após regressão automática readonly (2026-11-10)
-
-`node scripts/verify-auto-tools-webview.mjs verify` atingiu as asserções de
-reinjeção/replay, opt-out, rejeições, limite de loop, cancelamento, solução
-fechada e layout, mas expirou em `Page.captureScreenshot` (30 s), em
-`scripts/verify-auto-tools-webview.mjs:199`. Uma captura isolada do mesmo estado
-com `fromSurface:false`/`captureBeyondViewport:false` também expirou (15 s).
-Causa ainda não identificada; não houve replay dos turnos para obter a imagem.
-
-Saída: `Error: Page.captureScreenshot`, no evento do timer (`:69`). Evidência:
-saídas das tarefas `bdomve6jh` e da captura isolada na sessão. A imagem e o relatório
-automáticos anteriores não contam como evidência de aprovação integral desta
-regressão. Asserção de exceções JS (`:201`) não foi atingida. Cleanup removeu
-apenas provedor/chave/conversas próprios; fixture e Exp fechadas, pacote verificado.
-
-Não bloqueia a fatia manual 4c: seu próprio verificador completo, imagem, controle
-negativo e 0 exceções JS passaram no pacote final. Não declarar a regressão
-automática integralmente concluída até resolver a captura e fechar seu relatório.
-
 ### B8 — Azure: inventory de deployments requer Entra/RBAC
 
 A rota data-plane prevista não foi confirmada pela documentação oficial.
@@ -66,6 +47,24 @@ ação do usuário (`AGENTS.md` §6). Não tentar contornar.
 ---
 
 ## Resolvidos
+
+### B9 — Regressão readonly e captura CDP concluídas (2026-11-11)
+
+Em 2026-11-10, o verificador havia alcançado os controles funcionais, mas
+`Page.captureScreenshot` expirou em 30 s; tentativa isolada também expirou em
+15 s, sem relatório final nem asserção de exceções JS. A causa da expiração
+original não foi identificada e não se afirma que tenha sido corrigida.
+
+Em 2026-11-11, uma execução completa de `node scripts/verify-auto-tools-webview.mjs verify`
+na Exp, usando o pacote instalado com alterações locais da Fase 5 ainda não
+commitadas, chegou ao fim: captura PNG válida, asserção de zero exceções JS,
+controles de leitura/reinjeção, opt-out, traversal/escrita, orçamento, cancelamento,
+solução fechada e layout. O verificador rejeitou um PNG deliberadamente corrompido.
+Foram 12 requests loopback e 0 pagos. Evidências: `artifacts/auto-tools-webview.json`
+e `artifacts/auto-tools-webview.png`. Dados sintéticos removidos, Exp fechada e
+arquivos instalados verificados em `Extensions\hbngbmnp.22r`. B9 fica resolvido
+quanto à regressão e ao relatório; eventual intermitência de CDP continua uma
+limitação observada, não uma causa diagnosticada.
 
 ### B10 — Remoto configurado pelo usuário (2026-11-11)
 

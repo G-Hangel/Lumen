@@ -15,7 +15,11 @@ public static class CommandToolCatalog
             "\"args\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":256}," +
             "\"cwd\":{\"type\":\"string\",\"minLength\":0,\"maxLength\":4096}," +
             "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60000}}",
-            "[\"command\",\"args\"]")
+            "[\"command\",\"args\"]"),
+        Spec("run_build", "Run dotnet build --no-restore for a workspace solution or project, with command approval.",
+            "{\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"timeout_ms\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60000}}", "[\"path\"]"),
+        Spec("run_tests", "Run dotnet test --no-restore for a workspace solution or project, with command approval.",
+            "{\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"timeout_ms\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":60000}}", "[\"path\"]")
     });
 
     private static ToolSpec Spec(string name, string description, string properties, string required)
@@ -34,6 +38,7 @@ public static class CommandToolCatalog
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         string? command = null;
+        string? target = null;
         List<string>? args = null;
         string? cwd = null;
         int timeoutMs = 30000;
@@ -52,6 +57,7 @@ public static class CommandToolCatalog
                 ReadToolCatalog.ValidateText(value);
                 if (field.Name == "command") command = value;
                 else if (field.Name == "cwd") cwd = value.Length == 0 ? null : value;
+                else if (field.Name == "path") target = value;
             }
             else if (type == "integer")
             {
@@ -81,6 +87,14 @@ public static class CommandToolCatalog
         foreach (var required in spec.ParametersSchema.GetProperty("required").EnumerateArray())
             if (!seen.Contains(required.GetString()!)) throw new ToolException("invalid_arguments");
 
+        if (invocation.Name == "run_build" || invocation.Name == "run_tests")
+        {
+            if (target is null || System.IO.Path.IsPathRooted(target) || target.IndexOf(':') >= 0 ||
+                target.Replace('\\', '/').Split('/').Contains("..") ||
+                !(target.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || target.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase) || target.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+                throw new ToolException("invalid_arguments");
+            return ("dotnet", new[] { invocation.Name == "run_build" ? "build" : "test", target, "--no-restore" }, null, timeoutMs);
+        }
         return (command!, args ?? new List<string>(), cwd, timeoutMs);
     }
 }

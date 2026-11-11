@@ -84,6 +84,7 @@ public sealed class ByokReadToolTests
     }
 
     [Theory]
+    [InlineData("get_edit_snapshot", "{\"path\":\"Sample.cs\"}")]
     [InlineData("read_file", "{\"path\":\"Sample.cs\",\"startLine\":2,\"endLine\":2}")]
     [InlineData("list_dir", "{\"path\":\".\"}")]
     [InlineData("find_files", "{\"path\":\".\",\"glob\":\"**/*.cs\"}")]

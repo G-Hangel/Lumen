@@ -8,10 +8,10 @@ export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_CONTEXTS = 8;
 export const MAX_CONTEXT_TEXT = 65536;
 export const MAX_CONTEXT_TOTAL = 131072;
-export const READ_TOOL_NAMES = Object.freeze(['read_file', 'list_dir', 'find_files', 'grep']);
+export const READ_TOOL_NAMES = Object.freeze(['read_file', 'list_dir', 'find_files', 'grep', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'detect_shells']);
 export const MAX_READ_TOOL_CONTENT = 65536;
 export const WRITE_TOOL_NAMES = Object.freeze(['create_file', 'edit_file']);
-export const COMMAND_TOOL_NAMES = Object.freeze(['run_command']);
+export const COMMAND_TOOL_NAMES = Object.freeze(['run_command', 'run_build', 'run_tests']);
 export const APPROVAL_CATEGORIES = Object.freeze(['WriteOutsideWorkspace', 'ExecuteCommand']);
 export const APPROVAL_DECISIONS = Object.freeze(['deny', 'allow_once', 'allow_session']);
 export const MAX_WRITE_TOOL_CONTENT = 65536;
@@ -145,9 +145,10 @@ const toolGlob = value => toolText(value, 256) && !/^[/\\]|[:\u0000-\u001f\u007f
 export function isReadToolRequest(value) {
   if (!fields(value, ['name', 'arguments']) || !READ_TOOL_NAMES.includes(value.name)) return false;
   const a = value.arguments;
+  if (['get_errors', 'get_output_logs', 'detect_shells'].includes(value.name)) return fields(a, []);
   const required = ['path', ...(value.name === 'find_files' ? ['glob'] : value.name === 'grep' ? ['pattern'] : [])];
-  const optional = value.name === 'read_file' ? ['startLine', 'endLine'] : ['maxResults', ...(value.name === 'grep' ? ['glob'] : [])];
-  return fields(a, required, optional) && toolText(a.path, 4096)
+  const optional = value.name === 'get_edit_snapshot' ? [] : value.name === 'read_file' ? ['startLine', 'endLine'] : ['maxResults', ...(value.name === 'grep' ? ['glob'] : [])];
+  return fields(a, required, optional) && toolText(a.path, value.name === 'get_edit_snapshot' ? 1024 : 4096)
     && (!Object.hasOwn(a, 'glob') || toolGlob(a.glob))
     && (!Object.hasOwn(a, 'pattern') || toolText(a.pattern, 1024))
     && (!Object.hasOwn(a, 'maxResults') || toolInteger(a.maxResults, 256))
@@ -311,8 +312,8 @@ export class ByokBridge {
       const timer = setTimeout(() => this.finish(id, new ByokError('timeout')), this.timeoutMs);
       const writeTools = payload.writeTools === true;
       const terminalTools = payload.terminal === true;
-      const toolNames = new Set(terminalTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, ...COMMAND_TOOL_NAMES]
-        : writeTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES] : READ_TOOL_NAMES);
+      const toolNames = new Set(terminalTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, 'apply_diff', ...COMMAND_TOOL_NAMES]
+        : writeTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, 'apply_diff'] : READ_TOOL_NAMES);
       this.pending.set(id, { type, expected, onEvent, resolve, reject, timer,
         readTools: payload.readTools === true || writeTools || terminalTools, writeTools, terminalTools, toolNames,
         approvals: new Map(), terminal: null, tools: new Map(), streamSize: 0, eventCount: 0 });

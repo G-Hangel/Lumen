@@ -33,8 +33,34 @@ public sealed class WorkspaceReadTools
         {
             var arguments = ReadToolCatalog.Validate(invocation);
             approvals.AuthorizeRead(mode, cancellationToken);
+            if (invocation.Name == "detect_shells")
+            {
+                var shells = new[] { "cmd", "powershell", "pwsh", "bash" };
+                var detected = new List<object>();
+                foreach (var shell in shells)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var executable = WindowsJobProcess.FindExecutable(shell);
+                    if (executable is null && shell == "bash")
+                    {
+                        var gitBash = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "bin", "bash.exe");
+                        if (File.Exists(gitBash)) executable = gitBash;
+                    }
+                    if (executable is null && shell == "pwsh")
+                    {
+                        var powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
+                        if (File.Exists(powerShell)) executable = powerShell;
+                    }
+                    if (executable is not null) detected.Add(new { name = shell, executable });
+                }
+                return new ToolResult(invocation.Id, false, JsonSerializer.Serialize(new { shells = detected }));
+            }
+            if (invocation.Name == "get_errors" || invocation.Name == "get_output_logs")
+                throw new ToolException("context_unavailable");
             var path = workspace.Resolve(arguments.GetProperty("path").GetString()!);
             object result;
+            if (invocation.Name == "get_edit_snapshot")
+                return CreateEditSnapshotResult(invocation.Id, Relative(path), ReadText(path, cancellationToken, out _), "disk");
             if (invocation.Name == "read_file") result = ReadFile(path, arguments, cancellationToken);
             else
             {
@@ -56,6 +82,13 @@ public sealed class WorkspaceReadTools
         {
             return Error(invocation, "path_unavailable");
         }
+    }
+
+    public static ToolResult CreateEditSnapshotResult(string id, string path, string text, string source)
+    {
+        var content = JsonSerializer.Serialize(new { path, text, base_sha256 = WriteToolCatalog.ComputeTextSha256(text), source });
+        if (content.Length > MaxOutput) throw new ToolException("output_too_large");
+        return new ToolResult(id, false, content);
     }
 
     private static ToolResult Error(ToolInvocation invocation, string code) => new(invocation.Id, true, JsonSerializer.Serialize(new { code }));

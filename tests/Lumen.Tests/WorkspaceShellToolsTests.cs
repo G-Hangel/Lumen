@@ -480,13 +480,73 @@ public sealed class WorkspaceShellToolsTests
     [Fact]
     public void PublishedSchemasAreValidAndReadable()
     {
-        Assert.Equal(new[] { "run_command" }, CommandToolCatalog.Specs.Select(spec => spec.Name));
-        var spec = CommandToolCatalog.Specs.Single();
+        Assert.Equal(new[] { "run_command", "run_build", "run_tests" }, CommandToolCatalog.Specs.Select(spec => spec.Name));
+        var spec = CommandToolCatalog.Specs.Single(value => value.Name == "run_command");
         Assert.False(spec.ParametersSchema.GetProperty("additionalProperties").GetBoolean());
         Assert.Equal("object", spec.ParametersSchema.GetProperty("type").GetString());
         var required = spec.ParametersSchema.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ToArray();
         Assert.Contains("command", required);
         Assert.Contains("args", required);
+    }
+
+    [Theory]
+    [InlineData("run_build", "build")]
+    [InlineData("run_tests", "test")]
+    public async Task DotnetTasksRequireApprovalAndConfineTheirTarget(string tool, string verb)
+    {
+        using var fixture = new Fixture();
+        File.WriteAllText(Path.Combine(fixture.Path, "Broken.csproj"), "<invalid>");
+        var outside = await fixture.Execute(tool, "{\"path\":\"../outside.csproj\"}");
+        Assert.True(outside.IsError);
+        Assert.Empty(fixture.Requests);
+        var ask = await fixture.Execute(tool, "{\"path\":\"Broken.csproj\"}", ChatMode.Ask);
+        Assert.True(ask.IsError);
+        Assert.Equal("mode_denied", Code(ask));
+        fixture.Response = ApprovalResponse.Deny;
+        var denied = await fixture.Execute(tool, "{\"path\":\"Broken.csproj\"}");
+        Assert.True(denied.IsError);
+        Assert.Equal("approval_denied", Code(denied));
+        var request = Assert.Single(fixture.Requests);
+        Assert.Equal("dotnet", request.Arguments.GetProperty("command").GetString());
+        var arguments = request.Arguments.GetProperty("args").EnumerateArray().Select(value => value.GetString()).ToArray();
+        Assert.Equal(new[] { verb, Path.Combine(fixture.Path, "Broken.csproj"), "--no-restore" }, arguments);
+        fixture.Response = ApprovalResponse.AllowOnce;
+        var executed = await fixture.Execute(tool, "{\"path\":\"Broken.csproj\"}");
+        Assert.False(executed.IsError, executed.Content);
+        using var result = JsonDocument.Parse(executed.Content);
+        Assert.NotEqual(0, result.RootElement.GetProperty("exitCode").GetInt32());
+        Assert.Equal(2, fixture.Requests.Count);
+    }
+
+    [Fact]
+    public async Task DetectedShellsExecuteOnlyAfterApproval()
+    {
+        using var fixture = new Fixture();
+        var guard = new WorkspaceGuard(fixture.Path);
+        using var broker = new ApprovalBroker(guard, fixture);
+        var detected = await new WorkspaceReadTools(guard, broker).ExecuteAsync(ChatMode.Ask, Call("detect_shells", "{}"), CancellationToken.None);
+        Assert.False(detected.IsError);
+        using var document = JsonDocument.Parse(detected.Content);
+        var shells = document.RootElement.GetProperty("shells").EnumerateArray().ToArray();
+        Assert.Contains(shells, shell => shell.GetProperty("name").GetString() == "cmd");
+        foreach (var shell in shells)
+        {
+            var name = shell.GetProperty("name").GetString()!;
+            var executable = shell.GetProperty("executable").GetString()!;
+            var args = name == "cmd" ? new[] { "/c", "echo lumen-shell" } : name == "bash" ? new[] { "-c", "printf lumen-shell" } : new[] { "-NoProfile", "-NonInteractive", "-Command", "Write-Output lumen-shell" };
+            var invocation = JsonSerializer.Serialize(new { command = executable, args });
+            fixture.Response = ApprovalResponse.Deny;
+            var denied = await fixture.Execute("run_command", invocation);
+            Assert.True(denied.IsError);
+            Assert.Equal("approval_denied", Code(denied));
+            fixture.Response = ApprovalResponse.AllowOnce;
+            var result = await fixture.Execute("run_command", invocation);
+            Assert.False(result.IsError, result.Content);
+            using var output = JsonDocument.Parse(result.Content);
+            Assert.Equal(0, output.RootElement.GetProperty("exitCode").GetInt32());
+            Assert.Contains("lumen-shell", output.RootElement.GetProperty("stdout").GetString());
+        }
+        Assert.Equal(shells.Length * 2, fixture.Requests.Count);
     }
 
     [Fact]

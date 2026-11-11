@@ -35,7 +35,18 @@ const server = createServer(async (request, response) => {
   const userIndex = payload.messages.findLastIndex(message => message.role === 'user');
   const text = textOf(payload.messages[userIndex]);
   const results = payload.messages.slice(userIndex + 1).filter(message => message.role === 'tool');
+  if (text === 'fixture-agent-patch' || text === 'fixture-agent-patch-negative') {
+    if (!results.length) { calls(response, [{ name: 'get_edit_snapshot', args: { path: 'Sample.cs' } }], requests.length); return; }
+    if (results.length === 1) {
+      const snapshot = JSON.parse(results[0].content);
+      calls(response, [{ name: 'apply_diff', args: { path: 'Sample.cs', base_sha256: text.endsWith('-negative') ? '0'.repeat(64) : snapshot.base_sha256,
+        replacements: [{ old: 'public class ContextFixture', new: 'public class PatchedFixture' }] } }], requests.length); return;
+    }
+  }
   if (results.length) { answer(response, `Agent tool results received: ${results.length} <script>window.lumenAgentExecuted=true</script><img src=x onerror="window.lumenAgentExecuted=true">`); return; }
+  if (text === 'fixture-agent-diagnostics') {
+    calls(response, [{ name: 'get_errors', args: {} }, { name: 'get_output_logs', args: {} }, { name: 'detect_shells', args: {} }], requests.length); return;
+  }
   if (text === 'fixture-agent-write') {
     calls(response, [{ name: 'edit_file', args: { path: 'Sample.cs', content: 'public class AgentEdited {}\r\n' } },
       { name: 'create_file', args: { path: 'AgentCreated.txt', content: 'created-by-agent\n' } }], requests.length); return;
@@ -45,6 +56,9 @@ const server = createServer(async (request, response) => {
       { name: 'edit_file', args: { path: 'AgentCreated.txt', content: 'second-turn\n' } }], requests.length); return;
   }
   if (text === 'fixture-agent-command') { calls(response, [command], requests.length); return; }
+  if (text === 'fixture-agent-build' || text === 'fixture-agent-tests') {
+    calls(response, [{ name: text === 'fixture-agent-build' ? 'run_build' : 'run_tests', args: { path: 'ContextFixture.csproj' } }], requests.length); return;
+  }
   if (text === 'fixture-agent-negative') {
     calls(response, [{ name: 'edit_file', args: { path: 'Sample.cs', content: 'forged' } }, command], requests.length); return;
   }
@@ -118,7 +132,7 @@ async function agentChat(text, checkboxes, decision) {
   const setters = checkboxes.map(id => `const c_${id.replace(/-/g, '_')}=document.querySelector('#byok-${id}');c_${id.replace(/-/g, '_')}.checked=true;c_${id.replace(/-/g, '_')}.dispatchEvent(new Event('change'));`).join('');
   const onApproval = decision === 'cancel'
     ? "approval={category:e.data.payload.category};document.querySelector('#byok-cancel').click();"
-    : `const buttons=card.querySelectorAll('button');approval={toolName:e.data.payload.toolName,category:e.data.payload.category,buttonCount:buttons.length,canAllowSession:e.data.payload.canAllowSession};buttons[${decision === 'none' ? 0 : decision}].click();${decision === 'none' ? 'approvalUnexpected=true;' : ''}`;
+    : `const buttons=card.querySelectorAll('button');approval={toolName:e.data.payload.toolName,category:e.data.payload.category,arguments:e.data.payload.arguments,buttonCount:buttons.length,canAllowSession:e.data.payload.canAllowSession};buttons[${decision === 'none' ? 0 : decision}].click();${decision === 'none' ? 'approvalUnexpected=true;' : ''}`;
   return evaluate(`new Promise((resolve,reject)=>{
    const events=[];let approval=null,approvalUnexpected=false;
    const timer=setTimeout(()=>{chrome.webview.removeEventListener('message',handler);reject(new Error('agent chat timeout'));},30000);
@@ -203,7 +217,7 @@ try {
     assert.equal(write.type, 'byok.chat.result', JSON.stringify(write)); assert.equal(write.payload.completed, true);
     assert.equal(write.approvalUnexpected, false); assert.equal(write.approval, null);
     manifest.conversationIds.push(write.payload.conversation.id); await saveManifest();
-    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['create_file', 'edit_file', 'find_files', 'grep', 'list_dir', 'read_file']);
+    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['apply_diff', 'create_file', 'detect_shells', 'edit_file', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file']);
     assert.equal(write.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed').length, 2);
     assert.equal((await automation('WriteInspect')).text.replaceAll('\r\n', '\n'), 'public class AgentEdited {}\n');
     assert.deepEqual(await readFile(sample), beforeDisk, 'open document edits the buffer, not disk');
@@ -231,6 +245,36 @@ try {
     assert.equal(manualUndo.type, 'byok.tool.write.undo.result'); assert.equal(manualUndo.payload.pending, 0);
     await assert.rejects(readFile(path.join(root, 'ManualBefore.txt')));
     report.batchUndo = true; report.manualBatchIsolatedFromAgent = true;
+    const patch = await agentChat('fixture-agent-patch', ['auto-write-tools'], 'none');
+    assert.equal(patch.type, 'byok.chat.result', JSON.stringify(patch));
+    assert.equal(patch.approval, null);
+    const patchResults = currentResults(requests.at(-1)).map(value => JSON.parse(value.content));
+    assert.equal(patchResults.length, 2);
+    assert.equal(patchResults[0].source, 'buffer');
+    assert.ok(patchResults[0].text.includes(manifest.marker));
+    assert.equal(patchResults[0].base_sha256, createHash('sha256').update(patchResults[0].text, 'utf8').digest('hex'));
+    assert.equal(patchResults[1].edited, true);
+    assert.ok((await automation('WriteInspect')).text.includes('public class PatchedFixture'));
+    assert.deepEqual(await readFile(sample), beforeDisk);
+    const patchUndo = await action('byok.tool.write.undo.result', "document.querySelector('#byok-write-undo').click()");
+    assert.equal(patchUndo.type, 'byok.tool.write.undo.result'); assert.equal(patchUndo.payload.pending, 0);
+    assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
+    const patchNegative = await agentChat('fixture-agent-patch-negative', ['auto-write-tools'], 'none');
+    assert.equal(patchNegative.type, 'byok.chat.result');
+    const negativePatchResults = currentResults(requests.at(-1)).map(value => JSON.parse(value.content));
+    assert.equal(negativePatchResults[1].code, 'edit_conflict');
+    assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
+    assert.deepEqual(await readFile(sample), beforeDisk);
+    report.bufferSnapshotPatchUndo = true; report.invalidPatchHashRejected = true;
+    const diagnostics = await agentChat('fixture-agent-diagnostics', ['auto-read-tools'], 'none');
+    assert.equal(diagnostics.type, 'byok.chat.result', JSON.stringify(diagnostics));
+    assert.equal(diagnostics.approval, null);
+    const diagnosticResults = currentResults(requests.at(-1)).map(value => JSON.parse(value.content));
+    assert.equal(diagnosticResults.length, 3);
+    assert.ok(Array.isArray(diagnosticResults[0].errors));
+    assert.ok(diagnosticResults[1].text.includes(manifest.marker));
+    assert.ok(diagnosticResults[2].shells.some(shell => shell.name === 'cmd'));
+    report.diagnosticsAndShellDetection = true;
     await evaluate("document.querySelector('#byok-write-tools').open=false");
 
     // 2. Terminal: deny reinjects approval_denied; allow once executes; allow session persists.
@@ -246,6 +290,24 @@ try {
     const onceResult = JSON.parse(currentResults(requests.at(-1))[0].content);
     assert.equal(onceResult.exitCode, 0); assert.ok(onceResult.stdout.includes('lumen-agent-marker'));
     report.commandAllowOnceExecutes = true;
+    const buildDeny = await agentChat('fixture-agent-build', ['auto-terminal'], 0);
+    assert.equal(buildDeny.type, 'byok.chat.result');
+    assert.equal(buildDeny.approval.toolName, 'run_build');
+    assert.equal(buildDeny.approval.arguments.command, 'dotnet');
+    assert.equal(buildDeny.approval.arguments.args[0], 'build');
+    assert.ok(buildDeny.approval.arguments.args[1].endsWith('ContextFixture.csproj'));
+    assert.equal(buildDeny.approval.arguments.args[2], '--no-restore');
+    assert.equal(JSON.parse(currentResults(requests.at(-1))[0].content).code, 'approval_denied');
+    const testsDeny = await agentChat('fixture-agent-tests', ['auto-terminal'], 0);
+    assert.equal(testsDeny.type, 'byok.chat.result');
+    assert.equal(testsDeny.approval.toolName, 'run_tests');
+    assert.equal(testsDeny.approval.arguments.args[0], 'test');
+    assert.equal(JSON.parse(currentResults(requests.at(-1))[0].content).code, 'approval_denied');
+    const buildAllow = await agentChat('fixture-agent-build', ['auto-terminal'], 1);
+    assert.equal(buildAllow.type, 'byok.chat.result', JSON.stringify(buildAllow));
+    assert.equal(buildAllow.approval.toolName, 'run_build');
+    assert.equal(typeof JSON.parse(currentResults(requests.at(-1))[0].content).exitCode, 'number');
+    report.buildAndTestsApproval = true;
     writeConversationId = write.payload.conversation.id;
     }
     const commandOutput = (await automation('OutputInspect')).text;
@@ -270,7 +332,7 @@ try {
     await idle();
     const negative = await agentChat('fixture-agent-negative', ['auto-read-tools'], 'none');
     assert.equal(negative.type, 'byok.chat.result'); assert.equal(negative.approval, null);
-    assert.deepEqual(requests.at(-2).tools.map(tool => tool.function.name).sort(), ['find_files', 'grep', 'list_dir', 'read_file']);
+    assert.deepEqual(requests.at(-2).tools.map(tool => tool.function.name).sort(), ['detect_shells', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file']);
     const rejected = currentResults(requests.at(-1)).map(message => JSON.parse(message.content).code);
     assert.deepEqual(rejected, ['unknown_tool', 'unknown_tool']); report.readOnlyNoWriteOrCommand = true;
 

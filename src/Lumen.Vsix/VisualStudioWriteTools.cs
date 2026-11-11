@@ -140,7 +140,9 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
     {
         try
         {
-            var arguments = WriteToolCatalog.Validate(invocation);
+            var isDiff = invocation.Name == "apply_diff";
+            var diffArguments = isDiff ? WriteToolCatalog.ValidateDiff(invocation) : default;
+            var arguments = isDiff ? (Path: diffArguments.Path, Content: string.Empty) : WriteToolCatalog.Validate(invocation);
             await taskFactory.SwitchToMainThreadAsync(token);
             if (root is null) await CaptureAsync(token);
             await ValidateAsync(token);
@@ -162,7 +164,11 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
                     buffer = FindOpenBuffer(path);
                     if (buffer is null || journal.Records.Any(record => string.Equals(record.Path, path, StringComparison.OrdinalIgnoreCase))) return Error(invocation, "edit_conflict");
                 }
-                return EditBuffer(invocation, path, buffer, arguments.Content, token);
+                var snapshot = buffer.CurrentSnapshot;
+                if (isDiff && snapshot.Length > 65536) return Error(invocation, "file_too_large");
+                var content = isDiff ? WriteToolCatalog.ApplyDiff(snapshot.GetText(), diffArguments.Hash, diffArguments.Replacements) : arguments.Content;
+                if (!ReferenceEquals(snapshot, buffer.CurrentSnapshot)) return Error(invocation, "edit_conflict");
+                return EditBuffer(invocation, path, buffer, content, token);
             }
             if (buffers.Any(change => string.Equals(change.Path, path, StringComparison.OrdinalIgnoreCase))) return Error(invocation, "edit_conflict");
             var diskApprovals = GetApprovals(guard);
@@ -276,7 +282,7 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
         }
     }
 
-    private static ITextBuffer? FindOpenBuffer(string path)
+    internal static ITextBuffer? FindOpenBuffer(string path)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
         var rdt = Package.GetGlobalService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable ?? throw new ProviderException("path_unavailable");

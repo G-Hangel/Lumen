@@ -104,10 +104,74 @@ public sealed class WorkspaceReadToolsTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Tools.ExecuteAsync(ChatMode.Agent, Call("read_file", "{\"path\":\"binary\"}"), cancellation.Token));
     }
 
+    [Theory]
+    [InlineData(ChatMode.Ask)]
+    [InlineData(ChatMode.Plan)]
+    [InlineData(ChatMode.Agent)]
+    public async Task EditSnapshotPreservesCompleteTextAndHashesDecodedUtf8(ChatMode mode)
+    {
+        using var fixture = new Fixture();
+        const string text = "Olá 😀\r\nnext";
+        File.WriteAllText(Path.Combine(fixture.Path, "sample"), text, new UTF8Encoding(true));
+        var result = await fixture.Execute("get_edit_snapshot", "{\"path\":\"sample\"}", mode);
+        Assert.False(result.IsError);
+        using var json = JsonDocument.Parse(result.Content);
+        Assert.Equal(text, json.RootElement.GetProperty("text").GetString());
+        Assert.Equal("sample", json.RootElement.GetProperty("path").GetString());
+        Assert.Equal("disk", json.RootElement.GetProperty("source").GetString());
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+        Assert.Equal(hash, json.RootElement.GetProperty("base_sha256").GetString());
+        Assert.Equal("changed\r\nnext", WriteToolCatalog.ApplyDiff(text, hash, new[] { ("Olá 😀", "changed") }));
+        Assert.Throws<ToolException>(() => WriteToolCatalog.ApplyDiff(text.Replace("\r\n", "\n"), hash, new[] { ("Olá 😀", "changed") }));
+    }
+
+    [Fact]
+    public async Task EditSnapshotRejectsPartialResultsAndInvalidPaths()
+    {
+        using var fixture = new Fixture();
+        File.WriteAllText(Path.Combine(fixture.Path, "large"), new string('"', 40000));
+        foreach (var item in new[] { ("{\"path\":\"large\"}", "output_too_large"), ("{\"path\":\"../outside\"}", "invalid_path"), ("{\"path\":\"large\",\"maxResults\":1}", "invalid_arguments"), ("{\"path\":\"large\",\"path\":\"large\"}", "invalid_arguments"), (JsonSerializer.Serialize(new { path = new string('a', 1025) }), "invalid_arguments") })
+        {
+            var result = await fixture.Execute("get_edit_snapshot", item.Item1);
+            Assert.True(result.IsError);
+            using var json = JsonDocument.Parse(result.Content);
+            Assert.Equal(item.Item2, json.RootElement.GetProperty("code").GetString());
+            Assert.False(json.RootElement.TryGetProperty("text", out _));
+        }
+        var bounded = WorkspaceReadTools.CreateEditSnapshotResult("id", "x", new string('a', 65000), "buffer");
+        Assert.True(bounded.Content.Length <= 65536);
+        Assert.Equal("output_too_large", Assert.Throws<ToolException>(() => WorkspaceReadTools.CreateEditSnapshotResult("id", "x", new string('a', 65536), "buffer")).Code);
+    }
+
+    [Theory]
+    [InlineData("get_errors")]
+    [InlineData("get_output_logs")]
+    [InlineData("detect_shells")]
+    public async Task DiagnosticToolsRejectUnexpectedArguments(string name)
+    {
+        using var fixture = new Fixture();
+        var rejected = await fixture.Execute(name, "{\"path\":\"outside\"}");
+        Assert.True(rejected.IsError);
+        using var json = JsonDocument.Parse(rejected.Content);
+        Assert.Equal("invalid_arguments", json.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task ShellDetectionReportsResolvedExecutablesWithoutStartingThem()
+    {
+        using var fixture = new Fixture();
+        var result = await fixture.Execute("detect_shells", "{}");
+        Assert.False(result.IsError);
+        using var json = JsonDocument.Parse(result.Content);
+        var shells = json.RootElement.GetProperty("shells").EnumerateArray().ToArray();
+        Assert.Contains(shells, item => item.GetProperty("name").GetString() == "cmd" && System.IO.Path.IsPathRooted(item.GetProperty("executable").GetString()!));
+        Assert.DoesNotContain(shells, item => item.GetProperty("name").GetString() == "not-a-shell");
+    }
+
     [Fact]
     public void PublishedSchemasRemainReadableAndValidateTheirOwnFields()
     {
-        Assert.Equal(new[] { "read_file", "list_dir", "find_files", "grep" }, ReadToolCatalog.Specs.Select(spec => spec.Name));
+        Assert.Equal(new[] { "get_errors", "get_output_logs", "detect_shells", "get_edit_snapshot", "read_file", "list_dir", "find_files", "grep" }, ReadToolCatalog.Specs.Select(spec => spec.Name));
         foreach (var spec in ReadToolCatalog.Specs)
         {
             Assert.False(spec.ParametersSchema.GetProperty("additionalProperties").GetBoolean());

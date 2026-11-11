@@ -359,10 +359,19 @@ inicial e retomada após corrigir inspeção COM do robô, sem repetir as escrit
 Retomada: **11 requests loopback, 0 pagos, 0 exceções JS**, screenshot; cleanup e
 SHA finais confirmados. Evidências e limites em `STATUS.md`/`COMANDOS.md`.
 
-**Fase ainda não concluída:** faltam `apply_diff`, diagnósticos, detecção completa
-dos shells e modos integrais. UI real validou cmd e negação de escrita externa;
-os demais cenários continuam cobertos por testes de backend. B9 anterior segue
-aberto. Checkboxes integrais só fecham quando todo seu critério estiver cumprido.
+### Andamento — diagnósticos e shells (2026-11-11)
+
+`apply_diff`/`get_edit_snapshot`, `get_errors`, `get_output_logs`, descoberta de
+shells e `run_build`/`run_tests` .NET foram implementados. Execução de build e
+testes usa `--no-restore`, alvo confinado e aprovação do terminal. Resultado:
+**1.493 C# / 205 JS**, build sem erros/avisos; Exp com 33 requests loopback,
+0 pagos e 0 exceções JS validou patch/undo, hash incorreto, diagnósticos, shell,
+negação de build/test e build autorizado. Detalhes e limites em `STATUS.md`.
+
+A Error List pode ser filtrada/desatualizada; o Output é apenas a pane ativa.
+A Exp não testou Error List populada nem teste .NET aprovado pela UI. `run_tests`
+não é integração universal com Test Explorer. B9 anterior continua aberto;
+modos integrais pertencem à Fase 5.
 
 ### Tarefas
 

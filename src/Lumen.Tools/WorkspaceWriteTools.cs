@@ -39,12 +39,14 @@ public sealed class WorkspaceWriteTools
     {
         try
         {
-            var arguments = WriteToolCatalog.Validate(invocation);
+            var isDiff = invocation.Name == "apply_diff";
+            var diffArguments = isDiff ? WriteToolCatalog.ValidateDiff(invocation) : default;
+            var arguments = isDiff ? (Path: diffArguments.Path, Content: string.Empty) : WriteToolCatalog.Validate(invocation);
             var requestedPath = arguments.Path;
             var path = await approvals.AuthorizeWriteAsync(mode, invocation, requestedPath, cancellationToken).ConfigureAwait(false);
             object result;
             if (invocation.Name == "create_file") result = CreateFile(path, arguments.Content, cancellationToken);
-            else result = EditFile(path, arguments.Content, cancellationToken);
+            else result = EditFile(path, arguments.Content, cancellationToken, isDiff ? diffArguments.Hash : null, isDiff ? diffArguments.Replacements : null);
             var content = JsonSerializer.Serialize(result);
             if (content.Length > MaxOutput)
             {
@@ -56,7 +58,7 @@ public sealed class WorkspaceWriteTools
                 content = JsonSerializer.Serialize(new
                 {
                     path = displayPath.Substring(0, cut), pathTruncated = cut != displayPath.Length,
-                    created = invocation.Name == "create_file", edited = invocation.Name == "edit_file", truncated = true,
+                    created = invocation.Name == "create_file", edited = invocation.Name == "edit_file" || invocation.Name == "apply_diff", truncated = true,
                     diff = new
                     {
                         truncated = true, tooLarge = true, changes = Array.Empty<object>(),
@@ -90,12 +92,13 @@ public sealed class WorkspaceWriteTools
         return result;
     }
 
-    private object EditFile(string path, string content, CancellationToken cancellationToken)
+    private object EditFile(string path, string content, CancellationToken cancellationToken, string? hash, (string Old, string New)[]? replacements)
     {
-        if (TooLarge(content)) throw new ToolException("file_too_large");
         if (!File.Exists(path)) throw new ToolException("path_unavailable");
         var priorBytes = ReadAllBytes(path, cancellationToken);
         var priorText = DecodeText(priorBytes);
+        if (hash is not null) content = WriteToolCatalog.ApplyDiff(priorText, hash, replacements!);
+        if (TooLarge(content)) throw new ToolException("file_too_large");
         var record = new EditRecord(workspace, path, priorBytes, new UTF8Encoding(false).GetBytes(content));
         var result = new { path = Relative(path), edited = true, diff = BuildDiff(priorText, content) };
         journal.Commit(record, () => WriteAtomic(record, record.After, true, cancellationToken, () =>

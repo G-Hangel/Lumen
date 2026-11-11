@@ -126,7 +126,7 @@ public sealed class ByokSession : IDisposable
             {
                 Require(payload, new[] { "name", "arguments" });
                 var toolName = RequiredString(payload, "name", 64);
-                if (!new[] { "read_file", "list_dir", "find_files", "grep" }.Contains(toolName)) throw new ProviderException("unknown_tool");
+                if (!new[] { "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot" }.Contains(toolName)) throw new ProviderException("unknown_tool");
                 var arguments = JsonWire.Get(payload, "arguments");
                 if (arguments.ValueKind != JsonValueKind.Object || arguments.GetRawText().Length > 8192) throw new ProviderException("invalid_arguments");
                 if (readTools is null) throw new ProviderException("path_unavailable");
@@ -520,9 +520,9 @@ public sealed class ByokSession : IDisposable
         public Task<IReadToolExecutor> CaptureAsync(CancellationToken cancellationToken) => Task.FromResult<IReadToolExecutor>(this);
         public Task<ToolResult> ExecuteAsync(ToolInvocation invocation, CancellationToken cancellationToken)
         {
-            if (invocation.Name == "create_file" || invocation.Name == "edit_file")
+            if (invocation.Name == "create_file" || invocation.Name == "edit_file" || invocation.Name == "apply_diff")
                 return write is null ? throw new ProviderException("workspace_unavailable") : write.ExecuteAsync(invocation, cancellationToken);
-            if (invocation.Name == "run_command")
+            if (invocation.Name == "run_command" || invocation.Name == "run_build" || invocation.Name == "run_tests")
                 return shell is null ? throw new ProviderException("workspace_unavailable") : shell.ExecuteAsync(invocation, cancellationToken);
             return read.ExecuteAsync(invocation, cancellationToken);
         }

@@ -9,9 +9,10 @@ Fases 3/4/5 ainda abertas para seus critérios integrais.** O modelo pode ler,
 criar/editar arquivos e executar comandos com opt-in por envio. Escrita interna
 aplica automaticamente com diff; undo reverte somente o último lote. Escrita
 externa exige aprovação por operação; terminal exige aprovação, com opção de
-consentimento por sessão revogada ao fechar/reabrir a solução. Ainda faltam
-`apply_diff`, diagnósticos, detecção completa dos shells e modos Agent/Ask/Plan
-integrais. B9 continua sendo a captura da regressão readonly anterior, não a
+consentimento por sessão revogada ao fechar/reabrir a solução. `apply_diff` e
+snapshot para buffer/disco estão implementados e verificados localmente, ainda
+sem commit. Diagnósticos e descoberta de shells foram implementados e verificados como
+descrito abaixo; os modos Agent/Ask/Plan integrais ainda pertencem à Fase 5. B9 continua sendo a captura da regressão readonly anterior, não a
 captura bem-sucedida da 4d. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Sem APIs pagas,
 commit, remote ou push nesta fatia.
@@ -23,9 +24,64 @@ commit, remote ou push nesta fatia.
 | Fase 1 — Núcleo de domínio | **concluído** |
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
 | Fase 3 — UI do chat | **em andamento — 3a, 3b, 3c e 3d concluídas** |
-| Fase 4 — Ferramentas e segurança | **em andamento — 4a–4d verificadas; apply_diff, diagnósticos e detecção completa de shells pendentes** |
+| Fase 4 — Ferramentas e segurança | **ferramentas solicitadas verificadas; limitações e B9 descritos abaixo** |
 | Fase 5 — Loop e modos | **loop restrito de leitura/escrita/terminal verificado; Agent completo/modos pendentes** |
 | Fases 6–8 | não iniciadas |
+
+## Em andamento — snapshot e apply_diff (2026-11-11)
+
+Implementação local ainda **não commitada**: `get_edit_snapshot` devolve texto
+integral e SHA-256 UTF-8 sem BOM de arquivo ou buffer MEF aberto, limitado a
+65.536 caracteres JSON; resultado excessivo é recusado, não truncado. O consentimento
+informa que o provedor pode receber buffers não salvos. `apply_diff` exige hash
+correspondente e substituições exatas únicas não sobrepostas; usa aprovação de
+escrita existente, diff visível e undo. Base obsoleta retorna `edit_conflict`.
+
+Build Release 0 erros/avisos; **1.486 C# e 205 JS** passaram em execuções
+separadas. Um teste C# de processo filho expirou na primeira execução paralela à
+suite JS, mas passou isolado e na suite completa subsequente; causa não comprovada.
+Na Exp, provedor loopback executou snapshot de buffer não salvo, patch e undo;
+hash propositalmente incorreto foi rejeitado e disco preservado. Verificador
+completo também validou aprovações, saída, consentimento e layout negativo:
+**25 requests loopback, 0 pagos, 0 exceções JS**. Fixture e credenciais sintéticas
+removidas, Exp fechada e SHA do pacote verificado. Evidências em
+`artifacts/agent-tools-webview.json` e `artifacts/agent-tools-webview.png`.
+
+Diagnósticos e descoberta de shells foram adicionados na continuação abaixo;
+modos integrais permanecem na Fase 5. O usuário configurou `origin` e autorizou
+o commit após concluir essas pendências.
+
+## Diagnósticos e shells (2026-11-11)
+
+- `get_errors` lê até 256 itens da Error List visível; arquivos externos são
+  omitidos. O conjunto depende de filtros e pode estar desatualizado.
+  `get_output_logs` captura a pane ativa, não todas as panes; saída acima do
+  limite é recusada. Ambos podem conter informações sensíveis, explicitadas no
+  aviso de consentimento antes do envio ao provedor.
+- `detect_shells` procura cmd, PowerShell, pwsh e bash pelo PATH, com caminhos
+  convencionais como fallback para pwsh e Git Bash; retorna apenas executáveis
+  encontrados, sem executá-los. Teste de backend executou shells detectados após
+  aprovação e comprovou negação antes da execução.
+- `run_build`/`run_tests` usam `dotnet build/test` com `--no-restore`, alvo
+  `.sln`, `.slnx` ou `.csproj` confinado ao workspace e aprovação de comando.
+  O prompt mostra executável, argumentos e diretório; modo readonly e traversal
+  são rejeitados. Podem executar código do projeto e acessar rede; não são uma
+  integração universal com o Test Explorer. Processo continua em Job Object.
+- Build Release 0 erros/avisos; **1.493 C# / 205 JS** verdes. Na Exp, com
+  provedor loopback, snapshot/patch/undo e hash incorreto, diagnósticos, shell,
+  negação de build/test e um build autorizado foram exercitados. O verificador
+  confirmou código de saída do build, não que tenha sido zero. **33 requests
+  loopback, 0 pagos, 0 exceções JS**; screenshot e controle negativo de layout.
+  Não foi testado Error List populado/filtrado nem um teste .NET real aprovado
+  pela UI; no backend build/test aprovado contra projeto inválido retorna exit
+  não zero. Nenhuma cobertura universal de formatos de projeto é alegada.
+- Limpeza apenas de dados próprios e Exp fechada. A Exp testou o pacote em
+  `Extensions\le2lbosl.32w`. Após clean/build, só os metadados gerados
+  `manifest.json` (`extensionDir` aleatório) e `catalog.json` diferiram; os
+  demais arquivos coincidiram. O pacote limpo foi reinstalado e teve todos os
+  arquivos verificados em `Extensions\n0a1c00s.vyu`; a UI não foi repetida
+  após essa reinstalação. Evidências: `artifacts/agent-tools-webview.json` e
+  `artifacts/agent-tools-webview.png`. B9 anterior permanece aberto.
 
 ## Escrita pelo modelo e terminal aprovado — fatia 4d (2026-11-11)
 
@@ -684,14 +740,11 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fatia 4d concluída; Fases 4/5 ainda em andamento.** Leitura, escrita pelo
-modelo com diff/undo por turno e terminal aprovado estão disponíveis. Próxima
-fatia da Fase 4: `apply_diff` e ferramentas de diagnóstico; detecção completa
-cmd/PowerShell/pwsh/Git Bash ainda deve cumprir seu critério. Depois concluir
-os modos Agent/Ask/Plan e demais critérios da Fase 5. Não iniciar outra fatia
-neste checkpoint nem repetir as verificações aprovadas.
-Fatias 3b/3c/3d commitadas em `75951d5`; alterações 4a–4d continuam locais,
-sem commit, remote ou push.
+**Ferramentas da Fase 4 verificadas com os limites acima; Fase 5 permanece
+aberta.** A próxima etapa é implementar os modos Agent/Ask/Plan integrais e
+seus critérios, além de acompanhar B9. Fatias 4a–4d estão no commit `aaf818e`;
+as alterações posteriores aguardam commit. O remoto `origin` foi configurado
+pelo usuário.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

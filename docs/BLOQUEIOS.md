@@ -67,6 +67,12 @@ ação do usuário (`AGENTS.md` §6). Não tentar contornar.
 
 ## Resolvidos
 
+### B10 — Remoto configurado pelo usuário (2026-11-11)
+
+Inicialmente `git remote -v` não retornou destino. Após criação do repositório
+privado pelo usuário, o comando mostra `origin` e `git branch -vv` mostra
+`main` rastreando `origin/main`. O push ainda não foi realizado nesta etapa.
+
 ### B7 — Ollama real: AC dispensado pelo usuário (2026-11-07)
 
 O executável/processo Ollama não existia na máquina (checagem por `Get-Command`/

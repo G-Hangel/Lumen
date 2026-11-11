@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Lumen.Core.Domain;
 using Lumen.Providers;
 using Lumen.Tools;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Threading;
 
 namespace Lumen.Vsix;
@@ -51,6 +52,69 @@ internal sealed class VisualStudioReadTools : IReadToolExecutor, IApprovalPrompt
             {
                 var captured = await CaptureAsync(cancellationToken).ConfigureAwait(false);
                 return await captured.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
+            }
+            if (invocation.Name == "get_errors" || invocation.Name == "get_output_logs")
+            {
+                ReadToolCatalog.ValidateDiagnostic(invocation);
+                await ValidateAsync(cancellationToken);
+                string content;
+                if (invocation.Name == "get_output_logs")
+                {
+                    var output = await new VisualStudioContextSource(taskFactory).CaptureAsync("output", null, cancellationToken);
+                    content = System.Text.Json.JsonSerializer.Serialize(new { pane = output.Label, text = output.Text });
+                }
+                else
+                {
+                    await taskFactory.SwitchToMainThreadAsync(cancellationToken);
+                    var dte = Package.GetGlobalService(typeof(Microsoft.VisualStudio.Shell.Interop.SDTE)) as EnvDTE80.DTE2
+                        ?? throw new ProviderException("context_unavailable");
+                    var items = dte.ToolWindows.ErrorList.ErrorItems;
+                    var errors = new List<object>();
+                    var count = items.Count;
+                    var guard = new WorkspaceGuard(root);
+                    for (var index = 1; index <= Math.Min(count, 256); index++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var item = items.Item(index);
+                        string? file = item.FileName;
+                        if (!string.IsNullOrEmpty(file))
+                        {
+                            try { file = guard.Resolve(file); }
+                            catch (ToolException) { continue; }
+                            file = file.Substring(guard.Root.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace('\\', '/');
+                        }
+                        var description = item.Description ?? string.Empty;
+                        if (description.Length > 1024) description = description.Substring(0, 1024);
+                        errors.Add(new { description, file, line = item.Line, column = item.Column, severity = item.ErrorLevel.ToString() });
+                    }
+                    content = System.Text.Json.JsonSerializer.Serialize(new { errors, truncated = count > 256 });
+                }
+                if (content.Length > 65536) throw new ToolException("output_too_large");
+                await ValidateAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                return new ToolResult(invocation.Id, false, content);
+            }
+            if (invocation.Name == "get_edit_snapshot")
+            {
+                var requestedPath = ReadToolCatalog.ValidateEditSnapshot(invocation);
+                await ValidateAsync(cancellationToken);
+                var guard = new WorkspaceGuard(root);
+                var path = guard.Resolve(requestedPath);
+                await taskFactory.SwitchToMainThreadAsync(cancellationToken);
+                var buffer = VisualStudioWriteTools.FindOpenBuffer(path);
+                if (buffer is not null)
+                {
+                    var snapshot = buffer.CurrentSnapshot;
+                    if (snapshot.Length > 65536) throw new ToolException("output_too_large");
+                    var text = snapshot.GetText();
+                    if (!ReferenceEquals(snapshot, buffer.CurrentSnapshot)) throw new ToolException("edit_conflict");
+                    var relative = path.Length == guard.Root.Length ? "." : path.Substring(guard.Root.TrimEnd(Path.DirectorySeparatorChar).Length + 1).Replace('\\', '/');
+                    var snapshotResult = WorkspaceReadTools.CreateEditSnapshotResult(invocation.Id, relative, text, "buffer");
+                    await ValidateAsync(cancellationToken);
+                    if (!ReferenceEquals(snapshot, buffer.CurrentSnapshot)) throw new ToolException("edit_conflict");
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return snapshotResult;
+                }
             }
             await ValidateAsync(cancellationToken);
             var result = await Task.Run(async () =>

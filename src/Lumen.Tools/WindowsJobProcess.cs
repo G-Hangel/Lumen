@@ -126,6 +126,13 @@ internal sealed class WindowsJobProcess : IDisposable
         catch { safeHandle.Dispose(); throw; }
     }
 
+    internal static string? FindExecutable(string name)
+    {
+        var path = new StringBuilder(32768);
+        var length = SearchPathW(null, name, ".exe", path.Capacity, path, IntPtr.Zero);
+        return length != 0 && length < path.Capacity ? path.ToString() : null;
+    }
+
     private static string ResolveExecutable(string name)
     {
         if (Path.IsPathRooted(name)) return Path.GetFullPath(name);

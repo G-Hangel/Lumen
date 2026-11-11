@@ -300,8 +300,13 @@ Aprovação é correlacionada ao chat ativo e sempre começa em Negar.
 Antes da escrita o loop reserva capacidade para o maior resultado; escrita
 concluída é arquivada/exibida antes de honrar cancelamento tardio.
 
-O fluxo completo abaixo é planejado; diagnósticos, detecção completa de shells,
-`apply_diff` e modos completos continuam pendentes.
+As ferramentas adicionais `get_edit_snapshot`/`apply_diff` preservam o hash do
+texto atual e undo por turno. `get_errors` lê a Error List visível e
+`get_output_logs` a pane ativa; filtros e conteúdo antigo limitam esses dados.
+`detect_shells` consulta executáveis sem iniciá-los. `run_build` e `run_tests`
+executam `dotnet` com `--no-restore` e alvo confinado, mediante a mesma aprovação
+que comandos; não representam integração universal com Test Explorer. Os modos
+completos abaixo continuam pendentes.
 
 ```
 usuário digita no WebView2

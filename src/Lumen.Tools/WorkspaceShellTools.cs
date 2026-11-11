@@ -30,13 +30,31 @@ public sealed class WorkspaceShellTools
         try
         {
             var (command, args, cwd, timeoutMs) = CommandToolCatalog.Validate(invocation);
+            var taskCommand = invocation.Name == "run_build" || invocation.Name == "run_tests";
+            if (taskCommand)
+            {
+                var target = workspace.Resolve(args[1]);
+                if (!File.Exists(target)) return Error(invocation, "path_unavailable");
+                args = new[] { args[0], target, args[2] };
+            }
 
             var blocked = CommandBlocklist.Match(command, args);
             if (blocked != null) return Error(invocation, "command_blocked");
 
             // Every command requires confirmation (AGENTS.md §1). The broker
             // allows a session-level opt-in so the user can grant "always" per session.
-            await approvals.AuthorizeCommandAsync(mode, invocation, requiresExplicitApproval: false, cancellationToken).ConfigureAwait(false);
+            var approvalInvocation = invocation;
+            if (taskCommand)
+            {
+                using var approvalArguments = JsonDocument.Parse(JsonSerializer.Serialize(new { command, args, cwd = workspace.Root, timeout_ms = timeoutMs }));
+                approvalInvocation = new ToolInvocation(invocation.Id, invocation.Name, approvalArguments.RootElement.Clone());
+            }
+            await approvals.AuthorizeCommandAsync(mode, approvalInvocation, requiresExplicitApproval: false, cancellationToken).ConfigureAwait(false);
+            if (taskCommand)
+            {
+                var target = workspace.Resolve(args[1]);
+                if (!File.Exists(target)) return Error(invocation, "path_unavailable");
+            }
 
             var workingDir = cwd != null ? workspace.Resolve(cwd) : workspace.Root;
             if (!Directory.Exists(workingDir)) return Error(invocation, "path_unavailable");

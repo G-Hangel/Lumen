@@ -298,8 +298,9 @@ test('automatic consent has accessible native compact labels and explicit privac
   assert.match(html, /id="byok-auto-read-tools"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-auto-read-help"/);
   assert.match(html, /for="byok-auto-read-tools"/);
   assert.doesNotMatch(html.match(/<input id="byok-auto-read-tools"[^>]*>/)[0], /\bchecked\b/);
-  assert.match(en.byokAutoReadHelp, /selected provider will receive disk file contents/);
-  assert.match(en.byokAutoReadHelp, /Unsaved editor buffers are excluded/);
+  assert.match(en.byokAutoReadHelp, /selected provider may receive file contents/);
+  assert.match(en.byokAutoReadHelp, /including unsaved editor buffers through get_edit_snapshot/);
+  assert.match(pt.byokAutoReadHelp, /inclusive buffers não salvos do editor por get_edit_snapshot/);
   assert.match(en.byokAutoReadHelp, /paid tokens/); assert.match(en.byokAutoReadHelp, /4 provider calls.*8 tools.*8,192.*2-minute/);
   assert.match(css, /\.byok-tool \.byok-tool-result\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
   for (const [id, help] of [['auto-write-tools', 'auto-write-help'], ['auto-terminal', 'auto-terminal-help']]) {
@@ -761,6 +762,8 @@ test('read tool bridge rejects writing/unknown tools and extra root/mode/argumen
     ...[null, [], {}, { path: '' }, { path: 'x'.repeat(4097) }, { path: '\0' }, { path: '\ud800' },
       { path: '.', mode: 'Ask' }, { path: '.', maxResults: 1 }, { path: '.', startLine: 0 },
       { path: '.', endLine: 1, startLine: 2 }, { path: '.', endLine: 1000001 }, { path: '.', startLine: 1.5 }].map(arguments_ => ({ ...good, arguments: arguments_ })),
+    { name: 'get_edit_snapshot', arguments: { path: 'x'.repeat(1025) } },
+    { name: 'get_edit_snapshot', arguments: { path: '.', maxResults: 1 } },
     { name: 'find_files', arguments: { path: '.' } }, { name: 'grep', arguments: { path: '.' } },
     ...['/absolute', '\\absolute', '../escape', 'a//b', 'C:/**', 'a/./b', 'a.'].map(glob => ({ name: 'find_files', arguments: { path: '.', glob } })),
     ...[0, 257, 1.1, '2', null].map(maxResults => ({ name: 'list_dir', arguments: { path: '.', maxResults } })),
@@ -768,7 +771,7 @@ test('read tool bridge rejects writing/unknown tools and extra root/mode/argumen
     await rejects(f.bridge.request('byok.tool.read', p), 'invalid_message');
   }
   assert.equal(f.transport.messages.length, 0);
-  for (const p of [good, { name: 'read_file', arguments: { path: 'x'.repeat(4096), startLine: 1, endLine: 1000000 } },
+  for (const p of [good, { name: 'get_edit_snapshot', arguments: { path: 'x'.repeat(1024) } }, { name: 'read_file', arguments: { path: 'x'.repeat(4096), startLine: 1, endLine: 1000000 } },
     { name: 'list_dir', arguments: { path: '.', maxResults: 256 } },
     { name: 'find_files', arguments: { path: '.', glob: '**/*.cs' } },
     { name: 'grep', arguments: { path: '.', pattern: ' ', glob: '**/*', maxResults: 1 } }]) {

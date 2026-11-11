@@ -659,3 +659,18 @@ arquivos em `Extensions\xont1ooq.0ro` confirmados, Exp fechada; sem commit/push.
 Evidências: `artifacts/agent-tools.binlog`, `artifacts/tests/agent-tools.trx`,
 `artifacts/agent-tools-ui-tests.log`, `artifacts/agent-tools-webview.json` e
 `artifacts/agent-tools-webview.png`. Próximos itens/limites em `STATUS.md`.
+
+A execução posterior do mesmo verificador cobriu também snapshot/patch/undo,
+hash incorreto, `get_errors`, Output ativo, descoberta de shells e aprovação de
+`run_build`/`run_tests` .NET. A fixture local enviou **33 requests loopback**,
+sem APIs pagas ou exceções JS. Build/test usam `--no-restore` e podem executar
+código e acessar rede; o prompt exibe o comando efetivo. A Exp testou negação de
+ambos e execução de build autorizado, não um `run_tests` autorizado; os testes
+C# exercitaram ambos com projeto inválido e exit não zero. Error List populada ou
+filtrada não foi verificada. Build 0 erros/avisos; **1.493 C# / 205 JS**.
+A preparação da fixture sofreu uma rejeição COM transitória e foi retomada após
+inspeção, sem criar outra fixture. A Exp testou `Extensions\le2lbosl.32w`.
+Após o clean/build, apenas `manifest.json` (diretório gerado aleatório) e
+`catalog.json` diferiram; os demais arquivos coincidiram. O pacote reconstruído
+foi reinstalado e verificado em `Extensions\n0a1c00s.vyu`, sem repetir a UI.
+Cleanup foi confirmado; B9 anterior permanece aberto.

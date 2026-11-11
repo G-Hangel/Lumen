@@ -77,6 +77,25 @@ public sealed class ReadToolChatLoopTests
     private static async Task Answer(Func<StreamEvent, Task> emit) { await emit(new TextDelta("Sample.cs:2 contains needle")); await emit(new Done(FinishReason.Stop)); }
 
     [Theory]
+    [InlineData(ChatMode.Ask)]
+    [InlineData(ChatMode.Plan)]
+    [InlineData(ChatMode.Agent)]
+    public async Task EditSnapshotIsAdvertisedAndRunsInReadonlyModes(ChatMode mode)
+    {
+        using var disk = new DiskExecutor();
+        var fixture = new Fixture { Mode = mode };
+        Assert.Contains(ToolChatLoop.SpecsFor(mode, disk), spec => spec.Name == "get_edit_snapshot");
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit, name: "get_edit_snapshot"); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(disk));
+        Assert.Equal(1, disk.Calls);
+        Assert.Contains("base_sha256", Assert.Single(fixture.Provider.Requests[1].Messages.Last().Parts.OfType<ToolResultPart>()).Content);
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(3)]
     public async Task RealReadonlyToolsFeedDistinctMessagesAndSignedStateSurvivesArchiveReplay(int rounds)
@@ -196,6 +215,8 @@ public sealed class ReadToolChatLoopTests
     [InlineData("run_command", "{}", "unknown_tool")]
     [InlineData("create_file", "{}", "unknown_tool")]
     [InlineData("unknown", "{}", "unknown_tool")]
+    [InlineData("get_edit_snapshot", "{\"path\":\"Sample.cs\",\"maxResults\":1}", "invalid_arguments")]
+    [InlineData("get_edit_snapshot", "{\"path\":\"../../Windows/win.ini\"}", "invalid_arguments")]
     [InlineData("read_file", "{\"path\":\"../../Windows/win.ini\"}", "invalid_arguments")]
     [InlineData("read_file", "{\"path\":\"Sample.cs\",\"mode\":\"Agent\"}", "invalid_arguments")]
     [InlineData("read_file", "{\"path\":\"Sample.cs\",\"startLine\":\"1\"}", "invalid_arguments")]
@@ -373,15 +394,16 @@ public sealed class ReadToolChatLoopTests
     private static ToolSpec[] AgentSpecs => ReadToolCatalog.Specs.Concat(WriteToolCatalog.Specs).Concat(CommandToolCatalog.Specs).ToArray();
 
     [Fact]
-    public void AgentAdvertisesSevenToolsWhileAskFiltersWritesAndCommands()
+    public void AgentAdvertisesToolsWhileAskFiltersWritesAndCommands()
     {
         var executor = new Executor { Specs = AgentSpecs };
         var agent = ToolChatLoop.SpecsFor(ChatMode.Agent, executor);
-        Assert.Equal(7, agent.Count);
+        Assert.Equal(14, agent.Count);
+        Assert.Contains(agent, spec => spec.Name == "apply_diff");
         Assert.Contains(agent, spec => spec.Name == "run_command");
         var ask = ToolChatLoop.SpecsFor(ChatMode.Ask, executor);
-        Assert.Equal(4, ask.Count);
-        Assert.All(ask, spec => Assert.DoesNotContain(spec.Name, new[] { "create_file", "edit_file", "run_command" }));
+        Assert.Equal(8, ask.Count);
+        Assert.All(ask, spec => Assert.DoesNotContain(spec.Name, new[] { "create_file", "edit_file", "apply_diff", "run_command" }));
     }
 
     [Fact]
@@ -422,15 +444,17 @@ public sealed class ReadToolChatLoopTests
     }
 
     [Theory]
-    [InlineData(32768, true)]
-    [InlineData(65533, false)]
-    public async Task WriteReservesResultBudgetBeforeIo(int readSize, bool writeAllowed)
+    [InlineData(32768, true, "edit_file")]
+    [InlineData(65533, false, "edit_file")]
+    [InlineData(32768, true, "apply_diff")]
+    [InlineData(65533, false, "apply_diff")]
+    public async Task WriteReservesResultBudgetBeforeIo(int readSize, bool writeAllowed, string name)
     {
         var fixture = new Fixture { Mode = ChatMode.Agent };
         var writes = 0;
         var executor = new Executor { Specs = AgentSpecs, Run = (call, _) =>
         {
-            if (call.Name == "edit_file") { writes++; return Task.FromResult(new ToolResult(call.Id, false, "visible diff")); }
+            if (call.Name == name) { writes++; return Task.FromResult(new ToolResult(call.Id, false, "visible diff")); }
             return Task.FromResult(new ToolResult(call.Id, false, new string('x', readSize)));
         } };
         fixture.Provider.Run = async (round, emit, _) =>
@@ -438,7 +462,8 @@ public sealed class ReadToolChatLoopTests
             if (round == 1)
             {
                 await Call(emit, "read-one"); await Call(emit, "read-two");
-                await Call(emit, "write", "edit_file", "{\"path\":\"Sample.cs\",\"content\":\"x\"}");
+                var args = name == "edit_file" ? "{\"path\":\"Sample.cs\",\"content\":\"x\"}" : JsonSerializer.Serialize(new { path = "Sample.cs", base_sha256 = new string('a', 64), replacements = new[] { new { old = "x", @new = "y" } } });
+                await Call(emit, "write", name, args);
                 await emit(new Done(FinishReason.ToolUse));
             }
             else await Answer(emit);
@@ -449,8 +474,10 @@ public sealed class ReadToolChatLoopTests
         Assert.Equal(writeAllowed ? 3 : 2, executor.Calls);
     }
 
-    [Fact]
-    public async Task CancellationAfterCommittedWriteArchivesDiffAndStopsNextIo()
+    [Theory]
+    [InlineData("edit_file")]
+    [InlineData("apply_diff")]
+    public async Task CancellationAfterCommittedWriteArchivesDiffAndStopsNextIo(string name)
     {
         var fixture = new Fixture { Mode = ChatMode.Agent };
         using var cancellation = new CancellationTokenSource();
@@ -462,7 +489,8 @@ public sealed class ReadToolChatLoopTests
         } };
         fixture.Provider.Run = async (_, emit, _) =>
         {
-            await Call(emit, "one", "edit_file", "{\"path\":\"Sample.cs\",\"content\":\"x\"}");
+            var args = name == "edit_file" ? "{\"path\":\"Sample.cs\",\"content\":\"x\"}" : JsonSerializer.Serialize(new { path = "Sample.cs", base_sha256 = new string('a', 64), replacements = new[] { new { old = "x", @new = "y" } } });
+            await Call(emit, "one", name, args);
             await Call(emit, "two", "create_file", "{\"path\":\"New.cs\",\"content\":\"x\"}");
             await emit(new Done(FinishReason.ToolUse));
         };
@@ -486,7 +514,7 @@ public sealed class ReadToolChatLoopTests
         };
         Assert.True(await fixture.Run(executor));
         Assert.Equal(1, executor.Calls);
-        Assert.Equal(7, fixture.Provider.Requests[0].Tools.Count);
+        Assert.Equal(14, fixture.Provider.Requests[0].Tools.Count);
         var instruction = Assert.IsType<TextPart>(fixture.Provider.Requests[0].Messages[0].Parts[0]).Text;
         Assert.Contains("visible diff", instruction);
         Assert.Contains("explicit user approval", instruction);

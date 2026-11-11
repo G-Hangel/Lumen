@@ -10,6 +10,11 @@ public static class ReadToolCatalog
 {
     public static IReadOnlyList<ToolSpec> Specs { get; } = Array.AsReadOnly(new[]
     {
+        Spec("get_errors", "Read the currently visible Visual Studio Error List items, which may be filtered or stale.", "{}", "[]"),
+        Spec("get_output_logs", "Read the active Visual Studio Output pane; its content may be stale and include sensitive data.", "{}", "[]"),
+        Spec("detect_shells", "Detect available cmd, PowerShell, pwsh and bash executables without executing them.", "{}", "[]"),
+        Spec("get_edit_snapshot", "Read the complete current text and base_sha256 for apply_diff; fails if the complete result is too large.",
+            "{\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024}}", "[\"path\"]"),
         Spec("read_file", "Read UTF-8 or UTF-16 text from a workspace file, optionally by one-based line range.",
             "{\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":4096},\"startLine\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":1000000},\"endLine\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":1000000}}", "[\"path\"]"),
         Spec("list_dir", "List immediate workspace directory entries. Results are bounded and report truncation.",
@@ -26,6 +31,19 @@ public static class ReadToolCatalog
     {
         using var document = JsonDocument.Parse("{\"type\":\"object\",\"additionalProperties\":false,\"properties\":" + properties + ",\"required\":" + required + "}");
         return new ToolSpec(name, description, document.RootElement.Clone());
+    }
+
+    public static void ValidateDiagnostic(ToolInvocation invocation)
+    {
+        if (invocation.Name != "get_errors" && invocation.Name != "get_output_logs" && invocation.Name != "detect_shells")
+            throw new ToolException("unknown_tool");
+        Validate(invocation);
+    }
+
+    public static string ValidateEditSnapshot(ToolInvocation invocation)
+    {
+        if (invocation.Name != "get_edit_snapshot") throw new ToolException("invalid_arguments");
+        return Validate(invocation).GetProperty("path").GetString()!;
     }
 
     internal static JsonElement Validate(ToolInvocation invocation)

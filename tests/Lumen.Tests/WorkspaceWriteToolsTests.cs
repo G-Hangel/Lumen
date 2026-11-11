@@ -53,6 +53,62 @@ public sealed class WorkspaceWriteToolsTests
         Assert.Empty(Directory.GetFiles(fixture.Path, "*.tmp"));
     }
 
+    private static string Hash(string text) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+    [Fact]
+    public async Task ApplyDiffUsesOriginalTextAndUndoRestoresBytes()
+    {
+        using var fixture = new Fixture();
+        var target = Path.Combine(fixture.Path, "target");
+        var bytes = new byte[] { 0xff, 0xfe, 65, 0, 66, 0 };
+        File.WriteAllBytes(target, bytes);
+        var arguments = JsonSerializer.Serialize(new { path = "target", base_sha256 = Hash("AB"), replacements = new[] { new { old = "A", @new = "B" }, new { old = "B", @new = "C" } } });
+        var result = await fixture.Execute("apply_diff", arguments);
+        Assert.False(result.IsError);
+        Assert.Equal("BC", File.ReadAllText(target));
+        Assert.Contains("diff", result.Content);
+        await fixture.Journal.UndoTurnAsync(CancellationToken.None);
+        Assert.Equal(bytes, File.ReadAllBytes(target));
+    }
+
+    [Theory]
+    [InlineData("abc", "bad", "a", "x", "b", "y")]
+    [InlineData("aaa", "valid", "aa", "x", "a", "y")]
+    [InlineData("abcd", "valid", "abc", "x", "bcd", "y")]
+    [InlineData("abc", "valid", "z", "x", "b", "y")]
+    [InlineData("abc", "valid", "", "x", "b", "y")]
+    public async Task ApplyDiffRejectsStaleAmbiguousOverlapMissingAndEmpty(string original, string hashMode, string old1, string new1, string old2, string new2)
+    {
+        using var fixture = new Fixture();
+        var target = Path.Combine(fixture.Path, "target");
+        File.WriteAllText(target, original);
+        var arguments = JsonSerializer.Serialize(new { path = "target", base_sha256 = Hash(hashMode == "bad" ? "other" : original), replacements = new[] { new { old = old1, @new = new1 }, new { old = old2, @new = new2 } } });
+        Assert.True((await fixture.Execute("apply_diff", arguments)).IsError);
+        Assert.Equal(original, File.ReadAllText(target));
+        Assert.Equal(0, fixture.Journal.Count);
+    }
+
+    [Fact]
+    public async Task ApplyDiffRequiresExternalApprovalBeforeReadingAndRejectsCommitRace()
+    {
+        using var outside = new TempFolder();
+        using var fixture = new Fixture();
+        var target = Path.Combine(outside.Path, "missing");
+        fixture.Response = ApprovalResponse.Deny;
+        var args = JsonSerializer.Serialize(new { path = target, base_sha256 = Hash("old"), replacements = new[] { new { old = "old", @new = "new" } } });
+        var denied = await fixture.Execute("apply_diff", args);
+        Assert.Equal("approval_denied", Code(denied));
+        Assert.Single(fixture.Requests);
+
+        var local = Path.Combine(fixture.Path, "target");
+        File.WriteAllText(local, "old");
+        fixture.Tools.BeforeCommit = () => File.WriteAllText(local, "raced");
+        var raced = await fixture.Execute("apply_diff", JsonSerializer.Serialize(new { path = "target", base_sha256 = Hash("old"), replacements = new[] { new { old = "old", @new = "new" } } }));
+        Assert.Equal("edit_conflict", Code(raced));
+        Assert.Equal("raced", File.ReadAllText(local));
+        Assert.Equal(0, fixture.Journal.Count);
+    }
+
     [Fact]
     public async Task CreateFileWritesUtf8WithoutBomAndRecordsUndo()
     {
@@ -260,12 +316,12 @@ public sealed class WorkspaceWriteToolsTests
     [Fact]
     public void PublishedSchemasRemainReadableAndValidateTheirOwnFields()
     {
-        Assert.Equal(new[] { "create_file", "edit_file" }, WriteToolCatalog.Specs.Select(spec => spec.Name));
+        Assert.Equal(new[] { "create_file", "edit_file", "apply_diff" }, WriteToolCatalog.Specs.Select(spec => spec.Name));
         foreach (var spec in WriteToolCatalog.Specs)
         {
             Assert.False(spec.ParametersSchema.GetProperty("additionalProperties").GetBoolean());
             Assert.Equal("object", spec.ParametersSchema.GetProperty("type").GetString());
-            Assert.Contains("content", spec.ParametersSchema.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
+            Assert.Contains(spec.Name == "apply_diff" ? "replacements" : "content", spec.ParametersSchema.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
         }
     }
 

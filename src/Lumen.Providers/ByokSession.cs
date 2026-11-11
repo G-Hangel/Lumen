@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Lumen.Core.Bridge;
 using Lumen.Core.Domain;
+using Lumen.Tools;
 
 namespace Lumen.Providers;
 
@@ -17,6 +18,9 @@ public sealed class ByokSession : IDisposable
     private readonly CapabilityProbe probe;
     private readonly bool canProbe;
     private readonly IContextSource? contextSource;
+    private readonly IReadToolExecutor? readTools;
+    private readonly IWriteToolExecutor? writeTools;
+    private readonly IShellToolExecutor? shellTools;
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -26,9 +30,13 @@ public sealed class ByokSession : IDisposable
     private CancellationTokenSource? active;
     private bool loaded;
     private readonly HashSet<string> requestIds = new HashSet<string>();
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null)
+    private readonly object approvalGate = new object();
+    private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
+    private Func<string, Task>? approvalSend;
+    private string? approvalChatId;
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -73,7 +81,7 @@ public sealed class ByokSession : IDisposable
         {
             var canonicalId = Guid.Parse(id!).ToString("D");
             if (requestIds.Contains(canonicalId)) return true;
-            if (requestIds.Count >= 1024) requestLimitReached = type != "byok.cancel";
+            if (requestIds.Count >= 1024) requestLimitReached = type != "byok.cancel" && type != "byok.approval.respond";
             else requestIds.Add(canonicalId);
         }
         if (requestLimitReached)
@@ -88,6 +96,25 @@ public sealed class ByokSession : IDisposable
             await Reply(send, id, type + ".result", new { cancelled = true }).ConfigureAwait(false);
             return true;
         }
+        if (type == "byok.approval.respond")
+        {
+            // Runs outside the request gate so a decision can reach a chat blocked on approval.
+            try
+            {
+                Require(payload, new[] { "requestId", "decision" });
+                if (!Guid.TryParseExact(RequiredString(payload, "requestId", 36), "D", out var approvalGuid) || approvalGuid == Guid.Empty) throw new ProviderException("invalid_message");
+                var decision = RequiredString(payload, "decision", 16);
+                if (decision != "deny" && decision != "allow_once" && decision != "allow_session") throw new ProviderException("invalid_message");
+                PendingApproval? pending;
+                lock (approvalGate) approvals.TryGetValue(approvalGuid.ToString("D"), out pending);
+                if (pending is null) throw new ProviderException("invalid_message");
+                if (decision == "allow_session" && pending.Category != ToolCategory.ExecuteCommand) throw new ProviderException("invalid_message");
+                if (!pending.Decision.TrySetResult(decision)) throw new ProviderException("invalid_message");
+                await Reply(send, id, type + ".result", new { accepted = true }).ConfigureAwait(false);
+            }
+            catch (ProviderException exception) { await Reply(send, id, "error", new { code = exception.Code }).ConfigureAwait(false); }
+            return true;
+        }
         if (!await gate.WaitAsync(0, cancellationToken).ConfigureAwait(false)) { await Reply(send, id, "error", new { code = "bridge_busy" }).ConfigureAwait(false); return true; }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(2));
@@ -95,6 +122,71 @@ public sealed class ByokSession : IDisposable
         lock (activeGate) active = deadline;
         try
         {
+            if (type == "byok.tool.read")
+            {
+                Require(payload, new[] { "name", "arguments" });
+                var toolName = RequiredString(payload, "name", 64);
+                if (!new[] { "read_file", "list_dir", "find_files", "grep" }.Contains(toolName)) throw new ProviderException("unknown_tool");
+                var arguments = JsonWire.Get(payload, "arguments");
+                if (arguments.ValueKind != JsonValueKind.Object || arguments.GetRawText().Length > 8192) throw new ProviderException("invalid_arguments");
+                if (readTools is null) throw new ProviderException("path_unavailable");
+                var invocation = new ToolInvocation(id!, toolName, arguments.Clone());
+                var result = await readTools.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (result.InvocationId != invocation.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                await Reply(send, id, type + ".result", new { name = toolName, isError = result.IsError, content = result.Content }).ConfigureAwait(false);
+                return true;
+            }
+            if (type == "byok.tool.write")
+            {
+                Require(payload, new[] { "name", "arguments" });
+                var toolName = RequiredString(payload, "name", 64);
+                if (!new[] { "create_file", "edit_file" }.Contains(toolName)) throw new ProviderException("unknown_tool");
+                var arguments = JsonWire.Get(payload, "arguments");
+                Require(arguments, new[] { "path", "content" });
+                var writePath = RequiredString(arguments, "path", 1024);
+                var writeContent = RequiredString(arguments, "content", 65536, true);
+                ValidateWriteText(writePath, false);
+                ValidateWriteText(writeContent, true);
+                if (writePath[0] == '/' || writePath[0] == '\\' || writePath.Contains(":") || writePath.Replace('\\', '/').Split('/').Contains("..")) throw new ProviderException("invalid_path");
+                if (writeTools is null) throw new ProviderException("path_unavailable");
+                var capturedWriter = await writeTools.CaptureAsync(cancellationToken).ConfigureAwait(false);
+                await capturedWriter.BeginTurnAsync(false, cancellationToken).ConfigureAwait(false);
+                var invocation = new ToolInvocation(id!, toolName, arguments.Clone());
+                var result = await capturedWriter.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
+                if (result.InvocationId != invocation.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                await Reply(send, id, type + ".result", new { name = toolName, isError = result.IsError, content = result.Content, pending = writeTools.PendingChanges }).ConfigureAwait(false);
+                return true;
+            }
+            if (type == "byok.tool.write.undo")
+            {
+                if (!Fields(payload, Array.Empty<string>())) { await Reply(send, id, "error", new { code = "invalid_message" }).ConfigureAwait(false); return true; }
+                if (writeTools is null) throw new ProviderException("path_unavailable");
+                await writeTools.UndoTurnAsync(cancellationToken).ConfigureAwait(false);
+                await Reply(send, id, type + ".result", new { undone = true, pending = writeTools.PendingChanges }).ConfigureAwait(false);
+                return true;
+            }
+            if (type == "byok.tool.write.status")
+            {
+                Require(payload, Array.Empty<string>());
+                await Reply(send, id, type + ".result", new { pending = writeTools?.PendingChanges ?? 0 }).ConfigureAwait(false);
+                return true;
+            }
+            if (type == "byok.tool.command")
+            {
+                Require(payload, new[] { "name", "arguments" });
+                var toolName = RequiredString(payload, "name", 64);
+                if (!new[] { "run_command" }.Contains(toolName)) throw new ProviderException("unknown_tool");
+                var arguments = JsonWire.Get(payload, "arguments");
+                if (arguments.ValueKind != JsonValueKind.Object || arguments.GetRawText().Length > 8192) throw new ProviderException("invalid_arguments");
+                if (shellTools is null) throw new ProviderException("path_unavailable");
+                var invocation = new ToolInvocation(id!, toolName, arguments.Clone());
+                var result = await shellTools.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (result.InvocationId != invocation.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                await Reply(send, id, type + ".result", new { name = toolName, isError = result.IsError, content = result.Content }).ConfigureAwait(false);
+                return true;
+            }
             if (!loaded)
             {
                 var savedConfigurations = await settings.ReadAsync(cancellationToken).ConfigureAwait(false);
@@ -261,9 +353,31 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { model = ModelView(probedModel), supported = support, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.chat":
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds" });
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
+                    var readToolsValue = JsonWire.Get(payload, "readTools");
+                    var writeToolsValue = JsonWire.Get(payload, "writeTools");
+                    var terminalValue = JsonWire.Get(payload, "terminal");
+                    if ((readToolsValue.ValueKind != JsonValueKind.Undefined && readToolsValue.ValueKind != JsonValueKind.True && readToolsValue.ValueKind != JsonValueKind.False) ||
+                        (writeToolsValue.ValueKind != JsonValueKind.Undefined && writeToolsValue.ValueKind != JsonValueKind.True && writeToolsValue.ValueKind != JsonValueKind.False) ||
+                        (terminalValue.ValueKind != JsonValueKind.Undefined && terminalValue.ValueKind != JsonValueKind.True && terminalValue.ValueKind != JsonValueKind.False)) throw new ProviderException("invalid_message");
+                    var enableWriteTools = writeToolsValue.ValueKind == JsonValueKind.True;
+                    var enableTerminal = terminalValue.ValueKind == JsonValueKind.True;
+                    var enableReadTools = readToolsValue.ValueKind == JsonValueKind.True || enableWriteTools || enableTerminal;
+                    var mode = enableWriteTools || enableTerminal ? ChatMode.Agent : ChatMode.Ask;
+                    if (enableReadTools && !chatModel.Has(ModelCapabilities.Tools)) throw new ProviderException("tools_not_supported");
+                    if (enableReadTools && readTools is null) throw new ProviderException("workspace_unavailable");
+                    if (enableWriteTools && writeTools is null) throw new ProviderException("workspace_unavailable");
+                    if (enableTerminal && shellTools is null) throw new ProviderException("workspace_unavailable");
+                    var capturedRead = enableReadTools ? await readTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var capturedWrite = enableWriteTools ? await writeTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var capturedShell = enableTerminal ? await shellTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Agent ? new CompositeExecutor(capturedRead, capturedWrite, capturedShell) : capturedRead;
+                    var toolSpecs = capturedTools is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(mode, capturedTools);
                     if (!Enum.TryParse<ReasoningIntent>(RequiredString(payload, "effort", 16), out var effort) || !Enum.IsDefined(typeof(ReasoningIntent), effort)) throw new ProviderException("invalid_message");
                     var text = RequiredString(payload, "text", 4096);
                     var parts = new List<ContentPart> { new TextPart(text) };
@@ -288,75 +402,29 @@ public sealed class ByokSession : IDisposable
                     var titleLength = Math.Min(80, titleText.Length);
                     if (char.IsHighSurrogate(titleText[titleLength - 1])) titleLength--;
                     var currentConversation = conversation ?? new StoredConversation(chatConfiguration.Id,
-                        new Conversation(Guid.NewGuid().ToString("D"), ChatMode.Ask, Array.Empty<Message>(), titleText.Substring(0, titleLength), chatModel.ModelId, effort), Array.Empty<string>());
+                        new Conversation(Guid.NewGuid().ToString("D"), mode, Array.Empty<Message>(), titleText.Substring(0, titleLength), chatModel.ModelId, effort), Array.Empty<string>());
                     if (currentConversation.TurnStates.Count >= 10000) throw new ProviderException("history_too_large");
-                    var replay = currentConversation.Conversation.Messages.Where((_, index) => currentConversation.TurnStates[index / 2] == "completed").ToArray();
+                    var replay = ToolChatLoop.Replay(currentConversation);
+                    var input = replay.Concat(new[] { userMessage }).ToArray();
+                    var outputTokens = Math.Min(chatModel.MaxOutputTokens ?? int.MaxValue, chatModel.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024);
+                    ToolChatLoop.ValidateInput(input, toolSpecs, chatModel, outputTokens);
                     var chatSecret = await credentials.ReadAsync(chatConfiguration.Id, cancellationToken).ConfigureAwait(false);
-                    if (!string.IsNullOrEmpty(chatSecret) && parts.OfType<TextPart>().Any(part => part.Text.IndexOf(chatSecret!, StringComparison.Ordinal) >= 0)) throw new ProviderException("invalid_response");
-                    var assistant = new List<ContentPart>();
-                    var callNames = new Dictionary<string, string>();
-                    var callChunks = new Dictionary<string, string>();
-                    var callIds = new HashSet<string>();
-                    long streamSize = 0;
-                    var eventCount = 0;
-                    var failed = false;
+                    ToolChatLoop.RejectSecret(JsonSerializer.SerializeToElement(input, ConversationSerializer.Options), chatSecret);
+                    if (capturedWrite is not null) await capturedWrite.BeginTurnAsync(true, cancellationToken).ConfigureAwait(false);
+                    var loop = new ToolChatLoop();
                     var turnState = "failed";
+                    lock (approvalGate) { approvalSend = send; approvalChatId = id; }
                     try
                     {
-                        var outputTokens = chatModel.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024;
-                        await providers.Chat(chatConfiguration.Kind).StreamAsync(new ChatRequest(chatConfiguration, chatModel, replay.Concat(new[] { userMessage }).ToArray(), effort, maxOutputTokens: outputTokens),
-                            chatSecret, async streamEvent =>
-                            {
-                                streamSize += streamEvent switch
-                                {
-                                    TextDelta delta => delta.Text.Length,
-                                    ReasoningDelta delta => delta.Text.Length + (delta.ProviderState?.Length ?? 0),
-                                    ToolCallArgsDelta delta => delta.Chunk.Length,
-                                    ToolCallEnd call => call.ParsedArgs.GetRawText().Length + (call.ProviderState?.Length ?? 0),
-                                    _ => 0
-                                };
-                                if (streamSize > 8 * 1024 * 1024 || ++eventCount > 32768) throw new ProviderException("stream_too_large");
-                                switch (streamEvent)
-                                {
-                                    case TextDelta delta:
-                                        if (chatConfiguration.Kind == ProviderKind.Gemini) assistant.Add(new TextPart(delta.Text));
-                                        else AppendText(assistant, delta.Text);
-                                        break;
-                                    case ReasoningDelta delta:
-                                        if (assistant.LastOrDefault() is ReasoningPart reasoning && reasoning.ProviderState is null)
-                                        {
-                                            assistant[assistant.Count - 1] = new ReasoningPart(reasoning.Text + delta.Text, delta.ProviderState ?? reasoning.ProviderState);
-                                        }
-                                        else assistant.Add(new ReasoningPart(delta.Text, delta.ProviderState));
-                                        break;
-                                    case ToolCallStart call:
-                                        if (!callIds.Add(call.Id) || callIds.Count > 128) throw new ProviderException("invalid_stream");
-                                        callNames.Add(call.Id, call.Name); callChunks.Add(call.Id, string.Empty);
-                                        break;
-                                    case ToolCallArgsDelta delta:
-                                        if (!callChunks.ContainsKey(delta.Id)) throw new ProviderException("invalid_stream");
-                                        callChunks[delta.Id] += delta.Chunk;
-                                        break;
-                                    case ToolCallEnd call:
-                                        if (!callNames.TryGetValue(call.Id, out var callName)) throw new ProviderException("invalid_stream");
-                                        assistant.Add(new ToolCallPart(call.Id, callName, call.ParsedArgs, call.ProviderState));
-                                        callNames.Remove(call.Id); callChunks.Remove(call.Id);
-                                        break;
-                                    case StreamError _: failed = true; break;
-                                }
-                                await Reply(send, id, "byok.event", EventView(streamEvent)).ConfigureAwait(false);
-                            }, cancellationToken).ConfigureAwait(false);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (!failed && callNames.Count == 0 && assistant.Count > 0) turnState = "completed";
+                        if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
+                            streamEvent => Reply(send, id, "byok.event", EventView(streamEvent)),
+                            executionEvent => Reply(send, id, "byok.event", executionEvent), cancellationToken).ConfigureAwait(false)) turnState = "completed";
                     }
                     catch (OperationCanceledException) { turnState = "cancelled"; throw; }
                     finally
                     {
-                        foreach (var pendingCall in callNames)
-                        {
-                            using var rawCall = JsonDocument.Parse(JsonWire.Serialize(new { kind = "incompleteToolCall", id = pendingCall.Key, name = pendingCall.Value, argumentsText = callChunks[pendingCall.Key] }));
-                            assistant.Add(new UnknownPart("incompleteToolCall", rawCall.RootElement.Clone()));
-                        }
+                        if (loop.UnsafeResponse) throw new ProviderException("invalid_response");
+                        var assistant = loop.Parts.ToList();
                         if (assistant.Count == 0) assistant.Add(new TextPart(string.Empty));
                         var domain = currentConversation.Conversation;
                         var updated = new Conversation(domain.Id, domain.Mode,
@@ -383,10 +451,81 @@ public sealed class ByokSession : IDisposable
         { await Reply(send, id, "error", new { code = exception is ProviderException error ? error.Code : "invalid_message" }).ConfigureAwait(false); }
         finally
         {
+            lock (approvalGate)
+            {
+                approvalSend = null;
+                approvalChatId = null;
+                foreach (var pending in approvals.Values) pending.Decision.TrySetCanceled();
+                approvals.Clear();
+            }
             lock (activeGate) active = null;
             gate.Release();
         }
         return true;
+    }
+
+    public async Task<ApprovalResponse> RequestApprovalAsync(ApprovalRequest request, CancellationToken cancellationToken)
+    {
+        Func<string, Task> send;
+        string chatId;
+        var requestId = Guid.NewGuid().ToString("D");
+        PendingApproval pending;
+        lock (approvalGate)
+        {
+            if (approvalSend is null || approvalChatId is null || approvals.Count >= 8) return ApprovalResponse.Deny;
+            send = approvalSend;
+            chatId = approvalChatId;
+            pending = new PendingApproval(request.Category, cancellationToken);
+            approvals.Add(requestId, pending);
+        }
+        try
+        {
+            await Reply(send, chatId, "byok.event", new
+            {
+                kind = "ApprovalRequest", id = requestId, toolName = request.ToolName, category = request.Category.ToString(),
+                arguments = request.Arguments, targetPath = request.TargetPath, canAllowSession = request.CanAllowCommandsForSession
+            }).ConfigureAwait(false);
+            var decision = await pending.Decision.Task.ConfigureAwait(false);
+            return decision == "allow_session" && request.CanAllowCommandsForSession ? ApprovalResponse.AllowCommandsForSession
+                : decision == "allow_once" ? ApprovalResponse.AllowOnce : ApprovalResponse.Deny;
+        }
+        catch (OperationCanceledException) { return ApprovalResponse.Deny; }
+        finally
+        {
+            lock (approvalGate) approvals.Remove(requestId);
+            pending.Complete();
+        }
+    }
+
+    private sealed class PendingApproval
+    {
+        internal readonly TaskCompletionSource<string> Decision = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly ToolCategory Category;
+        private readonly CancellationTokenRegistration registration;
+        internal PendingApproval(ToolCategory category, CancellationToken token)
+        {
+            Category = category;
+            registration = token.Register(state => ((TaskCompletionSource<string>)state!).TrySetCanceled(), Decision);
+        }
+        internal void Complete() => registration.Dispose();
+    }
+
+    private sealed class CompositeExecutor : IReadToolExecutor
+    {
+        private readonly IReadToolExecutor read;
+        private readonly IWriteToolExecutor? write;
+        private readonly IShellToolExecutor? shell;
+        internal CompositeExecutor(IReadToolExecutor read, IWriteToolExecutor? write, IShellToolExecutor? shell) { this.read = read; this.write = write; this.shell = shell; }
+        public IReadOnlyList<ToolSpec> Specs => read.Specs.Concat(write?.Specs ?? Array.Empty<ToolSpec>()).Concat(shell?.Specs ?? Array.Empty<ToolSpec>()).ToArray();
+        public Task<IReadToolExecutor> CaptureAsync(CancellationToken cancellationToken) => Task.FromResult<IReadToolExecutor>(this);
+        public Task<ToolResult> ExecuteAsync(ToolInvocation invocation, CancellationToken cancellationToken)
+        {
+            if (invocation.Name == "create_file" || invocation.Name == "edit_file")
+                return write is null ? throw new ProviderException("workspace_unavailable") : write.ExecuteAsync(invocation, cancellationToken);
+            if (invocation.Name == "run_command")
+                return shell is null ? throw new ProviderException("workspace_unavailable") : shell.ExecuteAsync(invocation, cancellationToken);
+            return read.ExecuteAsync(invocation, cancellationToken);
+        }
     }
 
     private static bool ContainsSecret(JsonElement value, string secret) => value.ValueKind switch
@@ -413,7 +552,24 @@ public sealed class ByokSession : IDisposable
             ["index"] = index, ["userText"] = userText.FirstOrDefault()?.Text ?? string.Empty, ["hasImage"] = user.Parts.OfType<ImagePart>().Any(),
             ["text"] = string.Concat(assistant.Parts.OfType<TextPart>().Select(part => part.Text)),
             ["reasoning"] = string.Concat(assistant.Parts.OfType<ReasoningPart>().Select(part => part.Text)),
-            ["tools"] = assistant.Parts.OfType<ToolCallPart>().Select(call => new { id = call.Id, name = call.Name, arguments = call.Arguments }).ToArray(),
+            ["tools"] = assistant.Parts.OfType<ToolCallPart>().Select(call =>
+            {
+                var tool = new Dictionary<string, object> { ["id"] = call.Id, ["name"] = call.Name, ["arguments"] = call.Arguments };
+                var result = assistant.Parts.OfType<ToolResultPart>().FirstOrDefault(part => part.InvocationId == call.Id);
+                if (result is not null)
+                {
+                    tool["status"] = result.IsError ? "Failed" : "Completed";
+                    tool["isError"] = result.IsError;
+                    tool["content"] = result.Content;
+                }
+                else if (value.TurnStates[index] != "completed")
+                {
+                    tool["status"] = value.TurnStates[index] == "cancelled" ? "Cancelled" : "Failed";
+                    tool["isError"] = true;
+                    tool["content"] = string.Empty;
+                }
+                return tool;
+            }).ToArray(),
             ["status"] = value.TurnStates[index]
         };
         if (userText.Length > 1) view["contextText"] = string.Concat(userText.Skip(1).Select(part => part.Text));
@@ -458,10 +614,6 @@ public sealed class ByokSession : IDisposable
         return configurations.FirstOrDefault(value => value.Id == id) ?? throw new ProviderException("provider_not_found");
     }
     private ModelInfo FindModel(ProviderConfiguration configuration, string modelId) => models.TryGetValue(configuration.Id, out var catalog) ? catalog.FirstOrDefault(value => value.ModelId == modelId) ?? throw new ProviderException("model_not_found") : throw new ProviderException("model_not_found");
-    private static void AppendText(List<ContentPart> parts, string text)
-    {
-        if (parts.LastOrDefault() is TextPart previous) parts[parts.Count - 1] = new TextPart(previous.Text + text); else parts.Add(new TextPart(text));
-    }
     private static object ConfigurationView(ProviderConfiguration configuration) => new { id = configuration.Id, providerId = configuration.ProviderId, kind = configuration.Kind.ToString(), baseUrl = configuration.BaseUrl, selectedModelId = configuration.SelectedModelId, deploymentNames = configuration.DeploymentNames };
     private static object CatalogView(ProviderConfiguration configuration, CatalogResult result) => new
   {
@@ -491,6 +643,20 @@ public sealed class ByokSession : IDisposable
         _ => throw new InvalidOperationException()
     };
     private static Task Reply(Func<string, Task> send, string? id, string type, object payload) => send(JsonWire.Serialize(new { version = 1, id, type, payload }));
+    private static void ValidateWriteText(string text, bool multiline)
+    {
+        for (var index = 0; index < text.Length; index++)
+        {
+            var character = text[index];
+            if (char.IsControl(character) && !(multiline && (character == '\r' || character == '\n' || character == '\t'))) throw new ProviderException("invalid_arguments");
+            if (char.IsHighSurrogate(character))
+            {
+                if (++index == text.Length || !char.IsLowSurrogate(text[index])) throw new ProviderException("invalid_arguments");
+            }
+            else if (char.IsLowSurrogate(character)) throw new ProviderException("invalid_arguments");
+        }
+    }
+
     private static string RequiredString(JsonElement payload, string name, int maximum, bool allowEmpty = false)
     {
         var value = JsonWire.String(payload, name);
@@ -518,5 +684,13 @@ public sealed class ByokSession : IDisposable
         foreach (var property in value.EnumerateObject()) if (!seen.Add(property.Name) || (!required.Contains(property.Name) && !(optional?.Contains(property.Name) ?? false))) return false;
         return required.All(seen.Contains);
     }
-    public void Dispose() { lock (activeGate) active?.Cancel(); }
+    public void Dispose()
+    {
+        lock (activeGate) active?.Cancel();
+        lock (approvalGate)
+        {
+            foreach (var pending in approvals.Values) pending.Decision.TrySetCanceled();
+            approvals.Clear();
+        }
+    }
 }

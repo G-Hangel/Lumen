@@ -21,6 +21,7 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <ProjectReference Include="../Lumen.Core/Lumen.Core.csproj" IncludeOutputGroupsInVSIX="BuiltProjectOutputGroup;SatelliteDllsProjectOutputGroup" />
     <ProjectReference Include="../Lumen.Providers/Lumen.Providers.csproj" IncludeOutputGroupsInVSIX="BuiltProjectOutputGroup;SatelliteDllsProjectOutputGroup" />
+    <ProjectReference Include="../Lumen.Tools/Lumen.Tools.csproj" IncludeOutputGroupsInVSIX="BuiltProjectOutputGroup;SatelliteDllsProjectOutputGroup" />
     <VSCTCompile Include="Menus.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
     </VSCTCompile>

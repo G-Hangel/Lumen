@@ -108,6 +108,75 @@
       </div>
     </details>
 
+    <details id="byok-read-tools" class="read-tools" aria-busy="false">
+      <summary data-i18n="readToolsTitle"></summary>
+      <div class="read-tools-controls">
+        <p id="byok-read-help" class="secondary" data-i18n="readToolsHelp"></p>
+        <form id="byok-read-form" autocomplete="off" aria-describedby="byok-read-help byok-read-limits">
+          <fieldset id="byok-read-fields" disabled>
+            <legend data-i18n="readToolsTitle"></legend>
+            <label for="byok-read-name" data-i18n="readToolsName"></label>
+            <select id="byok-read-name"></select>
+            <label for="byok-read-path" data-i18n="readToolsPath"></label>
+            <input id="byok-read-path" type="text" value="." maxlength="4096" required spellcheck="false">
+            <div id="byok-read-lines" class="read-tool-group">
+              <label for="byok-read-start" data-i18n="readToolsStart"></label>
+              <input id="byok-read-start" type="number" min="1" max="1000000" step="1">
+              <label for="byok-read-end" data-i18n="readToolsEnd"></label>
+              <input id="byok-read-end" type="number" min="1" max="1000000" step="1">
+            </div>
+            <div id="byok-read-search" class="read-tool-group" hidden>
+              <label for="byok-read-max" data-i18n="readToolsMax"></label>
+              <input id="byok-read-max" type="number" min="1" max="256" step="1">
+            </div>
+            <div id="byok-read-glob-group" class="read-tool-group" hidden>
+              <label for="byok-read-glob" data-i18n="readToolsGlob"></label>
+              <input id="byok-read-glob" type="text" maxlength="256" spellcheck="false">
+            </div>
+            <div id="byok-read-pattern-group" class="read-tool-group" hidden>
+              <label for="byok-read-pattern" data-i18n="readToolsPattern"></label>
+              <input id="byok-read-pattern" type="text" maxlength="1024" spellcheck="false">
+            </div>
+            <button id="byok-read-run" type="submit" class="text-button" data-i18n="readToolsRun"></button>
+          </fieldset>
+        </form>
+        <p id="byok-read-limits" class="secondary" data-i18n="readToolsLimits"></p>
+        <button id="byok-read-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
+        <p id="byok-read-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+        <pre id="byok-read-result" class="byok-plain" tabindex="0" data-i18n-label="readToolsResult" hidden></pre>
+      </div>
+    </details>
+
+    <details id="byok-write-tools" class="read-tools write-tools">
+      <summary data-i18n="writeToolsTitle"></summary>
+      <div class="read-tools-controls">
+        <p id="byok-write-help" class="secondary" data-i18n="writeToolsHelp"></p>
+        <form id="byok-write-form" autocomplete="off">
+          <fieldset id="byok-write-fields" disabled aria-describedby="byok-write-help byok-write-limits">
+            <legend data-i18n="writeToolsManual"></legend>
+            <label for="byok-write-name" data-i18n="writeToolsName"></label>
+            <select id="byok-write-name"></select>
+            <label for="byok-write-path" data-i18n="writeToolsPath"></label>
+            <input id="byok-write-path" type="text" maxlength="1024" required spellcheck="false">
+            <label for="byok-write-content" data-i18n="writeToolsContent"></label>
+            <textarea id="byok-write-content" rows="4" maxlength="65536" spellcheck="false"></textarea>
+            <button id="byok-write-apply" type="submit" class="text-button" data-i18n="writeToolsApply" disabled></button>
+          </fieldset>
+        </form>
+        <p id="byok-write-limits" class="secondary" data-i18n="writeToolsLimits"></p>
+        <p class="secondary" data-i18n="writeToolsSession"></p>
+        <div class="byok-actions">
+          <button id="byok-write-undo" type="button" class="text-button" data-i18n="writeToolsUndo" disabled></button>
+          <button id="byok-write-refresh" type="button" class="text-button" data-i18n="writeToolsRefresh" disabled></button>
+          <button id="byok-write-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
+        </div>
+        <p id="byok-write-pending" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="byok-write-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+        <p id="byok-write-diff-note" class="secondary" hidden></p>
+        <pre id="byok-write-diff" class="byok-plain" tabindex="0" data-i18n-label="writeToolsDiff" hidden></pre>
+      </div>
+    </details>
+
     <main class="chat-main" aria-labelledby="byok-chat-title">
       <h2 id="byok-chat-title" class="sr-only" data-i18n="byokChatTitle"></h2>
       <p id="byok-empty" class="empty-state" data-i18n="byokEmpty"></p>
@@ -137,6 +206,24 @@
         </div>
         <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter"></textarea>
         <p id="byok-active-model" class="secondary" role="status"></p>
+        <div class="byok-auto-consent">
+          <input id="byok-auto-read-tools" type="checkbox" disabled aria-describedby="byok-auto-read-help">
+          <label for="byok-auto-read-tools" data-i18n="byokAutoReadConsent"></label>
+        </div>
+        <div class="byok-auto-consent">
+          <input id="byok-auto-write-tools" type="checkbox" disabled aria-describedby="byok-auto-write-help">
+          <label for="byok-auto-write-tools" data-i18n="byokAutoWriteConsent"></label>
+        </div>
+        <div class="byok-auto-consent">
+          <input id="byok-auto-terminal" type="checkbox" disabled aria-describedby="byok-auto-terminal-help">
+          <label for="byok-auto-terminal" data-i18n="byokAutoTerminalConsent"></label>
+        </div>
+        <details class="send-options">
+          <summary data-i18n="byokAutoToolsDetails"></summary>
+          <p id="byok-auto-read-help" class="secondary" data-i18n="byokAutoReadHelp"></p>
+          <p id="byok-auto-write-help" class="secondary" data-i18n="byokAutoWriteHelp"></p>
+          <p id="byok-auto-terminal-help" class="secondary" data-i18n="byokAutoTerminalHelp"></p>
+        </details>
         <details id="byok-context" class="send-options context-panel" aria-busy="false">
           <summary data-i18n="contextTitle"></summary>
           <div class="context-controls">

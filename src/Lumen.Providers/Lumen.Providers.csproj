@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Lumen.Core/Lumen.Core.csproj" />
+    <ProjectReference Include="../Lumen.Tools/Lumen.Tools.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="capabilities.registry.json" />

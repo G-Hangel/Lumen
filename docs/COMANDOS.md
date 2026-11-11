@@ -1,6 +1,6 @@
-# COMANDOS — Fases 0–3d
+# COMANDOS — Fases 0–4c e readonly automático
 
-Testados em **2026-11-07–09**, na raiz `C:\Users\Hanjel\Documents\Extensão`.
+Testados em **2026-11-07–10**, na raiz `C:\Users\Hanjel\Documents\Extensão`.
 VS Community Insiders 18.12.12328.396, instanceId `25e762c6`, SDK .NET
 11.0.100-rc.3.26522.148, Node.js 24, WebView2 Runtime 156.0.4314.58.
 
@@ -452,3 +452,210 @@ cache vazios; preview 4173 intocado. Evidências: `artifacts/phase3d.binlog`,
 `artifacts/byok-webview.png`, `artifacts/history-webview.json`,
 `artifacts/history-webview.png`, `artifacts/context-webview.json`,
 `artifacts/context-webview.png`, `artifacts/webview-verification.json`.
+
+## Fase 4b — ferramentas readonly explícitas (2026-11-09)
+
+Com a Exp fechada, build e testes sem provedores externos:
+
+```bash
+npm run build:ui
+npm run check:ui
+dotnet build Lumen.sln -c Release -bl:artifacts/phase4b.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=phase4b.trx' --results-directory artifacts/tests
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+```
+
+Aguardar **Ponte conectada**; regressão exige painel fechado/chat vazio. Não
+iniciar servidor BYOK, não configurar modelo/chave e não repetir `Prepare` se
+já existir manifesto. A fixture recusa substituir solução alheia.
+
+```bash
+node scripts/verify-webview.mjs
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-read-tools-webview.mjs verify
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+node scripts/verify-read-tools-webview.mjs closed
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`Prepare` inclui texto HTML inerte, binário e arquivo de 1 MiB + 1 byte na pasta
+própria. `verify` exercita RPC/formulário real, disk versus buffer, range,
+listagem/glob/grep, truncamento, path/tamanho/binário, autoridade forjada e
+recuperação. Confere hash inalterado, zero turnos de chat, HTML como plaintext e
+203 px sem overflow. `closed` exige `workspace_unavailable`. `Close` fecha somente
+a solução própria sem salvar; `Cleanup` remove somente sua pasta e manifesto.
+Em execução interrompida, consultar `-Action Inspect` antes de limpar/retomar.
+
+Resultado: build **0 erros/avisos**, **1.261 testes C# / 166 JS** verdes; relatórios
+reais com **0 exceções JS**, sem API paga/probe. Identidade JSON incompatível do
+pacote foi rejeitada antes de alinhar Tools a netstandard2.0. Cancelamento foi
+verificado com executor determinístico/transporte fake, não com I/O longo na Exp;
+troca de solução durante I/O não foi corrida. Symlink de arquivo indisponível.
+
+Evidências: `artifacts/phase4b.binlog`, `artifacts/tests/phase4b.trx`,
+`artifacts/phase4b-runtime-negative.xml`, `artifacts/read-tools-verify.json`,
+`artifacts/read-tools-closed.json`, `artifacts/read-tools-webview.png`.
+Install/Verify SHA-256 em `Extensions\3udphwea.yqv`; Exp/fixture próprias fechadas
+e removidas, preview próprio 4176 encerrado; preexistentes 4173/4175 intocados.
+Nesse checkpoint não havia edição/terminal nem invocação automática pelo modelo.
+
+## Fatia readonly automática — antecipação da Fase 5 (2026-11-09)
+
+Com a Exp fechada, build e testes completos:
+
+```bash
+npm run build:ui
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -bl:artifacts/auto-tools.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=auto-tools.trx' --results-directory artifacts/tests
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+```
+
+Aguardar ponte; regressão começa com painel fechado e chat vazio. A fixture
+recusa substituir solução ou manifesto existente. O verificador possui seu
+próprio servidor em porta loopback aleatória; não iniciar servidor BYOK externo.
+
+```bash
+node scripts/verify-webview.mjs
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-auto-tools-webview.mjs verify
+node scripts/verify-auto-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`verify` configura apenas provedor/chave sintéticos próprios, envia pela UI com
+opt-in e verifica requests assistant/tool/assistant, conteúdo real do disco
+(não buffer), resultados de quatro ferramentas, HTML inerte e consentimento
+resetado. Reabre histórico, testa opt-out, traversal/escrita rejeitados,
+interrupção por orçamento e Cancel durante continuação. Fecha somente a solução
+própria sem salvar; envio automático com solução fechada é rejeitado antes de
+POST. Verifica hash do arquivo, 203 px sem overflow e exceções JS.
+
+`cleanup` remove apenas configurações/credenciais/conversas identificadas no
+manifesto, inclusive turns falhos/cancelados. Servidor/CDP fecham no finally.
+Se `verify` falhar antes de fechar a solução, executar `cleanup`, depois
+`context-experimental.ps1 -Action Close`, e só então limpar a fixture; não
+reexecutar `Prepare` ou sobrescrever IDs de uma execução interrompida.
+
+Resultado: clean/build **0 erros/avisos**, **1.310 C# / 179 JS** verdes; na Exp,
+**12 requests loopback, 0 pagos, 0 exceções JS**. Asserção inicial que procurava
+`<script>` no JSON serializado falhou pelo escape `\\u003C`; leitura do arquivo
+confirmou o conteúdo e a asserção passou a verificar o campo de texto decodificado,
+sem remover controles de execução/DOM. Nenhuma API paga ou probing foi usado.
+
+Evidências: `artifacts/auto-tools.binlog`, `artifacts/tests/auto-tools.trx`,
+`artifacts/auto-tools-webview.json`, `artifacts/auto-tools-webview.png` e
+`artifacts/webview-verification.json`. Limitações de transporte real, I/O longo,
+symlink e leitor de tela estão em `STATUS.md`. Não conclui Fases 4/5.
+
+## Fatia 4c — escrita manual interna (2026-11-10)
+
+Com a Exp fechada e sem manifesto anterior:
+
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release -bl:artifacts/write-slice.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=write-slice.trx' --results-directory artifacts/tests
+npm run check:ui
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-write-tools-webview.mjs
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+```
+
+O verificador usa Apply/Undo reais no painel e RPCs negativos, sem provedor ou
+chave. Confirma diff plaintext com finais de linha, HTML sem execução, disco
+inalterado para buffer aberto não salvo, undo em lote e Undo/Redo nativos.
+Mudança externa em disco, edição posterior com texto final idêntico, traversal,
+ADS, caminho absoluto, modo forjado e ferramenta desconhecida são recusados.
+Fecha somente a solução própria, verifica solução fechada e layout de 203 px.
+Se falhar antes do Close, fechar a fixture sem salvar antes do Cleanup; não
+repetir o verificador sobre escritas pendentes nem substituir o manifesto.
+
+Falhas reais identificadas: `ToolInvocation.Arguments` atravessava identidades
+JSON diferentes entre net48/netstandard; a extração ficou em Tools e retorna
+strings validadas. `VsUndoHistory.UndoStack` não é implementado no VS instalado;
+substituído por primitiva não mesclável e versões reiteradas. Os metadados do
+VSIX têm controle negativo que rejeita a reintrodução desses acessos. O DTE
+normaliza algumas leituras CRLF para LF; comparação normalizada só no verificador,
+sem salvar ou reescrever o buffer. O fake concorrente de cancelamento usa fila
+thread-safe sem relaxar a asserção de Cancelled. O verificador offline aguarda
+`Page.loadEventFired` antes de avaliar o novo contexto: a recarga real havia
+destruído a avaliação anterior. Sem retry ou polling da página.
+
+Evidências: `artifacts/write-slice.binlog`, `artifacts/tests/write-slice.trx`,
+`artifacts/write-tools-webview.json`, `artifacts/write-tools-webview.png`.
+Resultado final: clean/build **0 erros/avisos**, **1.405 C# / 197 JS** verdes.
+Verificador manual completo na Exp: lote disco+buffer com edição repetida,
+Undo/Redo, negativos e imagem aprovados; **0 pagos / 0 exceções JS**. Baseline
+local offline e readonly manual também passaram. Regressão readonly automática
+ficou parcial pelo timeout da captura CDP (B9), sem repetir turnos ou aproveitar
+relatório antigo como aprovação atual. Cleanup próprio e SHA finais concluídos.
+Registro histórico: a 4c não habilitava escrita pelo modelo, terminal,
+aprovação externa ou Agent completo. Escrita/terminal restritos vieram na 4d.
+
+## Fatia 4d — escrita pelo modelo e terminal aprovado (2026-11-11)
+
+Com a Exp fechada e sem manifesto anterior:
+
+```bash
+npm run build:ui
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:minimal -bl:artifacts/agent-tools.binlog
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=agent-tools.trx' --results-directory artifacts/tests
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs verify
+node scripts/verify-agent-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+O verificador cria seu servidor loopback, credencial sintética e conversas;
+não chama APIs pagas. Usa a UI real para manual+dois turnos automáticos, undo de
+cada lote, comandos negar/uma vez/sessão/cancelar e negação externa. Output é
+lido por helper C# com cast público `DTE2`: acesso PowerShell direto a ToolWindows
+no RCW retornava null, apesar de o pane Lumen existir por nome/GUID e ter texto.
+Schemas negativos, HTML inerte, segredos, solução fechada/reaberta e mutação
+negativa de layout fazem parte das asserções. Captura CDP é complementar.
+
+Nesta execução, escrita/undo/terminal negar e uma vez passaram antes da falha
+na inspeção COM. Após corrigir o robô, `resume` concluiu somente os cenários
+restantes sem repetir escritas. Esse modo é recuperação específica desse marco,
+não retomada genérica de qualquer falha: exige manifesto/configuração/conversa,
+buffer original restaurado e zero escritas pendentes. Reabre o mesmo endpoint
+loopback por porta já configurada; recusa host não loopback e porta ocupada.
+
+```bash
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action OutputInspect -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs resume
+```
+
+Em outra interrupção, inspecionar o estado; não repetir `Prepare` nem `verify`
+sobre o manifesto existente. Cleanup JS remove somente IDs próprios, incluindo
+turnos cancelados/falhos; executar antes de fechar a Exp. Depois fechar a solução
+própria sem salvar e limpar somente a pasta/manifesto da fixture. Não reiniciar
+repetidamente a Exp se o robô não encontrar Lumen; verificar menu/pane atuais.
+A busca alternativa de popup não teve causa comprovada e foi revertida.
+
+Resultado: clean/build **0 erros/avisos**, **1.466 C# / 205 JS**, sem ignorados.
+Retomada: **11 requests loopback, 0 pagos, 0 exceções JS**, Output/cancel/sessão/
+readonly/fora/HTML/segredos/stale/reabertura/layout negativo aprovados. Relatório
+explicita o marco anterior, não uma nova execução integral única. Screenshot
+salvo; não resolve B9 da regressão readonly anterior. Cleanup e SHA de todos os
+arquivos em `Extensions\xont1ooq.0ro` confirmados, Exp fechada; sem commit/push.
+Evidências: `artifacts/agent-tools.binlog`, `artifacts/tests/agent-tools.trx`,
+`artifacts/agent-tools-ui-tests.log`, `artifacts/agent-tools-webview.json` e
+`artifacts/agent-tools-webview.png`. Próximos itens/limites em `STATUS.md`.

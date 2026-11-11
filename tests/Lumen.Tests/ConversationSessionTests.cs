@@ -278,13 +278,12 @@ public sealed class ConversationSessionTests
         ChatSummary(await fixture.Chat("next signed question"), fixture.ConfigurationId, Model, 2);
         using var replay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
         var contents = replay.RootElement.GetProperty("contents");
-        Assert.Equal(3, contents.GetArrayLength());
-        var replayedImage = Assert.Single(contents[0].GetProperty("parts").EnumerateArray(), part => part.TryGetProperty("inline_data", out _) || part.TryGetProperty("inlineData", out _));
-        var inlineImage = replayedImage.TryGetProperty("inline_data", out var snake) ? snake : replayedImage.GetProperty("inlineData");
-        Assert.Equal(Image, inlineImage.GetProperty("data").GetString());
-        var replayedParts = contents[1].GetProperty("parts");
-        Assert.Contains(replayedParts.EnumerateArray(), part => part.TryGetProperty("thoughtSignature", out var signature) && signature.GetString() == ReasoningSignature);
-        Assert.Contains(replayedParts.EnumerateArray(), part => part.TryGetProperty("thoughtSignature", out var signature) && signature.GetString() == ToolSignature && part.GetProperty("functionCall").GetProperty("args").GetProperty("line").GetInt32() == 7);
+        // Legacy tool cards have no result: retain the archive but skip the entire
+        // pair on replay rather than sending an orphan native functionCall.
+        Assert.Single(contents.EnumerateArray());
+        Assert.DoesNotContain(ReasoningSignature, fixture.Handler.ChatBodies.Last());
+        Assert.DoesNotContain(ToolSignature, fixture.Handler.ChatBodies.Last());
+        Assert.DoesNotContain(Image, fixture.Handler.ChatBodies.Last());
         AssertUiPrivate(fixture.Replies);
         AssertSecretAbsent(ReadJsonFiles(fixture.Root));
     }

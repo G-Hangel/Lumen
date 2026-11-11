@@ -1,14 +1,20 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-09**.
+Atualizado em **2026-11-11**.
 
 ## Estado atual
 
-**Fases 0, 1 e 2 concluídas; Fase 3 em andamento — fatias 3a, 3b, 3c e 3d
-concluídas; 3d verificada em 2026-11-09.** A Fase 2 foi fechada com limites explicitamente aceitos pelo
-usuário em 2026-11-07: ele testou com chave real na UI (listagem e chat
-funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
-(B8). Nenhum remote nem push foi realizado.
+**Fases 0, 1 e 2 concluídas; fatias 3a–3d e 4a–4d implementadas e verificadas.
+Fases 3/4/5 ainda abertas para seus critérios integrais.** O modelo pode ler,
+criar/editar arquivos e executar comandos com opt-in por envio. Escrita interna
+aplica automaticamente com diff; undo reverte somente o último lote. Escrita
+externa exige aprovação por operação; terminal exige aprovação, com opção de
+consentimento por sessão revogada ao fechar/reabrir a solução. Ainda faltam
+`apply_diff`, diagnósticos, detecção completa dos shells e modos Agent/Ask/Plan
+integrais. B9 continua sendo a captura da regressão readonly anterior, não a
+captura bem-sucedida da 4d. A Fase 2 mantém os limites aceitos em 2026-11-07:
+Ollama local dispensado (B7), inventário Azure manual (B8). Sem APIs pagas,
+commit, remote ou push nesta fatia.
 
 | Fase | Estado |
 | --- | --- |
@@ -17,7 +23,345 @@ funcionaram), dispensou o Ollama local (B7) e aceitou o inventory Azure manual
 | Fase 1 — Núcleo de domínio | **concluído** |
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
 | Fase 3 — UI do chat | **em andamento — 3a, 3b, 3c e 3d concluídas** |
-| Fases 4–8 | não iniciadas |
+| Fase 4 — Ferramentas e segurança | **em andamento — 4a–4d verificadas; apply_diff, diagnósticos e detecção completa de shells pendentes** |
+| Fase 5 — Loop e modos | **loop restrito de leitura/escrita/terminal verificado; Agent completo/modos pendentes** |
+| Fases 6–8 | não iniciadas |
+
+## Escrita pelo modelo e terminal aprovado — fatia 4d (2026-11-11)
+
+- Opt-in separado por envio para escrita e terminal; ambos implicam leitura.
+  Schema estrito e autoridade do host, nunca do modelo. Ask/Plan são recusados
+  no backend; os modos completos ainda não estão expostos na UI.
+- Escritas internas em disco/buffer aplicam automaticamente com diff inerte.
+  Cada turno automático inicia um lote; manuais consecutivas compartilham lote.
+  Undo restaura somente o sufixo mais recente, preserva anteriores e permite
+  retomar restauração parcial. Conflitos impedem sobrescrever alterações alheias.
+- Paths absolutos de drive permitem aprovação externa por operação; traversal,
+  ADS, drive-relative, UNC/device permanecem rejeitados. Schema efetivo anuncia
+  path 1.024 e conteúdo 65.536. Reserva de orçamento antecede escrita; commit
+  seguido de cancelamento preserva resultado/diff e bloqueia a próxima I/O.
+- Terminal: negar/permitir uma vez/permitir nesta sessão. Consentimento vinculado
+  à geração da solução e revalidado após aprovação, antes de iniciar o processo.
+  Argumentos escapados com oracle `CommandLineToArgvW`; processo suspenso entra
+  no Job Object antes de executar. Fechamento do job encerra descendentes;
+  timeout/cancelamento e drenagem de pipes são limitados, fora da UI thread.
+  Resultado aparece no chat e no pane público `IVsOutputWindowPane` Lumen.
+- Clean/build Release **0 erros/0 avisos**; **1.466 C# + 205 JS** verdes,
+  sem ignorados. Negativos incluem autoridade/schema/path, orçamento antes de
+  I/O, cancelamento após commit, undo/conflitos, escaping, callback stale,
+  descendentes sobreviventes e getters COM/JSON proibidos no pacote.
+- Exp real: manual + dois turnos automáticos, buffer não salvo/disco separados,
+  diff e três undos isolados passaram. Negar e permitir terminal uma vez passaram.
+  A inspeção Output falhou por acesso PowerShell ao RCW; helper C# `DTE2`
+  confirmou pane por nome/GUID e `exit 0`/stdout. Retomada usou o endpoint
+  loopback já configurado, sem repetir os turnos de escrita/undo.
+- Retomada: cancelamento em aprovação, consentimento persistente/revogado ao
+  reabrir, readonly sem escrita/terminal, aprovação externa sem opção de sessão,
+  HTML inerte, arquivo sem chave sintética, solução fechada sem POST e layout
+  203 px passaram. Mutação `min-width:240px` foi detectada e desfeita.
+  **11 requests loopback na retomada, 0 pagos, 0 exceções JS**; screenshot salvo.
+  O relatório explicita a retomada, não é uma nova execução integral única.
+- Configuração/credencial/conversas removidas pelos IDs próprios; fixture limpa,
+  Exp fechada e SHA de todos os arquivos instalados confirmado em
+  `Extensions\xont1ooq.0ro`. Nenhum perfil principal/servidor alheio alterado.
+- Evidências: `artifacts/agent-tools.binlog`, `artifacts/tests/agent-tools.trx`,
+  `artifacts/agent-tools-ui-tests.log`, `artifacts/agent-tools-webview.json`,
+  `artifacts/agent-tools-webview.png`. B9 anterior continua aberto.
+- Lacunas: `apply_diff`, diagnósticos, detecção completa de shells e modos
+  integrais. UI real exercitou cmd e negação externa, não uma escrita externa
+  aprovada nem todos os shells; demais cenários são testes de backend.
+  Não valida disco cheio, leitor de tela ou transporte de API paga.
+
+## Escrita manual interna — fatia 4c (2026-11-10)
+
+Registro histórico; limitações superadas na 4d estão descritas acima.
+
+- Painel explícito de `create_file`/`edit_file`, Apply, diff plaintext e undo de
+  todas as escritas manuais pendentes na sessão nativa. Não chama provedor,
+  lê credenciais ou envia conteúdo ao modelo; não habilita escrita automática.
+- Arquivo aberto: edição MEF sem salvar/recarregar, transação nativa e marcador
+  `ITextUndoPrimitive` não mesclável. Undo compara conteúdo, versão reiterada,
+  identidade de buffer/solução e estado do marcador; transação externa invalida
+  o lote, mesmo quando a pessoa restaura o mesmo texto. Native Undo bloqueia o
+  lote enquanto desfeito; Native Redo pode restabelecer a identidade esperada.
+- Arquivo fechado: preparação em background e substituição atômica. Imediatamente
+  antes da escrita/restauração/exclusão, solução e RDT são revalidados sem yield
+  na UI thread; documento aberto durante a preparação é recusado. Journal
+  preserva bytes exatos e recusa mudanças externas. Undo parcial remove somente
+  registros restaurados. Cancelamento tardio não transforma commit em falha.
+- Limites: path relativo até 1.024 caracteres, conteúdo até 65.536, 64 escritas;
+  texto próprio de buffer até 1 Mi caracteres e journal de disco até 16 MiB.
+  Textos, delegates e referências auxiliares são liberados ao remover registros;
+  o marcador nativo conserva só estado e o vínculo da transação. Diff limitado,
+  com finais de linha e truncamento explícitos. Não existe persistência do lote.
+- Clean/build Release **0 erros/avisos**, **1.405 C# + 197 JS**, sem falhas ou
+  ignorados. Negativos incluem aprovação/backend, path/reparse, schema/autoridade,
+  conflito, orçamento, cancelamento, commit do host e metadados do VSIX.
+- Pacote definitivo na Exp passou Apply/Undo em disco+buffer não salvo (duas
+  edições consecutivas no mesmo buffer), Undo/Redo nativo, HTML inerte, alteração
+  externa, texto idêntico após edição posterior, paths, solução fechada e 203 px
+  sem overflow; **0 pagos / 0 exceções JS**. Baseline offline, recuperação,
+  negativo de layout e regressão readonly manual completa também passaram.
+- Regressão readonly automática chegou ao fim dos controles funcionais, mas
+  expirou na captura CDP antes do relatório final/asserção de exceções JS (B9).
+  Captura isolada também expirou; nenhum turno foi repetido. Não se declara
+  aprovação integral dessa regressão. Provedor/chave/conversas sintéticos próprios
+  removidos; fixtures limpas, Exp fechada, preview próprio 4177 parado e SHA de
+  todos os arquivos instalados confirmado. Sem commit/push.
+- Falhas corrigidas com evidência: identidade JSON net48/netstandard separada
+  (argumentos extraídos como strings em Tools); `VsUndoHistory.UndoStack` não
+  suportado (`LastUndoTransaction` também é stub, `CanUndo` sempre true), logo
+  substituído pelo marcador. DTE normaliza newline em algumas leituras; só o
+  verificador normaliza comparações. Fake concorrente passou a coletar respostas
+  em fila thread-safe, sem relaxar a asserção de cancelamento. Verificação de
+  recarga offline aguarda `Page.loadEventFired` antes de avaliar o novo contexto,
+  após falha real de avaliação destruída pela navegação; sem retry/polling.
+- Evidências: `artifacts/write-slice.binlog`, `artifacts/tests/write-slice.trx`,
+  `artifacts/write-tools-webview.json` e `artifacts/write-tools-webview.png`.
+- Lacunas: sem `apply_diff`, undo de turno Agent, escrita pelo modelo, painel de
+  terminal, aprovação externa ou modos completos. Testes de corrida no commit
+  usam gate sintético; não injetam concorrência no editor da Exp. Não valida
+  falha/disco cheio no SO real nem leitor de tela. Fases 4/5 seguem abertas.
+
+## Invocação automática readonly (2026-11-09)
+
+- Opt-in por envio (`readTools: true`) anuncia apenas `read_file`, `list_dir`,
+  `find_files` e `grep`. Ausente/false não captura nem executa ferramentas.
+  Checkbox inicia desmarcado e perde consentimento após envio/troca de modelo.
+  A UI avisa sobre conteúdo de disco, custo potencial e persistência local
+  plaintext; o painel de leitura manual não alimenta o chat.
+- Solução capturada antes de credenciais/HTTP, validada antes/depois do I/O.
+  Execução Ask, em sequência e somente após argumentos completos + ToolUse.
+  Escrita, terminal e autoridade enviada pelo modelo continuam bloqueados;
+  rejeições retornam erro correlacionado ao modelo sem chamar o executor.
+- Tetos: quatro requests, oito invocações, 8.192 tokens de saída solicitados,
+  dois minutos por turno; stream/resultados/input também limitados. Sem retry,
+  reexecução ou compactação silenciosa. System prompt trata arquivos como dados
+  não confiáveis. Estado assinado preservado; chave filtrada antes de UI/arquivo.
+- Arquivo mantém pares usuário/assistente; replay expande calls/resultados em
+  mensagens assistant/tool/assistant. Histórico reaberto mostra resultados
+  inertes e estados; turns falhos/cancelados e chamadas legadas órfãs não são
+  reenviados. Rejeição prévia aparece como Failed, nunca como execução concedida.
+- Clean/build Release **0 erros/0 avisos**; **1.310 testes C# + 179 JS** verdes,
+  sem ignorados. Controles negativos de ferramentas desconhecidas/escrita,
+  argumentos, orçamento, stream incompleto, segredos, captura, cancelamento e
+  gate; UI rejeita Running/Completed de ferramenta desconhecida, mas aceita
+  Failed correlacionado sem I/O.
+- WebView2 real + provedor loopback: leitura automática das quatro ferramentas,
+  reinjeção, disco diferente do buffer não salvo, HTML inerte, reabertura/replay,
+  opt-out, traversal/escrita negados, limite de loop e cancelamento durante
+  continuação com recuperação. Solução fechada impediu POST; hash do arquivo
+  inalterado; 203 px sem overflow. **12 requests locais, 0 pagos, 0 exceções JS**.
+  Regressão `verify-webview` passou com negativo de overflow forçado.
+- Cleanup removeu somente provedor/chave/conversas sintéticos por IDs do
+  manifesto; solução fechada sem salvar, pasta/manifesto e preview próprio 4177
+  removidos/encerrados. Exp fechada; pacote final SHA-256 confirmado em
+  `Extensions\2sfwep3y.aeq`. Servidores preexistentes 4173/4175 intocados.
+  Nenhum commit, remote ou push neste trabalho.
+- **Lacunas:** teste real usa transporte OpenRouter compatível com OpenAI;
+  Anthropic/Gemini e assinaturas têm testes fake, não API paga real. Troca de
+  solução durante I/O e cancelamento de leitura longa não foram corridos na Exp
+  (cancelamento real foi durante POST seguinte). Symlink de arquivo indisponível;
+  acessibilidade estrutural, sem passada manual de leitor de tela. Fases 4/5
+  não concluídas; orçamento fixo, contexto conservador sem tokenizer/compactação.
+
+Evidências: `artifacts/auto-tools.binlog`, `artifacts/tests/auto-tools.trx`,
+`artifacts/auto-tools-webview.json`, `artifacts/auto-tools-webview.png` e
+`artifacts/webview-verification.json`. Reprodução em `COMANDOS.md`.
+
+## Evidências verificadas da fatia 4b (2026-11-09)
+
+Registro histórico antes da antecipação readonly automática acima.
+
+- Formulário explícito para `read_file`, `list_dir`, `find_files` e `grep`, via
+  RPC `byok.tool.read`, sem provedor/modelo selecionado e sem gasto de tokens.
+  Resultados ficam em plaintext; não são anexados ao chat/contexto nem enviados
+  ao modelo. Leitura usa disco, não buffers não salvos.
+- Host captura a solução aberta na UI thread, executa em background com
+  `ChatMode.Ask` e revalida raiz/caminho da solução ao terminar. O navegador não
+  escolhe raiz, modo ou aprovação. Escrita e terminal continuam indisponíveis.
+- A Exp revelou `MissingMethodException` em `ToolInvocation.get_Arguments()`:
+  referências de `System.Text.Json` divergiam entre net48 (10.0.0.14) e
+  netstandard (10.0.0.0). O verificador de identidade do pacote rejeitou esse
+  pacote real antes da correção. `Lumen.Tools` foi alinhado a netstandard2.0;
+  adaptadores de solução/editor permanecem no host net48, sem binding shims.
+- Build Release **0 erros/0 avisos**; **1.261 testes C# + 166 JS** verdes, sem
+  ignorados. RPC testa argumentos/autoridade forjados, limites, correlação,
+  cancelamento determinístico e recuperação do gate, sem HTTP/cofre/settings.
+- WebView2 real: quatro ferramentas, range do disco diferente do buffer não
+  salvo, truncamento explícito e formulário sem modelo confirmados. Traversal,
+  ADS, binário, arquivo acima de 1 MiB, escrita/comando e raiz/modo forjados
+  rejeitados. Hash do arquivo inalterado; HTML malicioso permaneceu texto inerte;
+  recuperação após erro e largura de 203 px sem overflow; **0 exceções JS**.
+  Solução fechada retornou `workspace_unavailable`. Regressão `verify-webview`
+  passou, incluindo offline local e controle negativo de overflow forçado.
+- Instalação final verificada por SHA-256 em `Extensions\3udphwea.yqv`. Solução
+  sintética fechada sem salvar, fixture/manifesto removidos, Exp e preview 4176
+  próprios encerrados; servidores preexistentes 4173/4175 intocados. Nenhuma API
+  paga/probe, alteração de configuração/credencial ou criação de conversa.
+- **Limites:** troca de solução durante I/O e cancelamento de I/O longo não foram
+  corridos na Exp; cancelamento foi testado com executor determinístico e
+  transportes JS fake. Symlink de arquivo continua indisponível por permissão.
+  Acessibilidade é estrutural, sem passada manual de NVDA/Narrator. Invocação
+  automática pelo modelo e realimentação pertencem à Fase 5. Fase 4 não concluída.
+
+Evidências: `artifacts/phase4b.binlog`, `artifacts/tests/phase4b.trx`,
+`artifacts/phase4b-runtime-negative.xml`, `artifacts/read-tools-verify.json`,
+`artifacts/read-tools-closed.json`, `artifacts/read-tools-webview.png` e
+`artifacts/webview-verification.json`. Reprodução em `COMANDOS.md`.
+
+## Base de backend da fatia 4a (2026-11-09)
+
+Registro histórico anterior à integração 4b; TFM e estado de host/UI foram
+atualizados na seção acima.
+
+- `Lumen.Tools` net48 incluído na solução e no VSIX. Os mesmos fontes são
+  compilados por link nos testes net10, sem dependência de assemblies do VS.
+- `WorkspaceGuard`: caminhos Windows canônicos, fronteira raiz+separador,
+  traversal/ADS/UNC/devices/aliases proibidos, reparse points rejeitados nos
+  ancestrais. Leitura valida a identidade do handle real antes de ler conteúdo.
+  Destino de escrita externo é apenas validado: não concede autorização nem escreve.
+- `ApprovalBroker`: Ask/Plan negam escrita e comandos antes de I/O/prompt;
+  escrita interna autorizada para o futuro executor com undo; externa pede
+  confirmação a cada operação; comandos permitem opt-in restrito à sessão.
+  Aprovação explícita não é dispensada por opt-in; cancelamento/dispose não
+  concedem consentimento tardio. Prompts serializados, argumentos copiados.
+- Executor somente leitura: `read_file` com linhas, `list_dir`, `find_files`
+  com glob e `grep` literal case-sensitive. Schemas publicados são usados pela
+  validação; campos duplicados/desconhecidos e tools não registradas são recusados.
+  UTF-8/UTF-16 estritos, arquivos até 1 MiB, busca até 4 MiB/1.024 entradas/32 níveis,
+  até 256 resultados e saída JSON até 65.536 caracteres. Truncamento explícito;
+  busca informa arquivos binários/grandes ignorados. Todo trabalho em background.
+- Build Release **0 erros/0 avisos**; **1.244 testes C# + 160 JS** verdes.
+  Controles negativos com junction real, handle real de identidade errada e
+  fora da raiz (handle fechado), políticas negadas, argumentos inválidos,
+  limites e cancelamento. **GAP:** symlink de arquivo não pôde ser criado por
+  permissão do Windows; teste registra a lacuna, sem alegar esse controle real.
+- Evidências: `artifacts/phase4a.binlog`, `artifacts/tests/phase4a.trx`.
+  Nenhuma API paga, alteração em providers/credenciais ou processo VS iniciado.
+  **Não verificado na Exp, não integrado ao chat, não commitado.** Prompts são
+  interface com fake nos testes; não existe ainda confirmação real na UI,
+  editor/undo, escrita, shell, blocklist ou diagnóstico. Fase 4 não concluída.
+
+## Backend de write-tools (2026-11-09)
+
+- `WriteToolCatalog`: specs `create_file` e `edit_file` com `additionalProperties:
+  false`, `path` e `content` string (1–4096 e 0–1.048.576 chars), `required`
+  ambos. Validação reutiliza `ReadToolCatalog.ValidateText` (rejeita null e
+  surrogate órfão); campos duplicados/desconhecidos, tipo não-string e
+  limite fora do intervalo são recusados antes de qualquer I/O.
+- `WorkspaceWriteTools`: executor puro `Lumen.Tools` sem host/UI.
+  - `create_file`: falha se o arquivo já existe (sem sobrescrever); grava UTF-8
+    sem BOM atomicamente (temp sibling + `File.Move`/`File.Replace`); cancelamento
+    nunca toca o destino.
+  - `edit_file`: lê bytes anteriores, valida UTF-8/UTF-16 estrito (rejeita
+    binário com `binary_file`), grava conteúdo novo atomicamente, produz diff
+    LCS limitado (64 mudanças, 96 chars/linha, 1.024 linhas; `truncated` só
+    quando algo foi descartado).
+  - Guarda de bytes: conteúdo que passa o limite de chars mas excede 1 MiB em
+    UTF-8 (multibyte) é rejeitado com `file_too_large` — arquivo recém-escrito
+    deve permanecer dentro do cap de leitura.
+  - `EditJournal`: undo por turno em ordem reversa; restaura bytes exatos
+    anteriores (preserva encoding e BOM originais); `create_file` remove o
+    arquivo criado, `edit_file` restaura o conteúdo anterior.
+  - `ApprovalBroker.AuthorizeWriteAsync`: Ask/Plan negam antes de I/O
+    (`mode_denied`); escrita dentro do workspace autoriza sem prompt; fora
+    pede confirmação (`approval_denied` se recusado); nenhum opt-in dispensa
+    aprovação explícita.
+- Build do projeto de testes Release **0 erros/0 avisos**; **21 testes de
+  write-tools verdes** + 123 testes de ApprovalBroker/ReadTools/Guard verdes
+  (sem regressão). Controles negativos: modo negado antes de prompt, arquivo
+  existente não sobrescrito, binário não corrompido, traversal rejeitado,
+  cancelamento não deixa arquivo, multibyte >1 MiB rejeitado, arquivo >1 MiB
+  no disco rejeitado na edição, diff truncado marcado corretamente, undo
+  restaura bytes exatos de arquivo UTF-16 LE com BOM.
+- **Não verificado na Exp, não integrado ao chat, não commitado.** Aprovação
+  usa fake nos testes; não existe ainda confirmação real na UI, editor buffer
+  sync, terminal, blocklist ou diagnóstico. Fase 4 não concluída.
+- **Limites:** build e testes limitados ao projeto de testes (memória host
+  crítica ~0,8 GB); full solution build + suite completa + verificação na Exp
+  diferidos para quando a memória liberar.
+
+## Backend de shell (2026-11-09)
+
+- `CommandToolCatalog`: spec `run_command` com `command` (string 1–4096),
+  `args` (array de strings, 0–256), `cwd` (string opcional 0–4096),
+  `timeout_ms` (integer 1–60000, default 30000). `required`: `command` e
+  `args`. `additionalProperties: false`. Validação rejeita tipo não-string
+  em args, array não-array, número não-inteiro, campos duplicados/desconhecidos
+  e usa `ReadToolCatalog.ValidateText` (null/surrogate órfão).
+- `CommandBlocklist`: defesa em profundidade (AGENTS.md §5). Bloqueia antes
+  do prompt de aprovação: `format`/`shutdown`/`diskpart`/`cipher`
+  incondicional; `rm -rf /` e variantes contra raiz; `del`/`erase`/`rd`/
+  `rmdir` com `/s` + `/q`/`/f`; `git push --force`/`-f`; `git reset --hard`;
+  `git clean -fd`/`-f -d`; `cmd /c` com `format`/`shutdown`/`del /s`/`rd /s`
+  embutido.
+- `WorkspaceShellTools`: executor puro `Lumen.Tools` sem host/UI.
+  - `ProcessStartInfo` com `UseShellExecute: false`, `CreateNoWindow: true`,
+    argumentos escapados individualmente (convenção `CommandLineToArgvW`:
+    aspas duplas, backslash antes de aspa dobrado, backslash final dobrado).
+    Nunca concatena string do modelo em linha de comando (AGENTS.md §5).
+  - Captura stdout+stderr com `RedirectStandard*`, codificação UTF-8, limite
+    65.536 chars cada, truncamento explícito. Exit code retornado no resultado.
+  - Timeout mata o processo e retorna `command_timeout`; cancelamento mata o
+    processo antes de propagar `OperationCanceledException`. Read tasks
+    param de ler no cancelamento (não lançam).
+  - `cwd` confinado ao workspace via `WorkspaceGuard.Resolve`; se ausente,
+    usa a raiz do workspace.
+  - Todo comando exige aprovação via `ApprovalBroker.AuthorizeCommandAsync`
+  (AGENTS.md §1). Ask/Plan negam antes do prompt. Agent permite com
+  opt-in "sempre nesta sessão" (`AllowCommandsForSession`).
+- Build do projeto de testes Release **0 erros/0 avisos**; **38 testes de
+  shell verdes** + 120 testes de Write/Approval/Guard verdes (sem regressão).
+  Controles negativos: blocklist bloqueia antes do prompt (12 padrões),
+  modo negado, aprovação negada, timeout mata processo, cancelamento mata
+  processo, `cwd` fora rejeitado, args inválidos, tool desconhecida,
+  escape de espaços/aspas/backslash, `cmd /c format` bloqueado,
+  `git status` não bloqueado.
+- **Não verificado na Exp, não integrado ao chat, não commitado.** Não
+  existe ainda confirmação real na UI, Output Window pane, buffer do editor
+  ou diagnóstico. Fase 4 não concluída.
+- **Limites:** mesmo que o slice anterior — build/testes limitados ao projeto
+  de testes; full solution build + suite + Exp diferidos (memória host
+  crítica). `Process.Kill` não mata processos filhos em netstandard2.0;
+  testes evitam `cmd /c` que cria subprocessos.
+
+## Registro histórico — adaptadores/RPC de write + shell (2026-11-09)
+
+Estado anterior à fatia 4c: os detalhes abaixo não descrevem o painel manual
+atual. Não havia painel de terminal, aprovação real ou teste Exp de escrita.
+Os limites, a semântica do lote e o reload foram substituídos na 4c.
+
+- **Interfaces:** `IWriteToolExecutor` (CaptureAsync, ExecuteAsync,
+  UndoTurnAsync, PendingChanges) e `IShellToolExecutor` (CaptureAsync,
+  ExecuteAsync) em `Lumen.Core.Domain`.
+- **RPC:** `ByokSession` agora aceita `IWriteToolExecutor?` e
+  `IShellToolExecutor?` opcionais. Novos handlers: `byok.tool.write`
+  (`create_file`/`edit_file`, arguments até 1 MiB+4K), `byok.tool.write.undo`
+  (undo em lote do turno) e `byok.tool.command` (`run_command`, arguments
+  até 8K). Result limitado a 65.536 chars. Todos validam tool name, JSON
+  object, tamanho e correlação de ID antes/depois do I/O.
+- **Adaptadores VS:** `VisualStudioWriteTools` e `VisualStudioShellTools`
+  seguem o padrão de `VisualStudioReadTools`: capturam raiz/solução na UI
+  thread, validam antes/depois, executam em background com `ChatMode.Agent`
+  (escrita) e `ChatMode.Agent` (shell). `EditJournal` é compartilhado entre
+  chamadas no mesmo turno (capturado em `CaptureAsync`) para undo em lote.
+- **Buffer sync:** após gravar no disco, `VisualStudioWriteTools` recarrega
+  o buffer do editor via `IVsRunningDocumentTable.FindAndLockDocument` +
+  `IVsPersistDocData.ReloadDocData` (sem fechar/reabrir, preserva cursor).
+  `IntPtr` é convertido com `Marshal.GetObjectForIUnknown` e liberado com
+  `Marshal.Release`.
+- **Aprovação:** ambos adaptadores implementam `IApprovalPrompt.RequestAsync`
+  retornando `ApprovalResponse.Deny` por agora. Escritas dentro do workspace
+  funcionam (Agent permite sem prompt); escrita fora e comandos são negados.
+  A UI de aprovação real ainda não existe — é o próximo passo.
+- Build VSIX Release **0 erros/0 avisos**, VSIX gerado. Build do projeto de
+  testes **0 erros/0 avisos**. **99 testes** (ByokSession + Write + Shell +
+  Approval) verdes, sem regressão.
+- **Não verificado na Exp, não commitado.** Buffer sync não testado com
+  documento aberto real. Aprovação real na UI pendente. Ferramentas de
+  diagnóstico (`get_errors`, `run_build`) não implementadas. Full solution
+  build + suite completa + Exp diferidos (memória host crítica ~1,3 GB).
 
 ## Evidências verificadas da fatia 3d (2026-11-09)
 
@@ -340,16 +684,14 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fase 3 — fatia 3d (acessibilidade final) concluída e verificada em 2026-11-09;
-aguardando autorização para o próximo passo.**
-A 3c (`@arquivo`, `@solução`, seleção do editor e Output) foi autorizada e
-verificada no VS em 2026-11-08; a 3d (acessibilidade + estados de erro acionáveis)
-foi autorizada e verificada em 2026-11-09. Não avançar para a Fase 4 sem nova
-autorização. Itens da Fase 3 que dependem de ferramentas (tool cards,
-cancelamento durante tool) ficam para a Fase 4. A 3a foi autorizada e concluída
-em 2026-11-07; a 3b foi autorizada e verificada em 2026-11-08. O histórico não
-tem mais o limite provisório de 20 turnos da 3a.
-Nenhum remote, push ou commit das fatias 3b/3c/3d foi realizado.
+**Fatia 4d concluída; Fases 4/5 ainda em andamento.** Leitura, escrita pelo
+modelo com diff/undo por turno e terminal aprovado estão disponíveis. Próxima
+fatia da Fase 4: `apply_diff` e ferramentas de diagnóstico; detecção completa
+cmd/PowerShell/pwsh/Git Bash ainda deve cumprir seu critério. Depois concluir
+os modos Agent/Ask/Plan e demais critérios da Fase 5. Não iniciar outra fatia
+neste checkpoint nem repetir as verificações aprovadas.
+Fatias 3b/3c/3d commitadas em `75951d5`; alterações 4a–4d continuam locais,
+sem commit, remote ou push.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

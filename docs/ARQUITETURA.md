@@ -77,7 +77,7 @@ Fatos que sustentam a decisão:
 | `Lumen.Core` | `netstandard2.0` | `System.Text.Json` **10.0.14** na Fase 0 |
 | `Lumen.Providers` | `netstandard2.0` | `System.Text.Json` |
 | `Lumen.Agent` | `netstandard2.0` | — |
-| `Lumen.Tools` | `net48` | refs do VS (editor, solution, shell) |
+| `Lumen.Tools` | `netstandard2.0` | domínio Core; guard Windows, leitura e aprovação; adaptadores VS no host |
 | `Lumen.Vsix` | **`net48`** | `Microsoft.VisualStudio.SDK` **17.14.40265**, `Microsoft.VSSDK.BuildTools` **18.5.38461**, `Microsoft.Web.WebView2` **1.0.4314.35**, `Microsoft.NETFramework.ReferenceAssemblies` **1.0.3** |
 | `Lumen.Tests` | `net10.0` | xUnit **2.9.3**; referencia `Lumen.Core`, sem assemblies do VS |
 
@@ -89,6 +89,14 @@ foi usada 18.5.38461, do template SDK-style oficial, em vez de adotá-la.
 `Lumen.Core` usa System.Text.Json **10.0.14**; testes: Microsoft.NET.Test.Sdk
 **18.11.0**, xUnit **2.9.3**, runner Visual Studio **4.0.1**. Fontes e detalhes
 reproduzíveis em `PESQUISA.md` §2.7 e `COMANDOS.md`.
+
+**Atualização 4b (2026-11-09):** `Lumen.Tools` usa netstandard2.0, sem refs do VS,
+mas seu guard depende de Windows/Win32. Na Exp, Tools net48 referenciava JSON
+10.0.0.14 enquanto Core/Providers referenciavam 10.0.0.0 (mesmo pacote 10.0.14),
+causando `MissingMethodException` ao acessar `ToolInvocation.Arguments`. O teste
+`CoreProvidersAndToolsShareJsonTypeIdentity` rejeitou o pacote real incompatível;
+alinhar o TFM corrigiu o runtime, sem redirects. O host net48 recebe argumentos
+por JSON/string e mantém os adaptadores VS. Build e execução na Exp confirmados.
 
 O VSSDK exclui algumas DLLs de nomes `System.*` por padrão; o target
 `IncludeRuntimeDependencies` empacota as dependências CopyLocal de runtime.
@@ -151,7 +159,7 @@ chat **não** compete com a UI thread do VS.
 | Necessidade | API |
 | --- | --- |
 | Tool window | `ToolWindowPane` + `ProvideToolWindowAttribute` |
-| Editar documento aberto com undo | MEF `ITextBuffer.CreateEdit()` / `ITextEdit.Apply()`; undo via `ITextBuffer.UndoRedo` / `IVsUndoableChange` |
+| Editar documento aberto com undo | MEF `ITextBuffer.CreateEdit()` / `ITextEdit.Apply()`; `ITextUndoHistoryRegistry.TryGetHistory`, `ITextUndoHistory.CreateTransaction` / `Undo` |
 | Documento ativo e seleção | `IVsTextManager.GetActiveView`, MEF `IWpfTextView.Selection`, `ITextSnapshot` |
 | Solução e projetos | `IVsSolution`, `IVsHierarchy`, `DTE.Solution` |
 | Error List | `ErrorListProvider` / `IVsErrorList` |
@@ -198,17 +206,102 @@ Lumen.Providers   netstandard2.0   adapters BYOK, descoberta, CapabilityResolver
 Lumen.Agent       netstandard2.0   AgentLoop, ContextBuilder, modos,
                                  orçamento, compactação de histórico
         ^
-Lumen.Tools       net48            file tools, shell tools, WorkspaceGuard,
-                                 ApprovalBroker, DiffUndoService, editor bridge
+Lumen.Tools       netstandard2.0   WorkspaceGuard Windows, file tools,
+                                 ApprovalBroker, EditJournal; backend shell
         ^
 Lumen.Vsix        net48            ToolWindowPane, WebView2 host, ponte JS,
-                                 settings, comandos, temas, DI composition root
+                                 adaptadores VS de solução/editor, settings,
+                                 comandos, temas, DI composition root
 Lumen.Tests       net10.0          xUnit; mocks; fixtures SSE; controles negativos
 wwwroot/          (em Lumen.Vsix)  chat HTML/CSS/JS, markdown-it, highlight.js,
                                  diff2html — tudo local, sem CDN
 ```
 
+### Escrita manual interna
+
+`byok.tool.write` recebe apenas nome (`create_file`/`edit_file`), caminho relativo
+(até 1.024 caracteres) e conteúdo completo (até 65.536 caracteres). O host captura
+a solução antes da execução; nenhum settings, segredo ou provedor é acessado.
+O painel não encaminha conteúdo ao modelo, não declara modo Agent completo e
+não oferece shell ou aprovação externa. `WriteToolCatalog.Validate` extrai duas
+strings dentro de netstandard; o adaptador net48 não acessa `ToolInvocation.Arguments`.
+O mesmo pacote JSON 10.0.14 referencia assembly 10.0.0.0 em netstandard e 10.0.0.14
+em net48; passar/acessar `JsonElement` nessa fronteira causou MissingMethod na Exp. `byok.tool.write.status` consulta somente
+o contador; undo é uma ação explícita por `byok.tool.write.undo`.
+
+Arquivos fechados usam gravação atômica e `EditJournal` com bytes anteriores e
+posteriores, guard de origem, limites e preflight de conflitos. Arquivos abertos
+usam `IVsRunningDocumentTable` + `IVsEditorAdaptersFactoryService.GetDocumentBuffer`,
+edição MEF na UI thread e transação `ITextUndoHistory`; não são salvos/recarregados.
+Undo exige conteúdo/versão reiterada esperados e marcador `ITextUndoPrimitive`
+aplicado; transações externas, fechamento de buffer ou mudança de solução são
+recusados. O marcador não mescla e acompanha Undo/Redo nativos. Pilhas e
+`LastUndoTransaction` não são consultados: a implementação instalada lança
+`NotSupportedException`, e `CanUndo` retorna sempre true. Cada undo confirma o
+marcador e o snapshot restaurado antes de remover o registro; os textos e
+referências auxiliares são liberados mesmo se o marcador persistir no redo nativo.
+Disco é preparado em background; o commit e a revalidação de solução/arquivo
+fechado ocorrem sem yield na UI thread, inclusive no undo. `BeginTurnAsync`
+separa cada turno automático de lotes de escritas manuais consecutivas; undo
+reverte apenas o último lote não vazio, preservando anteriores. Fronteiras de
+journal/buffers permitem retry de undo parcial. Só em memória nesta sessão.
+Até 64 alterações;
+texto retido de buffer até 1 Mi caracteres, journal de disco até 16 MiB.
+
+Diff limitado é texto puro, com +/−, finais CRLF/LF/CR/none e truncamento explícito.
+Cancelamento anterior ao commit não altera o alvo; sucesso já aplicado não é
+ocultado por cancelamento tardio. Undo parcial remove apenas registros concluídos.
+
 ### 2.7 Fluxo de uma mensagem (modo Agent)
+
+**Fatias automáticas readonly/4d:** `ByokSession` usa `ToolChatLoop` em
+`Lumen.Providers`, sem introduzir os modos completos da Fase 5.
+`byok.chat.readTools`, `writeTools` e `terminal` são booleanos opcionais;
+write/terminal implicam leitura e modo Agent restrito às ferramentas consentidas.
+Ausentes/false não capturam workspace nem anunciam/executam ferramentas.
+Opt-in vale somente para aquele envio; a UI avisa sobre conteúdo enviado,
+custo e histórico local não criptografado. Formulários manuais continuam
+separados do chat.
+
+Antes de ler credenciais ou fazer POST, o host captura raiz e caminho da solução
+via `IReadToolExecutor.CaptureAsync`. `VisualStudioReadTools` valida essa mesma
+solução antes/depois de cada I/O; leitura automática não lê buffers não salvos.
+`read_file`, `list_dir`, `find_files` e `grep` são anunciadas com leitura;
+`create_file`/`edit_file` somente com escrita; `run_command` somente com terminal.
+Writes anunciam path de 1.024 e conteúdo de 65.536 caracteres. Caminho externo
+absoluto de drive é validado pelo guard e exige aprovação por operação; UNC,
+traversal e ADS continuam rejeitados. Execução sequencial só ocorre
+após argumentos finalizados e `Done(ToolUse)`. Ferramentas desconhecidas ou
+argumentos rejeitados viram resultados correlacionados de erro, sem executor.
+Conteúdo de arquivo é dado não confiável, não instrução. UI mantém resultados
+em texto puro; falhas de preflight não concedem autoridade de execução.
+
+Limites fixos por turno: quatro POSTs, oito invocações, 8.192 tokens de saída
+solicitados cumulativamente, deadline de dois minutos, stream de 8 Mi caracteres
+ou 32.768 eventos e resultados de ferramentas de 131.072 caracteres no total.
+Input tem teto de 262.144 caracteres/2.048 mensagens e reserva conservadora de
+contexto por modelo; não há compactação silenciosa, retry ou reexecução.
+
+Histórico mantém um par usuário/assistente por turno, com calls, resultados e
+resposta em partes ordenadas. Replay expande essas partes em mensagens separadas
+assistant/tool/assistant e preserva `ProviderState` assinado. Turns falhos,
+cancelados e pares legados com chamadas órfãs não são reenviados. Eventos
+`ToolExecution` exibem Running/Completed/Failed/Cancelled; cancelamento mantém
+o gate até a resposta nativa. Credenciais são filtradas antes de UI, replay e
+arquivo, inclusive quando divididas em deltas ou escapadas em JSON.
+
+Na 4d, comandos usam lista escapada, resolução do executável e processo Windows
+criado suspenso, associado a Job Object antes de resume. Timeout/cancelamento e
+saída do pai encerram descendentes; drenagem dos pipes tem limite de dois segundos.
+Trabalho de processo ocorre em background; o pane `Lumen` do Output recebe o
+resultado. Solução é revalidada após aprovação antes de iniciar o processo;
+eventos públicos de abertura/fechamento revogam o consentimento de sessão.
+Aprovação é correlacionada ao chat ativo e sempre começa em Negar.
+Antes da escrita o loop reserva capacidade para o maior resultado; escrita
+concluída é arquivada/exibida antes de honrar cancelamento tardio.
+
+O fluxo completo abaixo é planejado; diagnósticos, detecção completa de shells,
+`apply_diff` e modos completos continuam pendentes.
 
 ```
 usuário digita no WebView2

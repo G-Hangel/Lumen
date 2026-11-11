@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Lumen.Core.Bridge;
 using Lumen.Providers;
+using Lumen.Tools;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Threading;
@@ -26,12 +27,16 @@ internal sealed class LumenControl : UserControl, IDisposable
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(2) };
     private readonly CancellationTokenSource lifetime = new();
     private readonly Lazy<ByokSession> byok;
+    private readonly VisualStudioWriteTools writeTools;
+    private readonly VisualStudioShellTools shellTools;
     private bool started;
     private bool disposed;
 
     internal LumenControl(JoinableTaskFactory taskFactory)
     {
         this.taskFactory = taskFactory;
+        writeTools = new VisualStudioWriteTools(taskFactory, PromptApprovalAsync);
+        shellTools = new VisualStudioShellTools(taskFactory, PromptApprovalAsync);
         var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lumen");
         byok = new Lazy<ByokSession>(() =>
         {
@@ -39,7 +44,7 @@ internal sealed class LumenControl : UserControl, IDisposable
             var resolver = new CapabilityResolver(File.Exists(registryPath) ? File.ReadAllText(registryPath) : null);
             var transport = new HttpTransport(http);
             return new ByokSession(new ProviderFactory(transport, resolver), new WindowsCredentialStore(),
-                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory));
+                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools);
         });
         browser = new WebView2
         {
@@ -56,6 +61,8 @@ internal sealed class LumenControl : UserControl, IDisposable
         Content = grid;
         Loaded += OnLoaded;
     }
+
+    private Task<ApprovalResponse> PromptApprovalAsync(ApprovalRequest request, CancellationToken token) => byok.Value.RequestApprovalAsync(request, token);
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -144,9 +151,22 @@ internal sealed class LumenControl : UserControl, IDisposable
                 }, lifetime.Token);
             }
             catch (OperationCanceledException) { }
-            catch (Exception exception) when (exception is IOException || exception is System.Text.Json.JsonException || exception is ArgumentException)
+            catch (Exception exception)
             {
-                await PostAsync(new BridgeMessage { Type = "error", Payload = new BridgePayload { Code = "invalid_configuration" } }.ToJson());
+                ActivityLog.LogError("Lumen", "Bridge request: " + exception.GetType().FullName + "; HRESULT=" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture));
+                if (exception is MissingMethodException)
+                    ActivityLog.LogError("Lumen", "Missing public contract: " + exception.Message);
+                string? requestId = null;
+                try
+                {
+                    using var parsed = System.Text.Json.JsonDocument.Parse(json);
+                    if (parsed.RootElement.TryGetProperty("id", out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String &&
+                        Guid.TryParseExact(value.GetString(), "D", out var correlation) && correlation != Guid.Empty)
+                        requestId = correlation.ToString("D");
+                }
+                catch (System.Text.Json.JsonException) { }
+                catch (InvalidOperationException) { }
+                await PostAsync(new BridgeMessage { Id = requestId, Type = "error", Payload = new BridgePayload { Code = "invalid_configuration" } }.ToJson());
             }
         }).FileAndForget("Lumen/BridgeRequest");
     }
@@ -190,6 +210,8 @@ internal sealed class LumenControl : UserControl, IDisposable
         disposed = true;
         lifetime.Cancel();
         if (byok.IsValueCreated) byok.Value.Dispose();
+        writeTools.Dispose();
+        shellTools.Dispose();
         http.Dispose();
         Loaded -= OnLoaded;
         VSColorTheme.ThemeChanged -= OnThemeChanged;

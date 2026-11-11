@@ -1,5 +1,5 @@
 import { VirtualHistory } from './virtual-history.mjs';
-import { ByokBridge, ByokError, PROVIDER_KINDS, PROBE_CAPABILITIES, PROBE_PROVIDER_KINDS, MAX_PROBE_BUDGET, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CONTEXTS, MAX_CONTEXT_TEXT, MAX_CONTEXT_TOTAL, normalizeBaseUrl, safeErrorCode } from './byok-bridge.mjs';
+import { ByokBridge, ByokError, PROVIDER_KINDS, PROBE_CAPABILITIES, PROBE_PROVIDER_KINDS, MAX_PROBE_BUDGET, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CONTEXTS, MAX_CONTEXT_TEXT, MAX_CONTEXT_TOTAL, READ_TOOL_NAMES, isReadToolRequest, WRITE_TOOL_NAMES, isWriteToolRequest, normalizeBaseUrl, safeErrorCode } from './byok-bridge.mjs';
 
 export const DEFAULT_BASE_URLS = Object.freeze({
   OpenAI: 'https://api.openai.com/v1/', OpenRouter: 'https://openrouter.ai/api/v1/',
@@ -15,7 +15,14 @@ const errorLabels = {
   invalid_image_type: 'byokErrorImageType', image_too_large: 'byokErrorImageSize', vision_not_supported: 'byokErrorVision', network_error: 'byokErrorNetwork',
   history_corrupt: 'historyErrorCorrupt', history_too_large: 'historyErrorSize', history_write_failed: 'historyErrorWrite', conversation_not_found: 'historyErrorMissing',
   context_unavailable: 'contextErrorUnavailable', context_outside_workspace: 'contextErrorOutside',
-  context_too_large: 'contextErrorSize', context_stale: 'contextErrorStale'
+  context_too_large: 'contextErrorSize', context_stale: 'contextErrorStale',
+  unknown_tool: 'readToolsErrorArguments', invalid_arguments: 'readToolsErrorArguments', invalid_path: 'readToolsErrorPath',
+  path_unavailable: 'readToolsErrorPath', outside_workspace: 'readToolsErrorOutside', workspace_unavailable: 'readToolsErrorWorkspace',
+  output_too_large: 'readToolsErrorSize', file_too_large: 'readToolsErrorSize', binary_file: 'readToolsErrorBinary',
+  tool_budget_exceeded: 'byokErrorToolBudget',
+  file_exists: 'writeToolsErrorExists', undo_failed: 'writeToolsErrorUndo',
+  undo_conflict: 'writeToolsErrorConflict', edit_conflict: 'writeToolsErrorConflict', journal_limit: 'readToolsErrorBudget', mode_denied: 'writeToolsErrorMode',
+  approval_denied: 'approvalErrorDenied', command_blocked: 'commandErrorBlocked', command_timeout: 'commandErrorTimeout', command_failed: 'commandErrorFailed'
 };
 export const errorLabel = code => errorLabels[safeErrorCode(code)] || 'byokErrorUnknown';
 
@@ -56,6 +63,145 @@ export function startByok({ transport, connected = () => false, text, renderMark
   let streaming = false, needsCancel = false, probing = false, remainingBudget = null;
   const listeners = [];
   let contexts = [], contextBusy = false;
+  let readBusy = false, readStatusKey = 'readToolsIdle', readErrorCode = null;
+  function renderReadStatus() {
+    node('read-status').textContent = readErrorCode
+      ? `${text('readToolsFailed')} ${text(readErrorCode === 'unknown' ? 'readToolsErrorUnknown' : errorLabel(readErrorCode))}` : text(readStatusKey);
+    node('read-status').className = readErrorCode ? 'error' : 'secondary';
+  }
+  function changeReadTool() {
+    const name = node('read-name').value;
+    node('read-lines').hidden = name !== 'read_file';
+    node('read-search').hidden = name === 'read_file';
+    node('read-glob-group').hidden = !['find_files', 'grep'].includes(name);
+    node('read-pattern-group').hidden = name !== 'grep';
+    node('read-glob').required = name === 'find_files';
+    node('read-pattern').required = name === 'grep';
+    for (const id of ['start', 'end']) node(`read-${id}`).disabled = name !== 'read_file';
+    node('read-max').disabled = name === 'read_file';
+    node('read-glob').disabled = !['find_files', 'grep'].includes(name);
+    node('read-pattern').disabled = name !== 'grep';
+  }
+  async function readDisk(event) {
+    event.preventDefault();
+    if (!online() || busy || imageLoading || needsCancel || cancelling) return;
+    const name = node('read-name').value, args = { path: node('read-path').value };
+    for (const [id, key] of (name === 'read_file' ? [['start', 'startLine'], ['end', 'endLine']] : [['max', 'maxResults']])) {
+      if (node(`read-${id}`).value !== '') args[key] = Number(node(`read-${id}`).value);
+    }
+    if (name === 'find_files' || (name === 'grep' && node('read-glob').value !== '')) args.glob = node('read-glob').value;
+    if (name === 'grep') args.pattern = node('read-pattern').value;
+    readBusy = true; readErrorCode = null; readStatusKey = 'readToolsReading';
+    node('read-result').textContent = ''; node('read-result').hidden = true; renderReadStatus();
+    try {
+      await operate(async () => {
+        try {
+          if (!isReadToolRequest({ name, arguments: args })) throw new ByokError('invalid_arguments');
+          const result = await bridge.request('byok.tool.read', { name, arguments: args });
+          if (disposed) return;
+          // Disk output stays separate from chat/context and is never passed to the Markdown renderer.
+          node('read-result').textContent = result.content; node('read-result').hidden = false;
+          if (result.isError) readErrorCode = safeErrorCode(JSON.parse(result.content).code);
+          else readStatusKey = 'readToolsSucceeded';
+          setStatus('byokReady');
+        } catch (error) {
+          if (['timeout', 'invalid_response'].includes(error.code)) needsCancel = true;
+          if (error.code === 'cancelled') readStatusKey = 'byokCancelled';
+          else readErrorCode = safeErrorCode(error.code);
+          throw error;
+        } finally { if (!disposed) renderReadStatus(); }
+      });
+    } finally {
+      readBusy = false;
+      if (!disposed) {
+        updateControls();
+        if (node('read-tools').open && !cancelling) node('read-status').focus({ preventScroll: true });
+      }
+    }
+  }
+  let writeBusy = false, writePending = null, writeRefreshRequested = false;
+  let writeStatusKey = 'writeToolsIdle', writeErrorCode = null, writeDiff = null;
+  const writeAllowed = () => online() && !busy && !imageLoading && !needsCancel && !cancelling;
+  function renderWriteStatus() {
+    const label = writeErrorCode === 'unknown' ? 'writeToolsErrorUnknown'
+      : ['invalid_arguments', 'unknown_tool'].includes(writeErrorCode) ? 'writeToolsErrorArguments' : errorLabel(writeErrorCode);
+    node('write-status').textContent = writeErrorCode
+      ? `${text('writeToolsFailed')} ${text(label)}` : text(writeStatusKey);
+    node('write-status').className = writeErrorCode ? 'error' : 'secondary';
+    node('write-pending').textContent = writePending === null ? text('writeToolsPendingUnknown') : text('writeToolsPending', { count: writePending });
+    node('write-diff-note').hidden = !writeDiff;
+    if (writeDiff) {
+      node('write-diff-note').textContent = text(writeDiff.tooLarge ? 'writeToolsDiffTooLarge'
+        : writeDiff.truncated ? 'writeToolsDiffTruncated' : 'writeToolsDiffFull', { before: writeDiff.linesBefore, after: writeDiff.linesAfter });
+    }
+  }
+  function clearWriteDiff() {
+    writeDiff = null; node('write-diff').textContent = ''; node('write-diff').hidden = true;
+  }
+  async function writeOperation(type, payload, statusKey, focus = true) {
+    if (!writeAllowed()) return;
+    writeBusy = true; writeErrorCode = null; writeStatusKey = statusKey;
+    renderWriteStatus();
+    try {
+      await operate(async () => {
+        let sent = false;
+        try {
+          if (type === 'byok.tool.write' && !isWriteToolRequest(payload)) throw new ByokError('invalid_arguments');
+          sent = true;
+          const result = await bridge.request(type, payload);
+          if (disposed) return;
+          writePending = result.pending;
+          if (type === 'byok.tool.write') {
+            const content = JSON.parse(result.content);
+            if (result.isError) writeErrorCode = safeErrorCode(content.code);
+            else {
+              writeDiff = content.diff;
+              // Prefix every displayed line, including embedded newlines, so model/file text remains inert.
+              node('write-diff').textContent = writeDiff.changes.map(change => change.text.split('\n')
+                .map(line => `${change.op === 'add' ? '+' : '-'} ${line} [${change.ending}]`).join('\n')).join('\n');
+              node('write-diff').hidden = false; writeStatusKey = 'writeToolsSucceeded';
+            }
+          } else if (type === 'byok.tool.write.undo') {
+            clearWriteDiff(); writeStatusKey = 'writeToolsUndone';
+          } else writeStatusKey = 'writeToolsChecked';
+          setStatus('byokReady');
+        } catch (error) {
+          // Transport errors cannot prove whether a write/partial undo happened. Only native status can reconcile it.
+          if (sent) writePending = null;
+          if (['timeout', 'invalid_response'].includes(error.code)) needsCancel = true;
+          if (error.code === 'cancelled') writeStatusKey = 'byokCancelled';
+          else writeErrorCode = safeErrorCode(error.code);
+          throw error;
+        } finally { if (!disposed) renderWriteStatus(); }
+      });
+    } finally {
+      writeBusy = false;
+      if (!disposed) {
+        updateControls();
+        if (focus && node('write-tools').open && !cancelling) node('write-status').focus({ preventScroll: true });
+      }
+    }
+  }
+  async function applyWrite(event) {
+    event.preventDefault();
+    if (!writeAllowed()) return;
+    clearWriteDiff();
+    await writeOperation('byok.tool.write', { name: node('write-name').value,
+      arguments: { path: node('write-path').value, content: node('write-content').value } }, 'writeToolsApplying');
+  }
+  async function undoWrites() {
+    if (!writeAllowed() || writePending === null || writePending <= 0) return;
+    await writeOperation('byok.tool.write.undo', {}, 'writeToolsUndoing');
+  }
+  function pumpWriteStatus() {
+    if (!writeRefreshRequested || !node('write-tools').open || !writeAllowed()) return;
+    writeRefreshRequested = false;
+    void writeOperation('byok.tool.write.status', {}, 'writeToolsChecking', false);
+  }
+  function requestWriteStatus() {
+    if (!node('write-tools').open) return;
+    writeRefreshRequested = true; pumpWriteStatus();
+  }
   const contextSize = () => contexts.reduce((sum, item) => sum + item.text.length, 0);
   const contextWithinBounds = () => contexts.length <= MAX_CONTEXTS && contextSize() <= MAX_CONTEXT_TOTAL
     && contexts.every(item => item.text.length <= MAX_CONTEXT_TEXT);
@@ -155,6 +301,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   function renderProbeBudget() {
     node('probe-budget').textContent = text('byokProbeBudget', { remaining: remainingBudget ?? text('byokUnknown'), max: MAX_PROBE_BUDGET });
   }
+  function clearToolConsent() { for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).checked = false; }
   function clearProbeConsent() { node('probe-consent').checked = false; }
   function probeEligible() {
     const config = configurations.find(item => item.id === configurationId);
@@ -279,6 +426,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('apply-override').disabled = !enabled || locked || !model || Object.keys(capabilityNames).some(key => node(key).value === '');
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
     const matchesHistory = !activeConversation || (activeConversation.configurationId === configurationId && activeConversation.modelId === selectedModelId);
+    for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
     node('message').disabled = !enabled || !model || !configurationId || locked || !matchesHistory;
     node('image').disabled = !enabled || locked || !model?.vision;
     node('remove-image').disabled = locked;
@@ -295,6 +443,17 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (node('error-action')) node('error-action').disabled = !enabled || locked;
     if (node('history-error-action')) node('history-error-action').disabled = !enabled || locked;
     node('cancel').disabled = !enabled || cancelling || cancelRequested || (!busy && !needsCancel);
+    node('read-fields').disabled = !enabled || locked;
+    node('read-run').disabled = !enabled || locked;
+    node('read-cancel').disabled = node('cancel').disabled;
+    node('read-tools').setAttribute('aria-busy', String(readBusy && busy));
+    node('write-fields').disabled = !enabled || locked;
+    node('write-apply').disabled = !enabled || locked;
+    node('write-undo').disabled = !enabled || locked || writePending === null || writePending <= 0;
+    node('write-refresh').disabled = !enabled || locked;
+    node('write-cancel').disabled = node('cancel').disabled;
+    node('write-tools').setAttribute('aria-busy', String(writeBusy && busy));
+    if (writeRefreshRequested && enabled && !locked) queueMicrotask(pumpWriteStatus);
     node('probe-consent').disabled = !probeEligible();
     node('probe-capability').disabled = !probeEligible();
     node('verify').disabled = !canProbe();
@@ -351,7 +510,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function resetSelection() {
-    models = []; selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderModels(); renderCapabilities();
+    models = []; selectedModelId = ''; clearProbeConsent(); clearToolConsent(); removeAttachment(); renderModels(); renderCapabilities();
   }
   async function operate(task, focusTarget, loadingKey = 'byokLoading') {
     if (!online() || busy || imageLoading || needsCancel || cancelling) return;
@@ -369,7 +528,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function applyCatalog(result) {
-    models = result.models; selectedModelId = ''; clearProbeConsent();
+    models = result.models; selectedModelId = ''; clearProbeConsent(); clearToolConsent();
     // Public catalogs can succeed without verifying a key; errors with unknown validity must not be saved.
     const catalogUnverified = result.credentialValid === null && !result.code;
     // A 429 / 402 may validate credentials despite returning no models. Never relabel it as a 401.
@@ -405,6 +564,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     }, node('models'));
   }
   function changeKind() {
+    clearToolConsent();
     const kind = node('kind').value;
     node('url').value = DEFAULT_BASE_URLS[kind]; node('url').placeholder = kind === 'Azure' ? text('byokAzureUrlPlaceholder') : '';
     node('provider-id').value = kind.toLowerCase(); node('key').value = '';
@@ -413,6 +573,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function configure(event) {
     event.preventDefault();
+    clearToolConsent();
     let key = node('key').value;
     node('key').value = '';
     if (!online() || busy || imageLoading || needsCancel || cancelling) { key = ''; return; }
@@ -434,7 +595,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function chooseModel() {
     const modelId = node('models').value;
-    selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderCapabilities();
+    selectedModelId = ''; clearProbeConsent(); clearToolConsent(); removeAttachment(); renderCapabilities();
     if (!modelId) return;
     await operate(async () => {
       const result = await bridge.request('byok.select', { configurationId, modelId });
@@ -447,6 +608,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function override() {
     if (node('apply-override').disabled) return;
+    clearToolConsent();
     const modelId = selectedModelId;
     await operate(async () => {
       const result = await bridge.request('byok.override', { configurationId, modelId,
@@ -470,6 +632,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
           remainingBudget = result.remainingBudget; renderProbeBudget();
           if (result.supported === null) { setStatus('byokProbeInconclusive'); return; }
           // Keep the native evidence precedence; a probe must not replace a stronger origin in the browser.
+          clearToolConsent();
           models = models.map(model => model.id === modelId ? result.model : model);
           if (!selectedModel().vision) removeAttachment();
           renderModels(); renderCapabilities(); setStatus(result.supported ? 'byokProbeSupported' : 'byokProbeUnsupported');
@@ -536,7 +699,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       details.append(localized('summary', 'contextHistory'), content); article.append(details);
     }
     article.append(assistant, response, reasoning, tools, usage);
-    return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), usage, record: { userText: value,
+    return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, record: { userText: value,
       ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], status: 'failed' } };
   }
   function renderEvent(turn, event) {
@@ -551,12 +714,68 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true;
       const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = event.name;
       const state = localized('p', 'byokToolPending', 'secondary'); const args = document.createElement('pre'); args.tabIndex = 0;
-      card.append(title, name, state, args); turn.tools.append(card); turn.calls.set(event.id, { args, state, name: event.name });
+      state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
+      args.className = 'byok-plain'; args.dataset.i18nLabel = 'byokToolArguments'; args.setAttribute('aria-label', text('byokToolArguments'));
+      const result = document.createElement('pre'); result.className = 'byok-plain byok-tool-result'; result.tabIndex = 0; result.hidden = true;
+      result.dataset.i18nLabel = 'byokToolResult'; result.setAttribute('aria-label', text('byokToolResult'));
+      card.append(title, name, state, args, result); turn.tools.append(card); turn.calls.set(event.id, { args, state, title, result, name: event.name });
     } else if (event.kind === 'ToolCallArgsDelta') turn.calls.get(event.id).args.append(document.createTextNode(event.chunk));
     else if (event.kind === 'ToolCallEnd') {
       const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2);
       call.state.dataset.byokText = 'byokToolEnded'; call.state.textContent = text('byokToolEnded');
       turn.record.tools.push({ id: event.id, name: call.name, arguments: event.arguments });
+    } else if (event.kind === 'ToolExecution') {
+      const call = turn.calls.get(event.id);
+      if (event.status === 'Running' || event.status === 'Completed') {
+        call.title.dataset.byokText = 'byokToolExecutedNotice'; call.title.textContent = text('byokToolExecutedNotice');
+      }
+      call.state.dataset.byokText = `byokTool${event.status}`; call.state.textContent = text(`byokTool${event.status}`);
+      call.state.className = event.isError ? 'error' : 'secondary';
+      call.result.textContent = event.content; call.result.hidden = event.status === 'Running';
+      if (event.status !== 'Running') {
+        Object.assign(turn.record.tools.find(item => item.id === event.id), { status: event.status, isError: event.isError, content: event.content });
+      }
+    } else if (event.kind === 'ApprovalRequest') {
+      const card = document.createElement('section'); card.className = 'byok-approval';
+      const name = document.createElement('p'); name.className = 'byok-plain'; name.textContent = event.toolName;
+      card.append(localized('h4', 'approvalTitle'), name);
+      if (event.targetPath !== null) {
+        const target = document.createElement('p'); target.className = 'byok-plain';
+        target.textContent = `${text('approvalTarget')}: ${event.targetPath}`; card.append(target);
+      }
+      const args = document.createElement('pre'); args.className = 'byok-plain'; args.tabIndex = 0;
+      args.dataset.i18nLabel = 'approvalArguments'; args.setAttribute('aria-label', text('approvalArguments'));
+      // Model-supplied arguments stay inert text, never Markdown.
+      args.textContent = JSON.stringify(event.arguments, null, 2);
+      const state = localized('p', 'approvalPending', 'secondary');
+      state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
+      const actions = document.createElement('div'); actions.className = 'byok-actions';
+      const buttons = [], entry = { answered: false };
+      const settle = key => {
+        entry.answered = true; for (const button of buttons) button.disabled = true;
+        state.dataset.byokText = key; state.textContent = text(key);
+        const announcement = document.getElementById('announcement');
+        if (announcement) announcement.textContent = state.textContent;
+      };
+      entry.expire = () => settle('approvalExpired');
+      const choices = [['deny', 'approvalDeny'], ['allow_once', 'approvalAllowOnce'],
+        ...(event.canAllowSession ? [['allow_session', 'approvalAllowSession']] : [])];
+      for (const [decision, key] of choices) {
+        const button = localized('button', key, decision === 'deny' ? 'primary-button' : 'text-button'); button.type = 'button';
+        button.addEventListener('click', async () => {
+          if (entry.answered || disposed) return;
+          for (const item of buttons) item.disabled = true;
+          try {
+            await bridge.request('byok.approval.respond', { requestId: event.id, decision });
+            settle(decision === 'deny' ? 'approvalDenied' : decision === 'allow_once' ? 'approvalAllowedOnce' : 'approvalAllowedSession');
+          } catch { if (!disposed) settle('approvalExpired'); }
+        });
+        buttons.push(button); actions.append(button);
+      }
+      card.append(args, state, actions); turn.tools.append(card); turn.approvals.set(event.id, entry);
+      const announcement = document.getElementById('announcement');
+      if (announcement) announcement.textContent = `${text('approvalTitle')}: ${event.toolName}`;
+      buttons[0].focus({ preventScroll: true });
     } else if (event.kind === 'Usage') {
       turn.usage.replaceChildren(localized('span', 'byokUsage'), document.createTextNode(`: ${event.input} / ${event.output}`));
     } else if (event.kind === 'Error') showError(event.code, event.retryAfter);
@@ -598,6 +817,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     for (const call of record.tools) {
       renderEvent(turn, { kind: 'ToolCallStart', id: call.id, name: call.name });
       renderEvent(turn, { kind: 'ToolCallEnd', id: call.id, arguments: call.arguments });
+      if (call.status) renderEvent(turn, { kind: 'ToolExecution', id: call.id, status: call.status, isError: call.isError, content: call.content });
     }
     if (record.status !== 'completed') turn.article.append(localized('p', record.status === 'cancelled' ? 'historyCancelledTurn' : 'historyFailedTurn', 'secondary'));
     finishMarkdown(turn); return turn.article;
@@ -607,6 +827,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
       || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096
       || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
+    const readTools = node('auto-read-tools').checked === true && !node('auto-read-tools').disabled && selectedModel().tools;
+    const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
+    const terminal = node('auto-terminal').checked === true && !node('auto-terminal').disabled && selectedModel().tools;
+    clearToolConsent();
     busy = true; streaming = true; clearError(); setStatus('byokStreaming'); updateControls();
     const value = node('message').value;
     const contextText = contexts.map(item => `[Context: ${item.label}]\n${item.text}`).join('\n\n');
@@ -615,6 +839,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('output').scrollTop = node('output').scrollHeight;
     try {
       const request = bridge.request('byok.chat', { configurationId, text: value,
+        ...(readTools ? { readTools: true } : {}),
+        ...(writeTools ? { writeTools: true } : {}),
+        ...(terminal ? { terminal: true } : {}),
         effort: selectedModel()?.reasoning && selectedModel().efforts.length ? node('effort').value : 'Off',
         ...(attachment ? { image: attachment } : {}),
         ...(contexts.length ? { contextIds: contexts.map(item => item.id) } : {})
@@ -638,6 +865,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
       }
     } finally {
       busy = false; streaming = false; if (!cancelling) cancelRequested = false; clearProbeConsent();
+      // The host revokes unanswered approvals when the chat ends; the card must never stay actionable.
+      for (const approval of turn.approvals.values()) if (!approval.answered) approval.expire();
+      if (writeTools) requestWriteStatus();
       if (!disposed) { if (liveTurn === turn) finishMarkdown(turn); updateControls(); queueMicrotask(pumpHistory); if (!node('message').disabled) node('message').focus({ preventScroll: true }); }
     }
   }
@@ -651,7 +881,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (!disposed) {
         needsCancel = false;
         // An acknowledgement is not the operation's outcome; a completed request may have won the race.
-        if (recovering) { clearError(); setStatus('byokCancelled'); }
+        if (recovering) {
+          clearError(); setStatus('byokCancelled');
+          if (readErrorCode) { readErrorCode = null; readStatusKey = 'byokCancelled'; renderReadStatus(); }
+          if (writeErrorCode) { writeErrorCode = null; writeStatusKey = 'byokCancelled'; renderWriteStatus(); }
+        }
       }
     } catch (error) { cancelRequested = false; if (!disposed) showError(error.code); }
     finally {
@@ -664,7 +898,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   function refreshLocale() {
     if (disposed) return;
-    for (const root of [panel, node('history'), node('chat-form'), node('output')]) {
+    for (const root of [panel, node('history'), node('read-tools'), node('write-tools'), node('chat-form'), node('output')]) {
       for (const target of root.querySelectorAll('[data-i18n]')) target.textContent = text(target.dataset.i18n);
       for (const target of root.querySelectorAll('[data-i18n-label]')) target.setAttribute('aria-label', text(target.dataset.i18nLabel));
       for (const target of root.querySelectorAll('[data-i18n-placeholder]')) target.setAttribute('placeholder', text(target.dataset.i18nPlaceholder));
@@ -680,17 +914,24 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const el = node(id);
       if (el && el.dataset.i18n) el.textContent = text(el.dataset.i18n);
     }
-    renderSaved(); renderHistoryStatus(); renderContexts();
+    renderSaved(); renderHistoryStatus(); renderContexts(); renderReadStatus(); renderWriteStatus();
+    for (const name of WRITE_TOOL_NAMES) {
+      const target = [...node('write-name').children].find(item => item.value === name);
+      if (target) target.textContent = text(name === 'create_file' ? 'writeToolsCreate' : 'writeToolsEdit');
+    }
     if (errorCode) showError(errorCode); updateControls();
   }
   function setConnected(value = connected()) {
     if (disposed) return;
+    const wasConnected = connectedState;
     connectedState = Boolean(value) && Boolean(connected()) && bridge.available;
     if (!connectedState) {
       bridge.disconnect(); node('key').value = ''; loaded = false; configurationId = ''; configurations = []; resetSelection(); renderProviders();
       needsCancel = false; remainingBudget = null; renderProbeBudget(); setStatus('byokDisconnected');
+      writePending = null; writeRefreshRequested = false; clearWriteDiff(); renderWriteStatus();
     } else {
       setStatus('byokReady'); if (panel.open && !loaded && !busy) void listProviders();
+      if (!wasConnected && node('write-tools').open) requestWriteStatus();
     }
     updateControls();
   }
@@ -711,7 +952,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('history-keep'), 'click', () => { deleteTarget = ''; node('history-confirmation').hidden = true; node('history-delete').focus(); });
   listen(node('history-first'), 'click', () => history.jump(false));
   listen(node('history-last'), 'click', () => history.jump(true));
-  node('error').tabIndex = -1; node('status').tabIndex = -1; clearProbeConsent();
+  node('error').tabIndex = -1; node('status').tabIndex = -1; clearProbeConsent(); clearToolConsent();
   node('kind').replaceChildren(...PROVIDER_KINDS.map(kind => option(kind, kind))); node('kind').value = 'OpenAI'; changeKind();
   listen(panel, 'toggle', () => {
     if (!panel.open) { node('key').value = ''; clearProbeConsent(); updateControls(); }
@@ -719,6 +960,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
   });
   listen(node('kind'), 'change', changeKind);
   listen(node('configure'), 'submit', configure);
+  for (const id of ['provider-id', 'url', 'key', 'deployments']) listen(node(id), 'input', clearToolConsent);
+  for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
+  listen(node('auto-read-tools'), 'change', updateControls);
+  listen(node('auto-write-tools'), 'change', updateControls);
+  listen(node('auto-terminal'), 'change', updateControls);
   listen(node('list'), 'click', listProviders);
   listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
   listen(node('discover'), 'click', discover);
@@ -803,6 +1049,21 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(composer, 'drop', handleDrop);
   listen(node('remove-image'), 'click', () => { removeAttachment(); updateControls(); });
   listen(node('chat-form'), 'submit', submitChat);
+  node('read-name').replaceChildren(...READ_TOOL_NAMES.map(name => option(name, name)));
+  node('read-name').value = 'read_file'; changeReadTool();
+  listen(node('read-name'), 'change', changeReadTool);
+  listen(node('read-form'), 'submit', readDisk);
+  listen(node('read-cancel'), 'click', cancel);
+  node('write-name').replaceChildren(...WRITE_TOOL_NAMES.map(name => option(name, text(name === 'create_file' ? 'writeToolsCreate' : 'writeToolsEdit'))));
+  node('write-name').value = 'create_file';
+  listen(node('write-tools'), 'toggle', () => {
+    if (node('write-tools').open) requestWriteStatus();
+    else writeRefreshRequested = false;
+  });
+  listen(node('write-form'), 'submit', applyWrite);
+  listen(node('write-undo'), 'click', undoWrites);
+  listen(node('write-refresh'), 'click', () => { if (writeAllowed()) requestWriteStatus(); });
+  listen(node('write-cancel'), 'click', cancel);
   listen(node('cancel'), 'click', cancel);
   refreshLocale(); setConnected(connectedState);
   return {

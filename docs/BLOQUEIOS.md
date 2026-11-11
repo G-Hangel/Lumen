@@ -8,6 +8,25 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
+### B9 — Captura CDP após regressão automática readonly (2026-11-10)
+
+`node scripts/verify-auto-tools-webview.mjs verify` atingiu as asserções de
+reinjeção/replay, opt-out, rejeições, limite de loop, cancelamento, solução
+fechada e layout, mas expirou em `Page.captureScreenshot` (30 s), em
+`scripts/verify-auto-tools-webview.mjs:199`. Uma captura isolada do mesmo estado
+com `fromSurface:false`/`captureBeyondViewport:false` também expirou (15 s).
+Causa ainda não identificada; não houve replay dos turnos para obter a imagem.
+
+Saída: `Error: Page.captureScreenshot`, no evento do timer (`:69`). Evidência:
+saídas das tarefas `bdomve6jh` e da captura isolada na sessão. A imagem e o relatório
+automáticos anteriores não contam como evidência de aprovação integral desta
+regressão. Asserção de exceções JS (`:201`) não foi atingida. Cleanup removeu
+apenas provedor/chave/conversas próprios; fixture e Exp fechadas, pacote verificado.
+
+Não bloqueia a fatia manual 4c: seu próprio verificador completo, imagem, controle
+negativo e 0 exceções JS passaram no pacote final. Não declarar a regressão
+automática integralmente concluída até resolver a captura e fechar seu relatório.
+
 ### B8 — Azure: inventory de deployments requer Entra/RBAC
 
 A rota data-plane prevista não foi confirmada pela documentação oficial.

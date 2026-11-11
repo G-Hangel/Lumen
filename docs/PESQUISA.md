@@ -476,6 +476,26 @@ MEF/snapshots confirmados também nos XML locais dos pacotes 17.14.249:
 `Microsoft.VisualStudio.Editor.xml`, `Microsoft.VisualStudio.Text.Data.xml` e
 `Microsoft.VisualStudio.Text.UI.xml` (`lib/net472`).
 
+Escrita interna (2026-11-10): contratos públicos confirmados nos mesmos XML e
+em `Microsoft.VisualStudio.Text.Logic.xml`: `IVsEditorAdaptersFactoryService.GetDocumentBuffer`,
+`ITextBuffer.CheckEditAccess`, `EditInProgress`, `IsReadOnly`, `CreateEdit`,
+`ITextEdit.Replace`, `Apply`, `Canceled`, `ITextUndoHistoryRegistry.TryGetHistory`,
+`ITextUndoHistory.CreateTransaction`, `CurrentTransaction`, `UndoTransactionCompleted`,
+`Undo`, `ITextUndoTransaction.AddUndo`/`Complete`/`Cancel`, `ITextUndoPrimitive`
+e `ITextVersion.ReiteratedVersionNumber`. MEF por `SComponentModel` /
+`IComponentModel` (pacote ComponentModelHost 17.14.106). Não existe o membro
+`ITextBuffer.UndoRedo` citado anteriormente na arquitetura; a referência foi
+corrigida para o histórico de undo público. Nenhuma API interna de Copilot usada.
+
+Na implementação instalada do VS 18 (`Microsoft.VisualStudio.Editor.Implementation.dll`,
+18.0.0.0), `VsUndoHistory.UndoStack` lança `NotSupportedException` na Exp;
+inspeção de IL também confirmou `LastUndoTransaction` como stub e `CanUndo`
+retornando sempre `true`. Portanto esses membros não servem como guardas.
+`AddUndo` registra primitivas no undo nativo, cujos `Undo`/`Do` permitem rastrear
+identidade própria sem consultar pilhas. Eventos de transação não fornecem
+identidade (`Transaction = null`); o host combina marcador não mesclável,
+versão reiterada, texto e invalidação por transação externa.
+
 ## 2.4 IA nativa do VS 2026 — contexto competitivo
 
 - **BYOK nativo desde 18.10** (preview, ligado por padrão, inclusive Community):

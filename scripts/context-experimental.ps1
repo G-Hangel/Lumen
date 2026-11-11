@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Prepare', 'Initialize', 'Inspect', 'Switch', 'Close', 'Cleanup')][string]$Action = 'Prepare',
+    [ValidateSet('Prepare', 'Initialize', 'Inspect', 'WriteInspect', 'OutputInspect', 'NativeUndo', 'NativeRedo', 'UserRoundTrip', 'Switch', 'Close', 'Cleanup')][string]$Action = 'Prepare',
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-fA-F0-9]+$')][string]$InstanceId
 )
 $ErrorActionPreference = 'Stop'
@@ -31,6 +31,13 @@ public static class LumenExperimentalAutomation
             }
         }
         throw new InvalidOperationException("Experimental DTE was not registered in the ROT.");
+    }
+    public static string ReadOutput(object automation, string name)
+    {
+        var dte = (EnvDTE80.DTE2)automation;
+        var pane = dte.ToolWindows.OutputWindow.OutputWindowPanes.Item(name);
+        var document = pane.TextDocument;
+        return document.StartPoint.CreateEditPoint().GetText(document.EndPoint);
     }
     public static void Output(object automation, string marker)
     {
@@ -91,6 +98,8 @@ EndGlobal
     [IO.File]::WriteAllText((Join-Path $root 'Sample.cs'), "public class ContextFixture {`r`n    public const string Value = `"disk-marker`";`r`n}`r`n")
     [IO.File]::WriteAllText((Join-Path $root 'Oversized.txt'), ('x' * 65537))
     [IO.File]::WriteAllBytes((Join-Path $root 'Binary.bin'), [byte[]](0, 1, 2, 255))
+    [IO.File]::WriteAllText((Join-Path $root 'InertTools.txt'), '<script>window.lumenToolExecuted=true</script><img src=x onerror="window.lumenToolExecuted=true">')
+    [IO.File]::WriteAllText((Join-Path $root 'TooLargeTools.txt'), ('x' * 1048577))
     $dte.Solution.Open((Join-Path $root 'ContextFixture.sln'))
     $Action = 'Initialize'
 }
@@ -98,6 +107,32 @@ EndGlobal
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $root = [IO.Path]::GetFullPath($manifest.root)
 if (-not $root.StartsWith($artifacts + '\context-', [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture root is not owned by this verifier.' }
+if ($Action -eq 'WriteInspect' -or $Action -eq 'NativeUndo' -or $Action -eq 'NativeRedo' -or $Action -eq 'UserRoundTrip') {
+    $dte = Get-ExperimentalDte
+    if ([IO.Path]::GetFullPath($dte.Solution.FullName) -ne (Join-Path $root 'ContextFixture.sln')) { throw 'Refusing to use an unrelated solution.' }
+    $source = Join-Path $root 'Sample.cs'
+    $document = @($dte.Documents | Where-Object { $_.FullName -eq $source })[0]
+    if (-not $document) { throw 'Owned document is not open.' }
+    if ($Action -eq 'UserRoundTrip') {
+        $document.Activate()
+        $textDocument = $document.Object('TextDocument')
+        $textDocument.StartPoint.CreateEditPoint().Insert('x')
+        $textDocument.StartPoint.CreateEditPoint().Delete(1)
+    } elseif ($Action -ne 'WriteInspect') {
+        $document.Activate()
+        $command = if ($Action -eq 'NativeUndo') { 'Edit.Undo' } else { 'Edit.Redo' }
+        $dte.ExecuteCommand($command)
+    }
+    $textDocument = $document.Object('TextDocument')
+    @{ text = $textDocument.StartPoint.CreateEditPoint().GetText($textDocument.EndPoint); saved = $document.Saved } | ConvertTo-Json -Compress
+    return
+}
+if ($Action -eq 'OutputInspect') {
+    $dte = Get-ExperimentalDte
+    if ([IO.Path]::GetFullPath($dte.Solution.FullName) -ne (Join-Path $root 'ContextFixture.sln')) { throw 'Refusing to use an unrelated solution.' }
+    @{ text = [LumenExperimentalAutomation]::ReadOutput($dte, 'Lumen') } | ConvertTo-Json -Compress
+    return
+}
 if ($Action -eq 'Initialize') {
     $dte = Get-ExperimentalDte
     if (-not $dte.Solution.FullName) { $dte.Solution.Open((Join-Path $root 'ContextFixture.sln')) }

@@ -118,7 +118,16 @@ try {
   await command('Network.setCacheDisabled', { cacheDisabled: true });
   await command('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   events.length = 0;
-  await command('Page.reload', { ignoreCache: true });
+  await new Promise((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timer); socket.removeEventListener('message', loaded); };
+    const loaded = event => {
+      if (JSON.parse(event.data).method !== 'Page.loadEventFired') return;
+      cleanup(); resolve();
+    };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Offline reload did not finish')); }, 15000);
+    socket.addEventListener('message', loaded);
+    command('Page.reload', { ignoreCache: true }).catch(error => { cleanup(); reject(error); });
+  });
   report.offline = await evaluate(`new Promise((resolve, reject) => {
     const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Offline handshake failed')); }, 10000);
     const check = () => {

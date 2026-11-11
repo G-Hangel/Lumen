@@ -292,15 +292,87 @@ cache negativo conservador e cancelamento foram exercitados com fixtures.
 **Objetivo:** a IA lê, edita e cria arquivos e executa comandos — com a política
 de aprovação do usuário implemented exatamente.
 
+### Andamento — fatia 4a (2026-11-09)
+
+Base de backend implementada: `Lumen.Tools` net48, `WorkspaceGuard`,
+`ApprovalBroker` e `read_file` / `list_dir` / `find_files` / `grep` com schemas
+estritos. Build Release sem erros/avisos; 1.244 testes C# e 160 JS verdes.
+Controles negativos exercitam junction real, handle aberto fora da raiz,
+traversal, argumentos inválidos e negação de escrita/comandos em Ask/Plan.
+Criação de symlink de arquivo indisponível neste Windows: cobertura não alegada.
+
+Registro histórico da 4a: ainda sem host/UI ou Exp naquele checkpoint; a 4b
+abaixo substitui esse estado e o TFM inicial. Prompts eram interface com fake.
+
+### Andamento — fatia 4b (2026-11-09)
+
+As quatro ferramentas readonly estão integradas por RPC e formulário explícito,
+sem provedor/modelo nem tokens; resultados plaintext não entram no chat/contexto.
+O host fixa modo Ask e raiz da solução, executa em background e revalida a solução.
+`Lumen.Tools` alinhado a netstandard2.0 após falha real de identidade JSON na Exp;
+o verificador do pacote rejeitou o pacote incompatível antes da correção.
+Build Release 0 erros/avisos; **1.261 testes C# / 166 JS** verdes. Na Exp: leitura
+do disco (não buffer), busca/listagem/range, truncamento, HTML inerte, recuperação,
+203 px sem overflow e solução fechada rejeitada; controles de path, binário,
+tamanho e autoridade forjada exercitados. Evidências e lacunas em `STATUS.md`.
+
+Registro histórico da 4b: edição, diff/undo e buffer ainda pendentes naquele
+checkpoint. Invocação automática readonly foi antecipada com autorização na
+Fase 5; as fatias seguintes não concluem os critérios integrais automaticamente.
+
+### Andamento — fatia 4c: escrita manual interna (2026-11-10)
+
+Criação/edição explícitas em painel separado, com diff plaintext e undo do lote
+manual em memória. Arquivo aberto usa buffer MEF sem salvar/recarregar e histórico
+nativo do VS; fechado usa gravação atômica + journal limitado. Captura da solução,
+path relativo e schema estrito precedem a execução, sem settings/credenciais/API.
+Mudanças posteriores no disco/buffer, versões e marcadores de undo divergentes
+são recusados; não depende de `UndoStack`, não suportado pelo VS instalado.
+Diff mostra finais de linha e truncamento. Cancelamento tardio não oculta commit.
+Clean/build 0 erros/avisos; **1.405 C# / 197 JS** verdes. Verificador manual
+completo passou na Exp, inclusive duas edições do mesmo buffer e controles
+negativos, com 0 pagos/0 exceções JS; cleanup e SHA finais confirmados.
+Regressão readonly automática ficou parcial por captura CDP (B9), não confundida
+com aprovação integral. A conclusão desta fatia não conclui as Fases 4/5.
+
+Registro histórico: a 4c não habilitava escrita pelo modelo, undo de turno
+Agent, aprovação externa ou terminal. Esses itens foram tratados na 4d abaixo.
+
+### Andamento — fatia 4d: escrita pelo modelo e terminal aprovado (2026-11-11)
+
+Opt-in por envio, schema/autoridade restritos, escrita interna automática com
+resultado/diff e undo isolado do último turno. Manuais consecutivas mantêm seu
+próprio lote. Escrita externa exige aprovação por operação, sem consentimento
+por sessão. Terminal oferece negar/permitir uma vez/permitir nesta sessão;
+fechar/reabrir solução revoga consentimento mesmo com o mesmo path.
+
+Processo Windows suspenso é associado ao Job Object antes de executar;
+encerramento de descendentes e drenagem limitada cobrem timeout/cancelamento.
+Output público recebe comando, stdout/stderr e exit code. Orçamento é reservado
+antes de escrita; cancelamento tardio preserva diff de commit já realizado.
+
+Clean/build **0 erros/avisos**, **1.466 C# / 205 JS** verdes. Exp passou
+manual+dois turnos automáticos e undo isolado; terminal negado/permitido uma vez,
+Output, cancel, consentimento de sessão/revogação, readonly, negação externa,
+HTML/segredos, solução fechada e layout negativo. Verificação dividida em execução
+inicial e retomada após corrigir inspeção COM do robô, sem repetir as escritas.
+Retomada: **11 requests loopback, 0 pagos, 0 exceções JS**, screenshot; cleanup e
+SHA finais confirmados. Evidências e limites em `STATUS.md`/`COMANDOS.md`.
+
+**Fase ainda não concluída:** faltam `apply_diff`, diagnósticos, detecção completa
+dos shells e modos integrais. UI real validou cmd e negação de escrita externa;
+os demais cenários continuam cobertos por testes de backend. B9 anterior segue
+aberto. Checkboxes integrais só fecham quando todo seu critério estiver cumprido.
+
 ### Tarefas
 
 - [ ] **Workspace guard**: canonicalização + confinamento por prefixo,
       rejeição de traversal, symlink para fora, UNC não autorizado.
 - [ ] File tools: `read_file` (com range de linhas), `find_files` (glob),
       `list_dir`, `grep`, `create_file`, `edit_file`, `apply_diff`.
-- [ ] `edit_file` com **diff visível** e registro de undo; **undo em lote**
+- [x] `edit_file` com **diff visível** e registro de undo; **undo em lote**
       reverte o turno inteiro.
-- [ ] Edição em arquivo **aberto no editor** deve sincronizar com o buffer:
+- [x] Edição em arquivo **aberto no editor** deve sincronizar com o buffer:
       MEF `ITextBuffer.CreateEdit()` / `ITextEdit.Apply()`, com acesso à UI thread
       via `ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync`.
       Undo real do VS, não só arquivo em disco (`ARQUITETURA.md` §2.5).
@@ -308,11 +380,13 @@ de aprovação do usuário implemented exatamente.
       bash (Git Bash), captura de stdout+stderr+exit code, timeout,
       cancelamento, e leitura de output em background.
       **Não existe API pública de terminal no VS** — usar
-      `System.Diagnostics.Process` + pane próprio no Output Window
-      (`IVsOutputWindowPane`). Não tentar usar
+      processo próprio + pane no Output Window (`IVsOutputWindowPane`).
+      A 4d usa `CreateProcessW` suspenso + Job Object para confinar descendentes.
+      Não tentar usar
       `Microsoft.VisualStudio.Terminal.dll` (serviço interno, não suportado).
-- [ ] **Nunca** concatenar string para montar comando. `ProcessStartInfo`
-      com argumentos escapados corretamente + caminho do executável explícito.
+- [x] **Nunca** concatenar argumentos não escapados para montar comando.
+      Lista de argumentos, escaping Windows validado por `CommandLineToArgvW`
+      e caminho do executável resolvido explicitamente.
       Todo o trabalho de processo roda **fora da UI thread**.
 - [ ] `ApprovalBroker` implementando `AGENTS.md` §1:
       leitura livre · edit dentro da solução automático · fora do workspace
@@ -354,6 +428,32 @@ de aprovação do usuário implemented exatamente.
 ## Fase 5 — Loop do agente e modos
 
 **Objetivo:** Agent / Ask / Plan funcionando de ponta a ponta.
+
+### Fatia readonly antecipada — autorização em 2026-11-09
+
+O usuário solicitou explicitamente invocação automática de ferramentas pelo
+modelo após a 4b. Escopo desta antecipação: somente as quatro ferramentas de
+leitura existentes, retorno dos resultados ao modelo, limites/cancelamento e
+histórico íntegro. Não habilita escrita, terminal, modos completos ou conclusão
+da Fase 4/5. Continuação automática exige opt-in por envio, com aviso de conteúdo
+de disco enviado ao provedor e custo potencial; testes usam apenas mocks/loopback.
+
+Implementação: `ReadToolChatLoop` monta rodadas assistant/tool, preserva estado
+assinado e expande o histórico sem misturar chamada e resultado. Captura da
+solução precede credenciais/HTTP; executor continua Ask, somente disco. Opt-in
+é desmarcado após cada envio; painel manual não alimenta o modelo. Tetos fixos:
+quatro requests, oito ferramentas, 8.192 tokens de saída solicitados e dois
+minutos por turno, sem retry ou compactação silenciosa. Budget interrompe o
+ciclo; cancelamento não desbloqueia antes da resposta nativa. Resultados e
+argumentos ficam inertes na UI; rejeições não executam ferramentas desconhecidas.
+
+Verificação: clean/build Release **0 erros/avisos**, **1.310 C# / 179 JS** verdes.
+Na Exp com provedor loopback: leitura/reinjeção, disco versus buffer, histórico,
+HTML inerte, opt-out, traversal/escrita negados, limite de loop, cancelamento e
+recuperação; solução fechada sem POST, 203 px sem overflow, **0 exceções JS**.
+Foram 12 requests locais, nenhuma API paga. Evidências/lacunas em `STATUS.md`.
+Não marcar tarefas integrais abaixo: modos, escrita, configuração do orçamento,
+compactação e retry continuam pendentes.
 
 ### Tarefas
 

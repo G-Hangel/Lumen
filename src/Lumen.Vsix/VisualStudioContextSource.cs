@@ -102,7 +102,7 @@ internal sealed class VisualStudioContextSource : IContextSource
         return Package.GetGlobalService(typeof(SDTE)) as DTE2 ?? throw new ProviderException("context_unavailable");
     }
 
-    private static string GetWorkspaceRoot(out string solutionPath)
+    internal static string GetWorkspaceRoot(out string solutionPath)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
         var solution = Package.GetGlobalService(typeof(SVsSolution)) as IVsSolution;

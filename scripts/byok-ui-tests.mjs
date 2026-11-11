@@ -79,6 +79,803 @@ function fixture(t, options = {}) {
   return { bridge, transport };
 }
 
+const executionEvent = (status = 'Running', extra = {}) => ({ kind: 'ToolExecution', id: 'read-1', status, isError: status === 'Failed', content: '', ...extra });
+const autoChat = { configurationId, text: 'Read the solution', effort: 'Off', readTools: true };
+function emitReadCall(f, request, id = 'read-1', name = 'read_file') {
+  for (const payload of [{ kind: 'ToolCallStart', id, name }, { kind: 'ToolCallEnd', id, arguments: { path: '.' } }]) {
+    f.transport.emit(envelope('byok.event', payload, request.id));
+  }
+}
+const approvalId = '44444444-4444-4444-8444-444444444444';
+const approvalEvent = (category = 'ExecuteCommand', extra = {}) => ({ kind: 'ApprovalRequest', id: approvalId,
+  toolName: category === 'ExecuteCommand' ? 'run_command' : 'edit_file', category,
+  arguments: { command: 'cmd', args: ['echo', 'hi'] }, targetPath: category === 'ExecuteCommand' ? null : 'C:/outside/target.cs',
+  canAllowSession: category === 'ExecuteCommand', ...extra });
+const agentChat = { configurationId, text: 'Edit and run', effort: 'Off', readTools: true, writeTools: true, terminal: true };
+const approvalCards = f => f.node('live').querySelectorAll('section').filter(item => item.className === 'byok-approval');
+
+test('automatic chat request accepts optional booleans only; omits declarations and browser authority', async t => {
+  const f = fixture(t);
+  for (const readTools of [null, 1, 'true', {}, []]) await rejects(f.bridge.request('byok.chat', { ...autoChat, readTools }), 'invalid_message');
+  for (const extra of [{ tools: [] }, { maxCalls: 4 }, { workspace: '.' }, { mode: 'Agent' }]) {
+    await rejects(f.bridge.request('byok.chat', { ...autoChat, ...extra }), 'invalid_message');
+  }
+  assert.equal(f.transport.messages.length, 0);
+  for (const payload of [{ configurationId, text: 'manual', effort: 'Off' }, { ...autoChat, readTools: false }, autoChat]) {
+    const pending = f.bridge.request('byok.chat', payload);
+    assert.deepEqual(f.transport.messages.at(-1).payload, payload);
+    f.transport.reply({ completed: true, conversation: summary }); await pending;
+  }
+});
+
+test('execution schema rejects malformed and oversized events including nonempty Running/Cancelled', () => {
+  assert.equal(isByokEvent(executionEvent('Completed', { content: 'x'.repeat(65536) })), true);
+  for (const patch of [{ id: '' }, { status: 'Unknown' }, { isError: null }, { content: null }, { content: 'x'.repeat(65537) }, { rawHtml: 'x' }]) {
+    assert.equal(isByokEvent(executionEvent('Completed', patch)), false);
+  }
+  for (const status of ['Running', 'Cancelled']) assert.equal(isByokEvent(executionEvent(status, { content: 'unexpected' })), false);
+  for (const key of ['id', 'status', 'isError', 'content']) {
+    const value = executionEvent(); delete value[key]; assert.equal(isByokEvent(value), false);
+  }
+});
+
+test('execution lifecycle rejects spoofed unknown/unended calls, unconsented execution and terminal replay', async t => {
+  const cases = [
+    { before: [], bad: executionEvent() },
+    { before: [{ kind: 'ToolCallStart', id: 'read-1', name: 'read_file' }], bad: executionEvent() },
+    { call: true, bad: executionEvent('Completed') },
+    { call: true, before: [executionEvent()], bad: executionEvent() },
+    { call: true, before: [executionEvent(), executionEvent('Completed')], bad: executionEvent('Failed') },
+    { call: true, before: [executionEvent('Cancelled')], bad: executionEvent() },
+    { call: true, bad: executionEvent('Running', { id: 'spoofed' }) },
+    { call: true, name: 'edit_file', bad: executionEvent() },
+    { call: true, name: 'edit_file', bad: executionEvent('Completed') },
+    { call: true, bad: executionEvent('Failed', { isError: false }) },
+    { call: true, readTools: false, bad: executionEvent() },
+    { call: true, before: [executionEvent(), { kind: 'Done', reason: 'Stop' }], bad: executionEvent('Completed') }
+  ];
+  for (const value of cases) {
+    const f = fixture(t); const pending = f.bridge.request('byok.chat', { ...autoChat, readTools: value.readTools ?? true });
+    const request = f.transport.messages.at(-1);
+    if (value.call) emitReadCall(f, request, 'read-1', value.name);
+    for (const event of value.before ?? []) f.transport.emit(envelope('byok.event', event, request.id));
+    const rejected = rejects(pending, 'invalid_response');
+    f.transport.emit(envelope('byok.event', value.bad, request.id)); await rejected;
+  }
+});
+
+test('preflight denials are correlated failures without granting execution authority', async t => {
+  for (const name of ['read_file', 'edit_file']) {
+    const f = fixture(t), events = [];
+    const pending = f.bridge.request('byok.chat', autoChat, { onEvent: event => events.push(event) });
+    const sent = f.transport.messages.at(-1); emitReadCall(f, sent, 'read-1', name);
+    f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'ToolUse' }, sent.id));
+    f.transport.emit(envelope('byok.event', executionEvent('Failed', { content: JSON.stringify({ code: name === 'read_file' ? 'invalid_arguments' : 'unknown_tool' }) }), sent.id));
+    f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Stop' }, sent.id));
+    f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
+    assert.deepEqual(events.filter(event => event.kind === 'ToolExecution').map(event => event.status), ['Failed']);
+  }
+});
+
+test('automatic rounds accept execution feedback but Done/ToolUse and cancel acknowledgement retain shared gate', async t => {
+  const f = fixture(t), events = [];
+  const pending = f.bridge.request('byok.chat', autoChat, { onEvent: event => events.push(event) });
+  const sent = f.transport.messages.at(-1); emitReadCall(f, sent);
+  f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'ToolUse' }, sent.id));
+  f.transport.emit(envelope('byok.event', executionEvent(), sent.id));
+  await rejects(f.bridge.request('byok.list'), 'bridge_busy');
+  f.transport.emit(envelope('byok.event', executionEvent('Completed', { content: 'disk text' }), sent.id));
+  emitReadCall(f, sent, 'read-2', 'grep');
+  f.transport.emit(envelope('byok.event', executionEvent('Running', { id: 'read-2' }), sent.id));
+  f.transport.emit(envelope('byok.event', executionEvent('Failed', { id: 'read-2', content: 'not found' }), sent.id));
+  emitReadCall(f, sent, 'read-3', 'list_dir');
+  const cancel = f.bridge.request('byok.cancel'); f.transport.reply({ cancelled: true }); await cancel;
+  await rejects(f.bridge.request('byok.list'), 'bridge_busy');
+  f.transport.emit(envelope('byok.event', executionEvent('Cancelled', { id: 'read-3' }), sent.id));
+  f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Cancelled' }, sent.id));
+  await rejects(f.bridge.request('byok.list'), 'bridge_busy');
+  f.transport.reply({ completed: false, conversation: summary }, sent); await pending;
+  assert.deepEqual(events.filter(event => event.kind === 'ToolExecution').map(event => event.status), ['Running', 'Completed', 'Running', 'Failed', 'Cancelled']);
+});
+
+test('automatic UI consent defaults off, is per-send, never configures on enabling and resets on config/model changes', async t => {
+  const f = uiFixture(t);
+  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
+  await openWithModel(f, model, { otherModels: [{ ...model, id: 'other-model' }] });
+  assert.equal(f.node('auto-read-tools').disabled, false);
+  const count = f.transport.messages.length;
+  f.node('auto-read-tools').checked = true; await f.node('auto-read-tools').emit('change');
+  assert.equal(f.transport.messages.length, count);
+  for (const id of ['provider-id', 'url', 'key', 'deployments']) {
+    f.node('auto-read-tools').checked = true; await f.node(id).emit('input'); assert.equal(f.node('auto-read-tools').checked, false);
+  }
+  f.node('auto-read-tools').checked = true; f.node('models').value = 'other-model';
+  const selection = f.node('models').emit('change'); assert.equal(f.node('auto-read-tools').checked, false);
+  f.transport.reply({ configuration: { ...config, selectedModelId: 'other-model' } }); await selection;
+  f.node('message').value = 'read'; await f.node('message').emit('input');
+  f.node('auto-read-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  assert.equal(sent.payload.readTools, true); assert.equal(Object.hasOwn(sent.payload, 'tools'), false);
+  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
+  f.transport.reply({ completed: true, conversation: { ...summary, modelId: 'other-model' } }); await pending;
+  f.node('message').value = 'manual'; await f.node('message').emit('input');
+  const manual = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
+  f.transport.reply({ completed: true, conversation: { ...summary, modelId: 'other-model', turnCount: 2 } }); await manual;
+  f.node('auto-read-tools').checked = true; f.disconnect(); assert.equal(f.node('auto-read-tools').checked, false);
+});
+
+test('automatic consent disables without tools/model and during separate manual disk operations', async t => {
+  const f = uiFixture(t); await openWithModel(f, { ...model, tools: false });
+  assert.equal(f.node('auto-read-tools').disabled, true);
+  f.node('auto-read-tools').checked = true;
+  f.node('message').value = 'manual'; await f.node('message').emit('input');
+  const chat = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
+  f.transport.reply({ completed: true, conversation: summary }); await chat;
+  const g = uiFixture(t); await openWithModel(g);
+  const read = g.node('read-form').emit('submit'); assert.equal(g.node('auto-read-tools').disabled, true);
+  g.transport.reply(diskResult()); await read; assert.equal(g.node('auto-read-tools').disabled, false);
+});
+
+test('execution UI renders inert plain/focusable results, localized lifecycle and cached/reopened terminal history', async t => {
+  let markdownCalls = 0;
+  const f = uiFixture(t, { renderMarkdown: () => { markdownCalls++; return ''; } }); await openWithModel(f);
+  f.node('message').value = 'read'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1); emitReadCall(f, sent);
+  f.transport.emit(envelope('byok.event', executionEvent(), sent.id));
+  const card = f.node('live').querySelectorAll('details').find(item => item.className === 'byok-tool'); const state = card.querySelectorAll('p')[1];
+  assert.equal(state.textContent, en.byokToolRunning); assert.equal(state.getAttribute('aria-live'), 'polite');
+  const content = '<script>throw new Error("executed")</script><img onerror="bad()">';
+  f.transport.emit(envelope('byok.event', executionEvent('Completed', { content }), sent.id));
+  const result = card.querySelectorAll('pre')[1]; assert.equal(result.textContent, content); assert.equal(result.children.length, 0);
+  assert.equal(result.tabIndex, 0); assert.equal(result.hidden, false); assert.equal(markdownCalls, 0);
+  f.locale(); assert.equal(state.textContent, pt.byokToolCompleted);
+  f.transport.reply({ completed: true, conversation: summary }); await pending; f.flushFrames();
+  assert.ok(f.node('history-items').textContent.includes(content), 'cached terminal result retained');
+  f.node('history-list').value = conversationId; const reopened = f.node('history-list').emit('change');
+  const turn = { ...archiveTurn(0), tools: [{ id: 'read-1', name: 'read_file', arguments: { path: '.' }, status: 'Completed', isError: false, content }] };
+  f.transport.reply({ ...page(), turns: [turn] }); await reopened; await tick(); f.flushFrames();
+  assert.ok(f.node('history-items').textContent.includes(content));
+  assert.equal(f.node('history-items').querySelectorAll('script').length, 0); assert.equal(markdownCalls, 1, 'only archived assistant text uses Markdown');
+});
+
+test('automatic UI failed/cancelled cards stay plain and cancellation acknowledgement never unlocks early', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'read'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  emitReadCall(f, sent); f.transport.emit(envelope('byok.event', executionEvent(), sent.id));
+  f.transport.emit(envelope('byok.event', executionEvent('Failed', { content: '<script>inert()</script>' }), sent.id));
+  emitReadCall(f, sent, 'read-2'); f.transport.emit(envelope('byok.event', executionEvent('Running', { id: 'read-2' }), sent.id));
+  const cancel = f.node('cancel').emit('click'); f.transport.reply({ cancelled: true }); await cancel;
+  assert.equal(f.node('send').disabled, true); assert.equal(f.node('auto-read-tools').disabled, true);
+  f.transport.emit(envelope('byok.event', executionEvent('Cancelled', { id: 'read-2' }), sent.id));
+  const cards = f.node('live').querySelectorAll('details').filter(item => item.className === 'byok-tool');
+  assert.equal(cards[0].querySelectorAll('p')[1].textContent, en.byokToolFailed);
+  assert.equal(cards[1].querySelectorAll('p')[1].textContent, en.byokToolCancelled);
+  assert.equal(cards[0].querySelectorAll('pre')[1].children.length, 0);
+  f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Cancelled' }, sent.id));
+  assert.equal(f.node('read-run').disabled, true, 'Done is not native completion');
+  f.transport.reply({ completed: false, conversation: summary }, sent); await pending; f.flushFrames();
+  assert.equal(f.node('auto-read-tools').disabled, false); assert.equal(f.node('auto-read-tools').checked, false);
+  assert.ok(f.node('history-items').textContent.includes(en.byokToolFailed));
+  assert.ok(f.node('history-items').textContent.includes(en.byokToolCancelled));
+});
+
+test('consent resets immediately on provider/kind change and configure attempt without an enabling RPC', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('auto-read-tools').checked = true; f.node('kind').value = 'OpenAI'; await f.node('kind').emit('change');
+  assert.equal(f.node('auto-read-tools').checked, false);
+  f.node('auto-read-tools').checked = true;
+  f.node('providers').value = ''; await f.node('providers').emit('change');
+  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
+  f.node('auto-read-tools').checked = true; f.node('url').value = 'invalid-url';
+  const count = f.transport.messages.length; await f.node('configure').emit('submit');
+  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.transport.messages.length, count);
+});
+
+test('history accepts legacy tools and complete terminal triplets, rejects partial/Running/oversize results', () => {
+  const call = { id: 'read-1', name: 'read_file', arguments: { path: '.' } };
+  const valid = tools => isByokEnvelope(envelope('byok.history.open.result', { ...page(), turns: [{ ...archiveTurn(0), tools }] }));
+  assert.equal(valid([call]), true);
+  for (const status of ['Completed', 'Failed', 'Cancelled']) assert.equal(valid([{ ...call, status, isError: status === 'Failed', content: '' }]), true);
+  for (const extra of [{ status: 'Completed' }, { isError: false, content: '' }, { status: 'Running', isError: false, content: '' },
+    { status: 'Completed', isError: false, content: 'x'.repeat(65537) }, { status: 'Cancelled', isError: false, content: 'bad' }]) assert.equal(valid([{ ...call, ...extra }]), false);
+});
+
+test('budget failure is localized, retains gate until result, does not retry and permits manual resend', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'read too much'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1); const count = f.transport.messages.length;
+  f.transport.emit(envelope('byok.event', { kind: 'Error', code: 'tool_budget_exceeded' }, sent.id));
+  assert.equal(f.node('send').disabled, true); assert.equal(f.node('error').textContent, en.byokErrorToolBudget);
+  f.transport.reply({ completed: false, conversation: summary }); await pending;
+  assert.equal(f.transport.messages.length, count); assert.equal(f.node('auto-read-tools').checked, false);
+  f.locale(); assert.equal(f.node('error').textContent, pt.byokErrorToolBudget);
+  const manual = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
+  f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }); await manual;
+});
+
+test('automatic consent has accessible native compact labels and explicit privacy/budget help', () => {
+  assert.match(html, /id="byok-auto-read-tools"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-auto-read-help"/);
+  assert.match(html, /for="byok-auto-read-tools"/);
+  assert.doesNotMatch(html.match(/<input id="byok-auto-read-tools"[^>]*>/)[0], /\bchecked\b/);
+  assert.match(en.byokAutoReadHelp, /selected provider will receive disk file contents/);
+  assert.match(en.byokAutoReadHelp, /Unsaved editor buffers are excluded/);
+  assert.match(en.byokAutoReadHelp, /paid tokens/); assert.match(en.byokAutoReadHelp, /4 provider calls.*8 tools.*8,192.*2-minute/);
+  assert.match(css, /\.byok-tool \.byok-tool-result\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
+  for (const [id, help] of [['auto-write-tools', 'auto-write-help'], ['auto-terminal', 'auto-terminal-help']]) {
+    assert.match(html, new RegExp(`id="byok-${id}"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-${help}"`));
+    assert.match(html, new RegExp(`for="byok-${id}"`));
+    assert.doesNotMatch(html.match(new RegExp(`<input id="byok-${id}"[^>]*>`))[0], /\bchecked\b/);
+  }
+  assert.match(en.byokAutoWriteHelp, /visible diff and batch undo/);
+  assert.match(en.byokAutoWriteHelp, /outside the workspace every write requires your explicit approval/);
+  assert.match(en.byokAutoTerminalHelp, /Every command requires your explicit approval/);
+  assert.match(en.byokAutoTerminalHelp, /always allow this session/);
+  assert.match(en.byokAutoTerminalHelp, /never concatenated/);
+  assert.match(css, /\.byok-approval pre\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
+});
+
+test('approval schema rejects forged category, session mismatch, missing fields and oversized payloads', () => {
+  assert.equal(isByokEvent(approvalEvent()), true);
+  assert.equal(isByokEvent(approvalEvent('WriteOutsideWorkspace')), true);
+  assert.equal(isByokEvent(approvalEvent('WriteOutsideWorkspace', { targetPath: null })), true);
+  for (const patch of [{ category: 'Read' }, { category: 'WriteInsideWorkspace' }, { category: 'execute_command' },
+    { canAllowSession: false }, { id: 'not-a-guid' }, { id: '' }, { id: '00000000-0000-0000-0000-000000000000' },
+    { toolName: 'bad name!' }, { toolName: '' }, { arguments: null }, { arguments: [] }, { arguments: 'text' },
+    { targetPath: 'x'.repeat(4097) }, { rawHtml: '<script>' }]) {
+    assert.equal(isByokEvent(approvalEvent('ExecuteCommand', patch)), false);
+  }
+  assert.equal(isByokEvent(approvalEvent('WriteOutsideWorkspace', { canAllowSession: true })), false);
+  assert.equal(isByokEvent(approvalEvent('ExecuteCommand', { arguments: { big: 'x'.repeat(8 * 1024 * 1024) } })), false);
+  for (const key of ['id', 'toolName', 'category', 'arguments', 'targetPath', 'canAllowSession']) {
+    const value = approvalEvent(); delete value[key]; assert.equal(isByokEvent(value), false);
+  }
+});
+
+test('approval respond validates the decision before the busy gate and bypasses it exactly once', async t => {
+  const f = fixture(t);
+  for (const payload of [{ requestId: approvalId, decision: 'always' }, { requestId: 'not-a-guid', decision: 'deny' },
+    { requestId: approvalId }, { decision: 'deny' }, { requestId: approvalId, decision: 'deny', extra: true }]) {
+    await rejects(f.bridge.request('byok.approval.respond', payload), 'invalid_message');
+  }
+  assert.equal(f.transport.messages.length, 0, 'malformed decisions never reach the host');
+  const pending = f.bridge.request('byok.chat', agentChat); const sent = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', approvalEvent(), sent.id));
+  await rejects(f.bridge.request('byok.list'), 'bridge_busy');
+  const respond = f.bridge.request('byok.approval.respond', { requestId: approvalId, decision: 'allow_once' });
+  assert.deepEqual(f.transport.messages.at(-1).payload, { requestId: approvalId, decision: 'allow_once' });
+  f.transport.reply({ accepted: true }); await respond;
+  await rejects(f.bridge.request('byok.approval.respond', { requestId: approvalId, decision: 'deny' }), 'bridge_busy');
+  await rejects(f.bridge.request('byok.approval.respond', { requestId: otherId, decision: 'deny' }), 'bridge_busy');
+  f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
+});
+
+test('approval events require the matching consent flag, unique ids and a bounded count', async t => {
+  const cases = [
+    { flags: { readTools: true }, bad: approvalEvent() },
+    { flags: { writeTools: true }, bad: approvalEvent() },
+    { flags: { terminal: true }, bad: approvalEvent('WriteOutsideWorkspace') }
+  ];
+  for (const value of cases) {
+    const f = fixture(t); const pending = f.bridge.request('byok.chat', { configurationId, text: 'x', effort: 'Off', ...value.flags });
+    const sent = f.transport.messages.at(-1); const rejected = rejects(pending, 'invalid_response');
+    f.transport.emit(envelope('byok.event', value.bad, sent.id)); await rejected;
+  }
+  const dup = fixture(t); const dupPending = dup.bridge.request('byok.chat', agentChat); const dupSent = dup.transport.messages.at(-1);
+  dup.transport.emit(envelope('byok.event', approvalEvent(), dupSent.id));
+  const dupRejected = rejects(dupPending, 'invalid_response');
+  dup.transport.emit(envelope('byok.event', approvalEvent(), dupSent.id)); await dupRejected;
+  const many = fixture(t); const manyPending = many.bridge.request('byok.chat', agentChat); const manySent = many.transport.messages.at(-1);
+  for (let index = 0; index < 8; index++) many.transport.emit(envelope('byok.event', approvalEvent('ExecuteCommand', { id: `55555555-5555-4555-8555-${String(index).padStart(12, '0')}` }), manySent.id));
+  const overflow = rejects(manyPending, 'invalid_response');
+  many.transport.emit(envelope('byok.event', approvalEvent('ExecuteCommand', { id: '66666666-6666-4666-8666-666666666666' }), manySent.id)); await overflow;
+});
+
+test('a chat result with an unanswered approval is rejected as an invalid response', async t => {
+  const f = fixture(t); const pending = f.bridge.request('byok.chat', agentChat); const sent = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', approvalEvent(), sent.id));
+  const rejected = rejects(pending, 'invalid_response');
+  f.transport.reply({ completed: true, conversation: summary }, sent); await rejected;
+});
+
+test('write and terminal consent default off, travel per-send and reset on disconnect', async t => {
+  const f = uiFixture(t);
+  for (const id of ['auto-write-tools', 'auto-terminal']) { assert.equal(f.node(id).checked, false); assert.equal(f.node(id).disabled, true); }
+  await openWithModel(f);
+  for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(f.node(id).disabled, false);
+  f.node('message').value = 'edit'; await f.node('message').emit('input');
+  f.node('auto-write-tools').checked = true; f.node('auto-terminal').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  assert.equal(sent.payload.writeTools, true); assert.equal(sent.payload.terminal, true);
+  assert.equal(Object.hasOwn(sent.payload, 'readTools'), false, 'host derives read enablement from write/terminal');
+  for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) { assert.equal(f.node(id).checked, false); assert.equal(f.node(id).disabled, true); }
+  f.transport.reply({ completed: true, conversation: summary }); await pending;
+  f.node('auto-write-tools').checked = true; f.disconnect(); assert.equal(f.node('auto-write-tools').checked, false);
+  const g = uiFixture(t); await openWithModel(g, { ...model, tools: false });
+  assert.equal(g.node('auto-write-tools').disabled, true); assert.equal(g.node('auto-terminal').disabled, true);
+});
+
+test('approval card renders inert arguments, focuses Deny and settles on the host decision', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  const arguments_ = { command: 'cmd', args: ['echo', '<script>inert()</script>'] };
+  f.transport.emit(envelope('byok.event', approvalEvent('ExecuteCommand', { arguments: arguments_ }), sent.id));
+  const card = approvalCards(f)[0];
+  const args = card.querySelector('pre'); assert.equal(args.textContent, JSON.stringify(arguments_, null, 2));
+  assert.equal(args.children.length, 0); assert.equal(args.tabIndex, 0);
+  const buttons = card.querySelectorAll('button'); assert.equal(buttons.length, 3);
+  assert.equal(f.document.activeElement, buttons[0], 'Deny is the default focus');
+  const state = card.querySelectorAll('p').find(item => item.getAttribute('role') === 'status');
+  assert.equal(state.textContent, en.approvalPending); assert.equal(state.getAttribute('aria-live'), 'polite');
+  const respond = buttons[1].emit('click');
+  assert.deepEqual(f.transport.messages.at(-1).payload, { requestId: approvalId, decision: 'allow_once' });
+  f.transport.reply({ accepted: true }); await respond;
+  assert.equal(state.textContent, en.approvalAllowedOnce); assert.ok(buttons.every(button => button.disabled));
+  f.locale(); assert.equal(state.textContent, pt.approvalAllowedOnce);
+  f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
+});
+
+test('outside-write approval hides the session decision and a failed respond expires the card', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'write'; await f.node('message').emit('input'); f.node('auto-write-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', approvalEvent('WriteOutsideWorkspace'), sent.id));
+  const card = approvalCards(f)[0]; const buttons = card.querySelectorAll('button');
+  assert.equal(buttons.length, 2, 'no allow_session for writes');
+  assert.ok(card.textContent.includes('C:/outside/target.cs'));
+  const state = card.querySelectorAll('p').find(item => item.getAttribute('role') === 'status');
+  const respond = buttons[0].emit('click');
+  f.transport.emit(envelope('error', { code: 'cancelled' }, f.transport.messages.at(-1).id)); await respond;
+  assert.equal(state.textContent, en.approvalExpired); assert.ok(buttons.every(button => button.disabled));
+  f.transport.reply({ completed: false, conversation: summary }, sent); await pending;
+});
+
+test('unanswered approvals expire when the chat ends or errors', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', approvalEvent(), sent.id));
+  const state = approvalCards(f)[0].querySelectorAll('p').find(item => item.getAttribute('role') === 'status');
+  f.transport.emit(envelope('error', { code: 'cancelled' }, sent.id)); await pending;
+  assert.equal(state.textContent, en.approvalExpired);
+  assert.ok(approvalCards(f)[0].querySelectorAll('button').every(button => button.disabled));
+});
+
+const manualWrite = (name = 'create_file', arguments_ = {}) => ({ name, arguments: { path: 'src/Manual.cs', content: 'manual text', ...arguments_ } });
+const plainDiff = (extra = {}) => ({ truncated: false, changes: [{ op: 'remove', text: 'old', ending: 'CRLF' },
+  { op: 'add', text: '<script>inert()</script>\n<img onerror="inert()">', ending: 'LF' }], linesBefore: 1, linesAfter: 2, ...extra });
+const writeResult = (name = 'create_file', extra = {}) => ({ name, isError: false, content: JSON.stringify({ buffer: true, diff: plainDiff() }), pending: 1, ...extra });
+async function openWritePanel(f, pending = 0) {
+  f.connect(); f.node('write-tools').open = true;
+  await f.node('write-tools').emit('toggle');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.tool.write.status');
+  f.transport.reply({ pending }); await tick();
+}
+
+test('manual write bridge rejects tool, relative path, payload and authority negatives before posting', async t => {
+  const f = fixture(t);
+  for (const value of [null, {}, ...['read_file', 'run_command', 'unknown', 'CREATE_FILE'].map(name => manualWrite(name)),
+    ...['', '.', '..', '../file', 'src/../../file', '/absolute', '\\absolute', 'C:/file', 'C:file', '//server/file',
+      'src//file', 'src/./file', 'src/file.', 'src/file ', 'file:ads', 'file\nname', 'x\0', 'file*', 'file?', 'x'.repeat(1025), '\ud800'].map(path => manualWrite('create_file', { path })),
+    ...[null, 1, [], {}, 'x'.repeat(65537), '\0', '\ud800'].map(content => manualWrite('edit_file', { content })),
+    ...[null, [], {}, { path: 'file' }, { content: '' }, { path: 'file', content: '', root: '.' }].map(arguments_ => ({ name: 'edit_file', arguments: arguments_ })),
+    ...[{ root: '.' }, { mode: 'Agent' }, { budget: 64 }, { consent: true }, { configurationId }, { tools: [] }].map(extra => ({ ...manualWrite(), ...extra }))]) {
+    await rejects(f.bridge.request('byok.tool.write', value), 'invalid_message');
+  }
+  for (const type of ['byok.tool.write.undo', 'byok.tool.write.status']) {
+    for (const value of [null, [], { pending: 1 }, { root: '.' }, { mode: 'Agent' }, { confirm: true }]) await rejects(f.bridge.request(type, value), 'invalid_message');
+  }
+  assert.equal(f.transport.messages.length, 0);
+  for (const request of [manualWrite(), manualWrite('edit_file', { content: '' }), manualWrite('edit_file', { path: 'src\\file.cs' }),
+    manualWrite('create_file', { path: 'x'.repeat(1024), content: 'x'.repeat(65536) })]) {
+    const pending = f.bridge.request('byok.tool.write', request); f.transport.reply(writeResult(request.name)); await pending;
+    assert.deepEqual(f.transport.messages.at(-1).payload, request);
+  }
+});
+
+test('manual write result rejects malformed diff, outer fields, error content, pending and wrong correlation', async t => {
+  const f = fixture(t);
+  for (const patch of [{ name: 'run_command' }, { name: null }, { isError: 1 }, { root: '.' }, { mode: 'Agent' }, { budget: 64 },
+    { content: '{' }, { content: 'null' }, { content: '[]' }, { content: '{}' }, { content: 1 }, { content: ' '.repeat(65537) },
+    { isError: true, content: '{}' }, { isError: true, content: '{"code":"undo_conflict","message":"secret"}' },
+    ...[null, -1, 65, 1.1, '1'].map(pending => ({ pending }))]) {
+    assert.equal(isByokEnvelope(envelope('byok.tool.write.result', writeResult('create_file', patch))), false);
+  }
+  for (const diff of [null, {}, plainDiff({ truncated: 'true' }), plainDiff({ linesBefore: -1 }), plainDiff({ linesAfter: 1.1 }),
+    plainDiff({ tooLarge: false }), plainDiff({ html: '<script>' }), plainDiff({ changes: [{ op: 'equal', text: 'x' }] }),
+    plainDiff({ changes: [{ op: 'add', text: 1 }] }), plainDiff({ changes: [{ op: 'remove', text: 'x', html: 'x' }] }),
+    ...['invalid', null, '<script>'].map(ending => plainDiff({ changes: [{ op: 'add', text: 'x', ending }] }))]) {
+    assert.equal(isByokEnvelope(envelope('byok.tool.write.result', writeResult('create_file', { content: JSON.stringify({ diff }) }))), false);
+  }
+  const good = writeResult('create_file', { content: JSON.stringify({ diff: plainDiff({ truncated: true, tooLarge: true, changes: [] }) }), pending: 64 });
+  assert.equal(isByokEnvelope(envelope('byok.tool.write.result', good)), true);
+  const pending = f.bridge.request('byok.tool.write', manualWrite()), sent = f.transport.messages.at(-1);
+  assert.equal(f.bridge.receive(envelope('byok.tool.write.result', good, otherId)), false);
+  f.transport.reply(writeResult('edit_file'), sent); await rejects(pending, 'invalid_response');
+  assert.equal(f.bridge.receive(envelope('byok.tool.write.result', good, sent.id)), false);
+  const request = f.bridge.request('byok.tool.write', manualWrite());
+  f.transport.reply({ pending: 1 }, { ...f.transport.messages.at(-1), type: 'byok.tool.write.status' });
+  await rejects(request, 'invalid_response');
+});
+
+test('manual status and undo response fields are exact and bounded with valid positive controls', async t => {
+  const f = fixture(t);
+  for (const type of ['byok.tool.write.status', 'byok.tool.write.undo']) {
+    const good = type.endsWith('undo') ? { undone: true, pending: 0 } : { pending: 0 };
+    for (const value of [null, {}, { ...good, root: '.' }, { ...good, mode: 'Agent' }, { ...good, budget: 1 },
+      ...[null, -1, 65, 1.5, '0'].map(pending => ({ ...good, pending })), ...(type.endsWith('undo') ? [{ pending: 0 }, { undone: false, pending: 0 }] : [])]) {
+      assert.equal(isByokEnvelope(envelope(`${type}.result`, value)), false);
+    }
+    for (const count of [0, 64]) {
+      const pending = f.bridge.request(type, {}); f.transport.reply({ ...good, pending: count }); assert.equal((await pending).pending, count);
+    }
+  }
+  for (const code of ['file_exists', 'undo_failed', 'undo_conflict', 'edit_conflict', 'journal_limit', 'mode_denied', 'outside_workspace']) {
+    const pending = f.bridge.request('byok.tool.write', manualWrite());
+    f.transport.reply(writeResult('create_file', { isError: true, content: JSON.stringify({ code }), pending: 3 }));
+    assert.equal((await pending).pending, 3);
+    assert.notEqual(errorLabel(code), 'byokErrorUnknown');
+  }
+});
+
+test('manual bridge offline forged actions are rejected and shared gate survives cancel acknowledgement', async t => {
+  const offline = fixture(t, { connected: () => false });
+  for (const [type, payload] of [['byok.tool.write', manualWrite()], ['byok.tool.write.undo', {}], ['byok.tool.write.status', {}]]) {
+    await rejects(offline.bridge.request(type, payload), 'bridge_unavailable');
+  }
+  assert.equal(offline.transport.messages.length, 0);
+  const f = fixture(t), pending = f.bridge.request('byok.tool.write', manualWrite()), sent = f.transport.messages.at(-1);
+  for (const [type, payload] of [['byok.tool.read', { name: 'read_file', arguments: { path: '.' } }], ['byok.chat', autoChat],
+    ['byok.tool.write.undo', {}], ['byok.tool.write.status', {}]]) await rejects(f.bridge.request(type, payload), 'bridge_busy');
+  const cancellation = f.bridge.request('byok.cancel'); f.transport.reply({ cancelled: true }); await cancellation;
+  await rejects(f.bridge.request('byok.tool.write', manualWrite()), 'bridge_busy');
+  f.transport.reply(writeResult(), sent); await pending;
+  const undo = f.bridge.request('byok.tool.write.undo', {}); f.transport.reply({ undone: true, pending: 0 }); await undo;
+});
+
+test('manual UI is explicit, separate, provider-independent and renders malicious multiline diff with textContent only', async t => {
+  let markdownCalls = 0;
+  const f = uiFixture(t, { renderMarkdown: () => { markdownCalls++; throw new Error('no diff renderer'); } });
+  assert.equal(f.node('write-tools').open, false); assert.equal(f.node('write-apply').disabled, true);
+  f.connect(); assert.equal(f.transport.messages.length, 0);
+  f.node('write-apply').disabled = false; f.node('write-undo').disabled = false;
+  await f.node('write-undo').emit('click'); assert.equal(f.transport.messages.length, 0, 'unknown pending cannot authorize undo');
+  await openWritePanel(f); assert.equal(f.node('write-undo').disabled, true);
+  for (const name of ['create_file', 'edit_file']) {
+    f.node('write-name').value = name; f.node('write-path').value = 'src/Manual.cs'; f.node('write-content').value = '';
+    const count = f.transport.messages.length;
+    await f.node('write-name').emit('change'); await f.node('write-path').emit('input'); await f.node('write-content').emit('input');
+    assert.equal(f.transport.messages.length, count);
+    const pending = f.node('write-form').emit('submit'), sent = f.transport.messages.at(-1);
+    assert.equal(sent.type, 'byok.tool.write'); assert.deepEqual(sent.payload, manualWrite(name, { content: '' }));
+    assert.equal(f.node('read-run').disabled, true); assert.equal(f.node('write-cancel').disabled, false);
+    f.transport.reply(writeResult(name)); await pending;
+    assert.equal(f.node('write-diff').textContent, '- old [CRLF]\n+ <script>inert()</script> [LF]\n+ <img onerror="inert()"> [LF]');
+    assert.equal(f.node('write-diff').children.length, 0); assert.equal(markdownCalls, 0);
+    assert.equal(f.node('write-status').textContent, en.writeToolsSucceeded);
+    assert.equal(f.document.activeElement, f.node('write-status')); assert.equal(f.node('write-undo').disabled, false);
+  }
+  assert.equal(f.node('context-list').children.length, 0); assert.equal(f.node('live').children.length, 0);
+  const undo = f.node('write-undo').emit('click'); assert.equal(f.transport.messages.at(-1).type, 'byok.tool.write.undo');
+  assert.deepEqual(f.transport.messages.at(-1).payload, {}); f.transport.reply({ undone: true, pending: 0 }); await undo;
+  assert.equal(f.node('write-status').textContent, en.writeToolsUndone); assert.equal(f.node('write-diff').hidden, true);
+  assert.equal(f.node('write-undo').disabled, true);
+  assert.ok(f.transport.messages.every(message => ['byok.tool.write.status', 'byok.tool.write', 'byok.tool.write.undo'].includes(message.type)));
+});
+
+test('manual UI rejects forged offline and invalid inputs, preserving native pending without retries', async t => {
+  const f = uiFixture(t); f.node('write-apply').disabled = false; f.node('write-undo').disabled = false;
+  f.node('write-path').value = 'src/Manual.cs'; f.node('write-content').value = '';
+  await f.node('write-form').emit('submit'); await f.node('write-undo').emit('click'); await f.node('write-refresh').emit('click');
+  assert.equal(f.transport.messages.length, 0);
+  await openWritePanel(f, 2); const count = f.transport.messages.length;
+  for (const [name, path, content] of [['run_command', 'file', ''], ['edit_file', '../file', ''], ['create_file', 'file', 'x'.repeat(65537)]]) {
+    f.node('write-name').value = name; f.node('write-path').value = path; f.node('write-content').value = content;
+    await f.node('write-form').emit('submit'); assert.equal(f.transport.messages.length, count);
+    assert.ok(f.node('write-status').textContent.includes(en.writeToolsErrorArguments));
+    assert.equal(f.node('write-undo').disabled, false, 'locally rejected input did not change native batch');
+  }
+  f.node('write-name').value = 'create_file'; f.node('write-path').value = 'file'; f.node('write-content').value = '';
+  const pending = f.node('write-form').emit('submit');
+  f.transport.reply(writeResult('create_file', { isError: true, content: '{"code":"file_exists"}', pending: 2 })); await pending;
+  assert.ok(f.node('write-status').textContent.includes(en.writeToolsErrorExists)); assert.equal(f.node('write-undo').disabled, false);
+  const before = f.transport.messages.length; await tick(); assert.equal(f.transport.messages.length, before);
+  const undo = f.node('write-undo').emit('click'); f.transport.emit(envelope('error', { code: 'undo_conflict' }, f.transport.messages.at(-1).id)); await undo;
+  assert.ok(f.node('write-status').textContent.includes(en.writeToolsErrorConflict)); assert.equal(f.node('write-undo').disabled, true);
+  assert.equal(f.node('write-pending').textContent, en.writeToolsPendingUnknown);
+  const refresh = f.node('write-refresh').emit('click'); f.transport.reply({ pending: 1 }); await refresh; await tick();
+  assert.equal(f.node('write-undo').disabled, false); assert.equal(f.node('write-pending').textContent, en.writeToolsPending.replace('{count}', '1'));
+});
+
+for (const order of ['ack-first', 'operation-first']) test(`manual UI cancel ${order} does not unlock or overwrite a winning write`, async t => {
+  const f = uiFixture(t); await openWritePanel(f);
+  f.node('write-path').value = 'src/Manual.cs'; f.node('write-content').value = 'manual';
+  const pending = f.node('write-form').emit('submit'), sent = f.transport.messages.at(-1);
+  const cancel = f.node('write-cancel').emit('click'), cancellation = f.transport.messages.at(-1);
+  if (order === 'ack-first') { f.transport.reply({ cancelled: true }, cancellation); await cancel; }
+  else { f.transport.reply(writeResult(), sent); await pending; }
+  assert.equal(f.node('write-apply').disabled, true); assert.equal(f.node('read-run').disabled, true);
+  const count = f.transport.messages.length; await f.node('write-form').emit('submit'); await f.node('write-undo').emit('click');
+  assert.equal(f.transport.messages.length, count);
+  if (order === 'ack-first') { f.transport.reply(writeResult(), sent); await pending; }
+  else { f.transport.reply({ cancelled: true }, cancellation); await cancel; }
+  assert.equal(f.node('write-status').textContent, en.writeToolsSucceeded); assert.equal(f.node('write-undo').disabled, false);
+  assert.equal(f.node('write-apply').disabled, false); assert.equal(f.transport.messages.length, count);
+});
+
+test('manual malformed response requires explicit shared recovery and native status, never replays write/undo', async t => {
+  const f = uiFixture(t); await openWritePanel(f, 2);
+  f.node('write-path').value = 'file'; const pending = f.node('write-form').emit('submit');
+  f.transport.reply(writeResult('edit_file')); await pending;
+  assert.ok(f.node('write-status').textContent.includes(en.byokErrorFormat)); assert.equal(f.node('write-apply').disabled, true);
+  assert.equal(f.node('write-pending').textContent, en.writeToolsPendingUnknown);
+  const before = f.transport.messages.length; await tick(); assert.equal(f.transport.messages.length, before);
+  const recovery = f.node('write-cancel').emit('click'); f.transport.reply({ cancelled: true }); await recovery;
+  assert.equal(f.node('write-apply').disabled, false); assert.equal(f.node('write-undo').disabled, true);
+  const refresh = f.node('write-refresh').emit('click'); f.transport.reply({ pending: 2 }); await refresh; await tick();
+  assert.equal(f.node('write-undo').disabled, false);
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.tool.write').length, 1);
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.tool.write.undo').length, 0);
+});
+
+test('manual UI lazy open/reconnect status defers on shared read gate and never writes on connection', async t => {
+  const f = uiFixture(t); f.connect(); assert.equal(f.transport.messages.length, 0);
+  const read = f.node('read-form').emit('submit'), sent = f.transport.messages.at(-1);
+  f.node('write-tools').open = true; await f.node('write-tools').emit('toggle');
+  assert.equal(f.transport.messages.length, 1); f.transport.reply(diskResult(), sent); await read; await tick();
+  assert.equal(f.transport.messages.at(-1).type, 'byok.tool.write.status'); f.transport.reply({ pending: 2 }); await tick();
+  const before = f.transport.messages.length; f.disconnect(); assert.equal(f.node('write-undo').disabled, true);
+  f.connect(); assert.equal(f.transport.messages.length, before + 1); assert.equal(f.transport.messages.at(-1).type, 'byok.tool.write.status');
+  f.transport.reply({ pending: 0 }); await tick(); f.connect(); assert.equal(f.transport.messages.length, before + 1);
+  f.node('write-tools').open = false; await f.node('write-tools').emit('toggle'); f.disconnect(); f.connect();
+  assert.equal(f.transport.messages.length, before + 1);
+  assert.ok(f.transport.messages.every(message => ['byok.tool.read', 'byok.tool.write.status'].includes(message.type)));
+});
+
+test('manual UI localizes controls, pending/errors and truncation without changing content or sending', async t => {
+  const f = uiFixture(t); await openWritePanel(f);
+  f.node('write-name').value = 'edit_file'; f.node('write-path').value = 'file'; f.node('write-content').value = 'new';
+  const pending = f.node('write-form').emit('submit');
+  f.transport.reply(writeResult('edit_file', { pending: 64, content: JSON.stringify({ diff: plainDiff({ truncated: true }) }) })); await pending;
+  assert.equal(f.node('write-diff-note').textContent, en.writeToolsDiffTruncated.replace('{before}', '1').replace('{after}', '2'));
+  const diff = f.node('write-diff').textContent, count = f.transport.messages.length; f.locale();
+  assert.equal(f.node('write-status').textContent, pt.writeToolsSucceeded);
+  assert.equal(f.node('write-pending').textContent, pt.writeToolsPending.replace('{count}', '64'));
+  assert.equal(f.node('write-diff-note').textContent, pt.writeToolsDiffTruncated.replace('{before}', '1').replace('{after}', '2'));
+  assert.equal(f.node('write-apply').textContent, pt.writeToolsApply); assert.equal(f.node('write-diff').getAttribute('aria-label'), pt.writeToolsDiff);
+  assert.equal(f.node('write-name').value, 'edit_file'); assert.equal(f.node('write-name').children[1].textContent, pt.writeToolsEdit);
+  assert.equal(f.node('write-content').value, 'new'); assert.equal(f.node('write-diff').textContent, diff); assert.equal(f.transport.messages.length, count);
+  const next = f.node('write-form').emit('submit');
+  f.transport.reply(writeResult('edit_file', { content: JSON.stringify({ diff: plainDiff({ truncated: true, tooLarge: true, changes: [] }) }) })); await next;
+  assert.equal(f.node('write-diff-note').textContent, pt.writeToolsDiffTooLarge.replace('{before}', '1').replace('{after}', '2'));
+});
+
+test('manual UI cancellation and disconnect invalidate uncertain pending without retrying', async t => {
+  const f = uiFixture(t); await openWritePanel(f, 2); f.node('write-path').value = 'file';
+  const pending = f.node('write-form').emit('submit'), sent = f.transport.messages.at(-1);
+  const cancel = f.node('write-cancel').emit('click'); f.transport.reply({ cancelled: true }); await cancel;
+  f.transport.emit(envelope('error', { code: 'cancelled' }, sent.id)); await pending;
+  assert.equal(f.node('write-status').textContent, en.byokCancelled); assert.equal(f.node('write-undo').disabled, true);
+  const count = f.transport.messages.length; await tick(); assert.equal(f.transport.messages.length, count);
+  const next = f.node('write-form').emit('submit'); f.disconnect(); await next;
+  assert.equal(f.node('write-apply').disabled, true); assert.equal(f.node('write-diff').hidden, true);
+  assert.equal(f.node('write-pending').textContent, en.writeToolsPendingUnknown);
+});
+
+test('manual incoming content accepts exactly 65,536 characters and rejects the next one or missing fields', () => {
+  const content = { diff: plainDiff({ changes: [{ op: 'add', text: '', ending: 'none' }] }) };
+  content.diff.changes[0].text = 'x'.repeat(65536 - JSON.stringify(content).length);
+  const boundary = JSON.stringify(content); assert.equal(boundary.length, 65536);
+  assert.equal(isByokEnvelope(envelope('byok.tool.write.result', writeResult('create_file', { content: boundary }))), true);
+  assert.equal(isByokEnvelope(envelope('byok.tool.write.result', writeResult('create_file', { content: `${boundary} ` }))), false);
+  for (const key of ['name', 'isError', 'content', 'pending']) {
+    const result = writeResult(); delete result[key]; assert.equal(isByokEnvelope(envelope('byok.tool.write.result', result)), false);
+  }
+  for (const key of ['truncated', 'changes', 'linesBefore', 'linesAfter']) {
+    const diff = plainDiff(); delete diff[key];
+    assert.equal(isByokEnvelope(envelope('byok.tool.write.result', writeResult('create_file', { content: JSON.stringify({ diff }) }))), false);
+  }
+});
+
+test('manual timeout and failed status are controlled; each needs an explicit new action', async t => {
+  const f = fixture(t, { timeoutMs: 5 });
+  await rejects(f.bridge.request('byok.tool.write', manualWrite()), 'timeout');
+  assert.equal(f.transport.messages.length, 1); assert.equal(f.bridge.pending.size, 0);
+  const ui = uiFixture(t); await openWritePanel(ui, 2);
+  const refresh = ui.node('write-refresh').emit('click');
+  ui.transport.reply({ pending: 65 }); await refresh; await tick();
+  assert.equal(ui.node('write-undo').disabled, true); assert.equal(ui.node('write-apply').disabled, true);
+  const count = ui.transport.messages.length; await tick(); assert.equal(ui.transport.messages.length, count);
+  const cancel = ui.node('write-cancel').emit('click'); ui.transport.reply({ cancelled: true }); await cancel;
+  assert.equal(ui.node('write-undo').disabled, true);
+  const next = ui.node('write-refresh').emit('click'); ui.transport.reply({ pending: 2 }); await next; await tick();
+  assert.equal(ui.node('write-undo').disabled, false);
+});
+
+test('manual undo shares cancellation gate and reports failed cancellation without retrying undo', async t => {
+  const f = uiFixture(t); await openWritePanel(f, 2);
+  const undo = f.node('write-undo').emit('click'), sent = f.transport.messages.at(-1);
+  const cancel = f.node('write-cancel').emit('click'), cancellation = f.transport.messages.at(-1);
+  f.transport.emit(envelope('error', { code: 'network_error' }, cancellation.id)); await cancel;
+  assert.equal(f.node('write-apply').disabled, true); assert.equal(f.node('write-undo').disabled, true);
+  assert.equal(f.node('write-cancel').disabled, false);
+  const count = f.transport.messages.length; await f.node('write-form').emit('submit'); await f.node('write-undo').emit('click');
+  assert.equal(f.transport.messages.length, count);
+  const retryCancel = f.node('write-cancel').emit('click'); f.transport.reply({ cancelled: true }); await retryCancel;
+  assert.equal(f.node('write-apply').disabled, true);
+  f.transport.reply({ undone: true, pending: 0 }, sent); await undo;
+  assert.equal(f.node('write-status').textContent, en.writeToolsUndone); assert.equal(f.node('write-undo').disabled, true);
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.tool.write.undo').length, 1);
+});
+
+test('manual writes cannot bypass a live chat gate or feed content to the model', async t => {
+  const f = uiFixture(t); await openWithModel(f); await openWritePanel(f, 1);
+  f.node('write-path').value = 'src/Manual.cs'; f.node('write-content').value = 'private manual content';
+  f.node('message').value = 'chat only'; await f.node('message').emit('input');
+  const chat = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  assert.equal(sent.payload.text, 'chat only'); assert.equal(JSON.stringify(sent).includes('private manual content'), false);
+  const count = f.transport.messages.length; f.node('write-apply').disabled = false; f.node('write-undo').disabled = false;
+  await f.node('write-form').emit('submit'); await f.node('write-undo').emit('click');
+  assert.equal(f.transport.messages.length, count);
+  f.transport.reply({ completed: true, conversation: summary }, sent); await chat;
+  assert.equal(f.node('write-apply').disabled, false); assert.equal(f.node('write-undo').disabled, false);
+});
+
+test('manual native failures retain reported pending and localize safely without exposing raw unknown errors', async t => {
+  const f = uiFixture(t); await openWritePanel(f); f.node('write-path').value = 'file';
+  for (const [code, label] of [['undo_failed', 'writeToolsErrorUndo'], ['undo_conflict', 'writeToolsErrorConflict'],
+    ['edit_conflict', 'writeToolsErrorConflict'], ['mode_denied', 'writeToolsErrorMode'], ['outside_workspace', 'readToolsErrorOutside'],
+    ['synthetic_secret_key', 'writeToolsErrorUnknown']]) {
+    const pending = f.node('write-form').emit('submit');
+    f.transport.reply(writeResult('create_file', { isError: true, content: JSON.stringify({ code }), pending: 3 })); await pending;
+    assert.ok(f.node('write-status').textContent.includes(en[label])); assert.equal(f.node('write-undo').disabled, false);
+    assert.equal(f.node('write-status').textContent.includes('synthetic_secret_key'), false);
+  }
+  const count = f.transport.messages.length; f.locale();
+  assert.ok(f.node('write-status').textContent.includes(pt.writeToolsErrorUnknown)); assert.equal(f.transport.messages.length, count);
+});
+
+test('manual form uses collapsed accessible native density with plain diff and direct-write/session disclosures', () => {
+  assert.match(html, /<details id="byok-write-tools"[^>]*>/);
+  assert.doesNotMatch(html.match(/<details id="byok-write-tools"[^>]*>/)[0], /\bopen\b/);
+  assert.ok(html.indexOf('id="byok-read-tools"') < html.indexOf('id="byok-write-tools"'));
+  assert.ok(html.indexOf('id="byok-write-tools"') < html.indexOf('<main'));
+  for (const id of ['name', 'path', 'content']) assert.ok(html.includes(`for="byok-write-${id}"`));
+  assert.match(html, /id="byok-write-path"[^>]*maxlength="1024"/); assert.match(html, /id="byok-write-content"[^>]*maxlength="65536"/);
+  assert.match(html, /id="byok-write-status"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"[^>]*tabindex="-1"/);
+  assert.match(html, /id="byok-write-diff"[^>]*tabindex="0"/);
+  assert.match(css, /#byok-write-diff\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
+  assert.match(en.writeToolsHelp, /unsaved editor buffer.*Visual Studio undo.*closed files change on disk/);
+  assert.match(en.writeToolsHelp, /No paid requests.*not sent to the model/);
+  assert.match(en.writeToolsSession, /latest batch.*one model turn or consecutive manual writes.*preserving earlier batches.*memory.*session only/);
+  assert.match(pt.writeToolsHelp, /buffer não salvo.*undo do Visual Studio/);
+});
+
+const diskResult = (name = 'read_file', extra = {}) => ({ name, isError: false, content: JSON.stringify({ text: '<script>inert()</script><img onerror="inert()">', truncated: false }), ...extra });
+
+test('read tool bridge rejects writing/unknown tools and extra root/mode/arguments without sending', async t => {
+  const f = fixture(t), good = { name: 'read_file', arguments: { path: '.' } };
+  for (const p of [null, {}, ...['edit_file', 'create_file', 'run_command', 'unknown'].map(name => ({ ...good, name })),
+    { ...good, mode: 'Agent' }, { ...good, root: 'C:/' }, { ...good, configurationId },
+    ...[null, [], {}, { path: '' }, { path: 'x'.repeat(4097) }, { path: '\0' }, { path: '\ud800' },
+      { path: '.', mode: 'Ask' }, { path: '.', maxResults: 1 }, { path: '.', startLine: 0 },
+      { path: '.', endLine: 1, startLine: 2 }, { path: '.', endLine: 1000001 }, { path: '.', startLine: 1.5 }].map(arguments_ => ({ ...good, arguments: arguments_ })),
+    { name: 'find_files', arguments: { path: '.' } }, { name: 'grep', arguments: { path: '.' } },
+    ...['/absolute', '\\absolute', '../escape', 'a//b', 'C:/**', 'a/./b', 'a.'].map(glob => ({ name: 'find_files', arguments: { path: '.', glob } })),
+    ...[0, 257, 1.1, '2', null].map(maxResults => ({ name: 'list_dir', arguments: { path: '.', maxResults } })),
+    { name: 'grep', arguments: { path: '.', pattern: 'x'.repeat(1025) } }]) {
+    await rejects(f.bridge.request('byok.tool.read', p), 'invalid_message');
+  }
+  assert.equal(f.transport.messages.length, 0);
+  for (const p of [good, { name: 'read_file', arguments: { path: 'x'.repeat(4096), startLine: 1, endLine: 1000000 } },
+    { name: 'list_dir', arguments: { path: '.', maxResults: 256 } },
+    { name: 'find_files', arguments: { path: '.', glob: '**/*.cs' } },
+    { name: 'grep', arguments: { path: '.', pattern: ' ', glob: '**/*', maxResults: 1 } }]) {
+    const pending = f.bridge.request('byok.tool.read', p); f.transport.reply(diskResult(p.name)); await pending;
+  }
+});
+
+test('read result validates JSON, exact shape, content boundary, correlation name and shared cancellation', async t => {
+  const f = fixture(t);
+  const boundary = JSON.stringify({ text: 'x'.repeat(65525) }); assert.equal(boundary.length, 65536);
+  assert.equal(isByokEnvelope(envelope('byok.tool.read.result', diskResult('read_file', { content: boundary }))), true);
+  for (const patch of [{ name: 'edit_file' }, { isError: 'true' }, { mode: 'Ask' }, { root: '.' }, { content: `${boundary} ` },
+    { content: '{' }, { content: 'null' }, { content: '[]' }, { content: '<script>bad()</script>' }, { content: 1 },
+    { isError: true, content: '{}' }, { isError: true, content: '{"code":"outside_workspace","message":"secret"}' }]) {
+    assert.equal(isByokEnvelope(envelope('byok.tool.read.result', diskResult('read_file', patch))), false);
+  }
+  for (const patch of [{ name: 'grep' }, { content: `${boundary} ` }]) {
+    const pending = f.bridge.request('byok.tool.read', { name: 'read_file', arguments: { path: '.' } });
+    f.transport.reply(diskResult('read_file', patch)); await rejects(pending, 'invalid_response');
+  }
+  const pending = f.bridge.request('byok.tool.read', { name: 'list_dir', arguments: { path: '.' } });
+  const sent = f.transport.messages.at(-1);
+  assert.equal(f.bridge.receive(envelope('byok.tool.read.result', diskResult('list_dir'), otherId)), false);
+  await rejects(f.bridge.request('byok.list'), 'bridge_busy');
+  const cancel = f.bridge.request('byok.cancel'); f.transport.reply({ cancelled: true }); await cancel;
+  f.transport.reply(diskResult('list_dir', { isError: true, content: '{"code":"outside_workspace"}' }), sent);
+  assert.equal((await pending).isError, true);
+  assert.equal(f.bridge.receive(envelope('byok.tool.read.result', diskResult('list_dir'), sent.id)), false);
+});
+
+test('disk UI is online-only independent of provider/model; explicit forms render HTML inert and never send context', async t => {
+  let markdownCalls = 0;
+  const f = uiFixture(t, { renderMarkdown: () => { markdownCalls++; throw new Error('must not render disk'); } });
+  assert.equal(f.node('read-run').disabled, true); f.connect();
+  assert.equal(f.node('read-fields').disabled, false); assert.equal(f.node('send').disabled, true);
+  assert.equal(f.node('read-tools').open, false); f.node('read-tools').open = true;
+  await f.node('read-tools').emit('toggle'); await f.node('read-path').emit('input');
+  assert.equal(f.transport.messages.length, 0);
+  for (const name of ['read_file', 'list_dir', 'find_files', 'grep']) {
+    f.node('read-name').value = name; await f.node('read-name').emit('change');
+    f.node('read-glob').value = '**/*.cs'; f.node('read-pattern').value = 'literal';
+    const pending = f.node('read-form').emit('submit'); const sent = f.transport.messages.at(-1);
+    const arguments_ = { path: '.', ...(name === 'find_files' || name === 'grep' ? { glob: '**/*.cs' } : {}), ...(name === 'grep' ? { pattern: 'literal' } : {}) };
+    assert.equal(sent.type, 'byok.tool.read'); assert.deepEqual(sent.payload, { name, arguments: arguments_ });
+    assert.equal(f.node('read-run').disabled, true); assert.equal(f.node('read-cancel').disabled, false);
+    const result = diskResult(name); f.transport.reply(result); await pending;
+    assert.equal(f.node('read-result').textContent, result.content);
+    assert.equal(f.node('read-result').children.length, 0); assert.equal(markdownCalls, 0);
+    assert.equal(f.node('read-status').textContent, en.readToolsSucceeded);
+    assert.equal(f.document.activeElement, f.node('read-status'));
+  }
+  f.locale(); assert.equal(f.node('read-status').textContent, pt.readToolsSucceeded);
+  assert.equal(f.node('context-list').children.length, 0); assert.equal(f.node('live').children.length, 0);
+  assert.ok(f.transport.messages.every(message => message.type === 'byok.tool.read'));
+  f.disconnect(); assert.equal(f.node('read-run').disabled, true);
+});
+
+test('disk UI shares cancel lifecycle, rejects invalid input, reports readonly errors and wrong results', async t => {
+  const f = uiFixture(t); f.connect(); f.node('read-tools').open = true;
+  f.node('read-start').value = '2'; f.node('read-end').value = '1';
+  await f.node('read-form').emit('submit'); assert.equal(f.transport.messages.length, 0);
+  assert.ok(f.node('read-status').textContent.includes(en.readToolsErrorArguments));
+  f.node('read-start').value = ''; f.node('read-end').value = '';
+  let pending = f.node('read-form').emit('submit'); let sent = f.transport.messages.at(-1);
+  const cancel = f.node('read-cancel').emit('click'); assert.equal(f.transport.messages.at(-1).type, 'byok.cancel');
+  f.transport.reply({ cancelled: true }); await cancel;
+  assert.equal(f.node('read-run').disabled, true, 'ack is not operation completion');
+  f.transport.emit(envelope('error', { code: 'cancelled' }, sent.id)); await pending;
+  assert.equal(f.node('read-status').textContent, en.byokCancelled);
+  assert.equal(f.node('read-run').disabled, false);
+  pending = f.node('read-form').emit('submit');
+  f.transport.reply(diskResult('read_file', { isError: true, content: '{"code":"outside_workspace"}' })); await pending;
+  assert.ok(f.node('read-status').textContent.includes(en.readToolsErrorOutside));
+  pending = f.node('read-form').emit('submit'); f.transport.reply(diskResult('grep')); await pending;
+  assert.ok(f.node('read-status').textContent.includes(en.byokErrorFormat));
+  assert.equal(f.node('read-run').disabled, true); assert.equal(f.node('read-result').hidden, true);
+  const recover = f.node('cancel').emit('click'); f.transport.reply({ cancelled: true }); await recover;
+  assert.equal(f.node('read-run').disabled, false);
+});
+
+test('disk cancel operation-first preserves a successful outcome; offline forged submit never sends', async t => {
+  const f = uiFixture(t); f.node('read-run').disabled = false;
+  await f.node('read-form').emit('submit'); assert.equal(f.transport.messages.length, 0);
+  f.connect();
+  const pending = f.node('read-form').emit('submit'), sent = f.transport.messages.at(-1);
+  const cancel = f.node('cancel').emit('click'), cancellation = f.transport.messages.at(-1);
+  f.transport.reply(diskResult(), sent); await pending;
+  assert.equal(f.node('read-status').textContent, en.readToolsSucceeded);
+  assert.equal(f.node('read-run').disabled, true);
+  f.transport.reply({ cancelled: true }, cancellation); await cancel;
+  assert.equal(f.node('read-status').textContent, en.readToolsSucceeded);
+  assert.equal(f.node('read-run').disabled, false);
+  const interrupted = f.node('read-form').emit('submit'); f.disconnect(); await interrupted;
+  assert.equal(f.node('read-result').hidden, true); assert.equal(f.node('read-run').disabled, true);
+});
+
+test('disk form is collapsed near history, labelled/live/focusable and uses compact native tokens', () => {
+  assert.match(html, /<details id="byok-read-tools"[^>]*>/);
+  assert.ok(html.indexOf('id="byok-history"') < html.indexOf('id="byok-read-tools"'));
+  assert.ok(html.indexOf('id="byok-read-tools"') < html.indexOf('<main'));
+  assert.doesNotMatch(html.match(/<details id="byok-read-tools"[^>]*>/)[0], /\bopen\b/);
+  for (const id of ['name', 'path', 'start', 'end', 'max', 'glob', 'pattern']) assert.ok(html.includes(`for="byok-read-${id}"`));
+  assert.match(html, /id="byok-read-status"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"[^>]*tabindex="-1"/);
+  assert.match(css, /#byok-read-result\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
+  assert.match(en.readToolsHelp, /not sent to the model/); assert.match(pt.readToolsHelp, /não são enviados ao modelo/);
+});
+
 test('context protocol rejects noncanonical/null IDs, controls, oversize and unknown fields before accepting exact snapshots', () => {
   for (const patch of [{ id: null }, { id: '00000000-0000-0000-0000-000000000000' }, { id: `{${otherId}}` },
     { kind: 'all' }, { label: '' }, { label: 'x'.repeat(1025) }, { label: 'name\ncontrol' }, { label: '\u007f' }, { label: '\u0085' },
@@ -614,7 +1411,8 @@ function makeDocument() {
     for (const [, key, value = ''] of attrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g)) {
       target.setAttribute(key, value);
       if (key === 'id') document.ids.set(value, target);
-      if (['disabled', 'hidden', 'open'].includes(key)) target[key] = true;
+      if (['disabled', 'hidden', 'open', 'required'].includes(key)) target[key] = true;
+      if (key === 'value') target.value = value;
     }
     stack.at(-1).append(target);
     if (!['meta', 'link', 'input', 'br', 'hr'].includes(tag)) stack.push(target);
@@ -988,7 +1786,7 @@ test('UI streams plain text/reasoning/tools without execution, safe Markdown is 
     { kind: 'ToolCallEnd', id: 'call', arguments: { args: ['do not execute'] } }, { kind: 'Usage', input: 5, output: 7 }];
   for (const event of events) f.transport.emit(envelope('byok.event', event, chat.id));
   assert.match(f.node('output').textContent, /<script>not HTML<\/script>/); assert.match(f.node('output').textContent, /Visible reasoning/);
-  assert.match(f.node('output').textContent, /not executed/); assert.equal(rendered.length, 0);
+  assert.ok(f.node('output').textContent.includes(en.byokToolEnded)); assert.equal(rendered.length, 0);
   const cancel = f.node('cancel').emit('click'); const cancelSent = f.transport.messages.at(-1);
   assert.equal(cancelSent.type, 'byok.cancel'); f.transport.reply({ cancelled: true }, cancelSent); await cancel;
   f.transport.emit(envelope('error', { code: 'cancelled' }, chat.id)); await send;
@@ -1175,7 +1973,7 @@ test('UI archived Markdown, reasoning, images and tool arguments stay inert, loc
     for (const link of response.querySelectorAll('a')) assert.equal(isSafeLink(link.getAttribute('href')), true);
     const reasoning = row.children[4]; assert.equal(reasoning.tagName, 'DETAILS'); assert.equal(reasoning.open, false);
     assert.equal(reasoning.hidden, false); assert.match(reasoning.textContent, /<script>reasoning\(\)<\/script>/);
-    assert.match(row.children[5].textContent, /not executed/); assert.match(row.children[5].textContent, /<script>tool\(\)<\/script>/);
+    assert.ok(row.children[5].textContent.includes(en.byokToolEnded)); assert.match(row.children[5].textContent, /<script>tool\(\)<\/script>/);
   }
   assert.ok(f.node('history-items').children[0].textContent.includes(en.byokImageAttached));
   assert.ok(f.node('history-items').children[1].textContent.includes(en.historyCancelledTurn));

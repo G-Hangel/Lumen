@@ -62,10 +62,10 @@ public sealed class ReadToolChatLoopTests
         public ProviderConfiguration Configuration { get; set; } = new(Guid.NewGuid().ToString("D"), "fixture", ProviderKind.OpenAI, "https://provider.test/v1/");
         public ModelInfo Model { get; set; } = new("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools);
         public ChatMode Mode { get; set; } = ChatMode.Ask;
-        public Task<bool> Run(IReadToolExecutor? executor, CancellationToken token = default, ReasoningIntent effort = ReasoningIntent.Off) => Loop.RunAsync(Provider, Configuration, Model,
+        public Task<bool> Run(IReadToolExecutor? executor, CancellationToken token = default, ReasoningIntent effort = ReasoningIntent.Off, ToolBudget? budget = null) => Loop.RunAsync(Provider, Configuration, Model,
             new[] { new Message(MessageRole.User, new ContentPart[] { new TextPart("explain Sample.cs") }) }, effort, Mode, executor,
             executor is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(Mode, executor), Secret,
-            value => { Events.Add(value); return Task.CompletedTask; }, value => { Executions.Add(JsonSerializer.SerializeToElement(value)); return Task.CompletedTask; }, token);
+            value => { Events.Add(value); return Task.CompletedTask; }, value => { Executions.Add(JsonSerializer.SerializeToElement(value)); return Task.CompletedTask; }, token, budget);
     }
     private static async Task Call(Func<StreamEvent, Task> emit, string id = "call1", string name = "read_file", string args = "{\"path\":\"Sample.cs\"}", string? state = null)
     {
@@ -198,6 +198,74 @@ public sealed class ReadToolChatLoopTests
         Assert.Equal(8, executor.Calls);
         Assert.Equal(2, fixture.Provider.Requests.Count);
         Assert.All(fixture.Provider.Requests, request => Assert.Equal(512, request.MaxOutputTokens));
+    }
+
+    [Theory]
+    [InlineData(0, 8192, 8)]
+    [InlineData(9, 8192, 8)]
+    [InlineData(4, 1023, 8)]
+    [InlineData(4, 32769, 8)]
+    [InlineData(4, 8192, 0)]
+    [InlineData(4, 8192, 33)]
+    public void ToolBudgetRejectsOutOfRangeValues(int rounds, int tokens, int invocations)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ToolBudget(rounds, tokens, invocations));
+    }
+
+    [Fact]
+    public void ToolBudgetAcceptsBoundariesAndDefaultMatchesLegacyLimits()
+    {
+        Assert.Equal(4, ToolBudget.Default.MaxRounds);
+        Assert.Equal(8192, ToolBudget.Default.MaxOutputTokens);
+        Assert.Equal(8, ToolBudget.Default.MaxInvocations);
+        var low = new ToolBudget(1, 1024, 1);
+        var high = new ToolBudget(8, 32768, 32);
+        Assert.Equal(1, low.MaxRounds);
+        Assert.Equal(32768, high.MaxOutputTokens);
+        Assert.Equal(32, high.MaxInvocations);
+    }
+
+    [Fact]
+    public async Task CustomRoundBudgetStopsToolLoopAndAllowsAnswerWithinRounds()
+    {
+        var executor = new Executor();
+        var fixture = new Fixture();
+        fixture.Provider.Run = async (_, emit, _) => { await Call(emit); await emit(new Done(FinishReason.ToolUse)); };
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(1, 8192, 8)))).Code);
+        Assert.Single(fixture.Provider.Requests);
+        Assert.Equal(0, executor.Calls);
+        var allowed = new Fixture();
+        var allowedExecutor = new Executor();
+        allowed.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await allowed.Run(allowedExecutor, budget: new ToolBudget(2, 8192, 8)));
+        Assert.Equal(2, allowed.Provider.Requests.Count);
+        Assert.Equal(1, allowedExecutor.Calls);
+    }
+
+    [Fact]
+    public async Task CustomTokenBudgetStopsBeforeOversizedFollowUpRequest()
+    {
+        var fixture = new Fixture();
+        var executor = new Executor();
+        fixture.Provider.Run = async (_, emit, _) => { await Call(emit); await emit(new Done(FinishReason.ToolUse)); };
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 1024, 8)))).Code);
+        Assert.Single(fixture.Provider.Requests);
+        Assert.Equal(0, executor.Calls);
+    }
+
+    [Fact]
+    public async Task CustomInvocationBudgetStopsRepeatingToolLoop()
+    {
+        var fixture = new Fixture();
+        var executor = new Executor();
+        fixture.Provider.Run = async (round, emit, _) => { await Call(emit, "r" + round); await emit(new Done(FinishReason.ToolUse)); };
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)))).Code);
+        Assert.Equal(3, fixture.Provider.Requests.Count);
+        Assert.Equal(2, executor.Calls);
     }
 
     [Fact]

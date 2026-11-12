@@ -353,7 +353,7 @@ public sealed class ByokSession : IDisposable
                     break;
                 case "byok.chat":
                 {
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode" });
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode", "budget" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
                     var readToolsValue = JsonWire.Get(payload, "readTools");
@@ -374,6 +374,16 @@ public sealed class ByokSession : IDisposable
                             "Agent" => ChatMode.Agent,
                             _ => throw new ProviderException("invalid_message")
                         };
+                    }
+                    var budgetValue = JsonWire.Get(payload, "budget");
+                    ToolBudget? budget = null;
+                    if (budgetValue.ValueKind != JsonValueKind.Undefined)
+                    {
+                        Require(budgetValue, new[] { "maxRounds", "maxOutputTokens", "maxInvocations" });
+                        budget = new ToolBudget(
+                            JsonWire.Int(budgetValue, "maxRounds") ?? throw new ProviderException("invalid_message"),
+                            JsonWire.Int(budgetValue, "maxOutputTokens") ?? throw new ProviderException("invalid_message"),
+                            JsonWire.Int(budgetValue, "maxInvocations") ?? throw new ProviderException("invalid_message"));
                     }
                     var enableWriteTools = writeToolsValue.ValueKind == JsonValueKind.True;
                     var enableTerminal = terminalValue.ValueKind == JsonValueKind.True;
@@ -439,7 +449,7 @@ public sealed class ByokSession : IDisposable
                     {
                         if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
                             streamEvent => EmitChatEvent(EventView(streamEvent)),
-                            EmitChatEvent, cancellationToken).ConfigureAwait(false)) turnState = "completed";
+                            EmitChatEvent, cancellationToken, budget).ConfigureAwait(false)) turnState = "completed";
                     }
                     catch (OperationCanceledException) { turnState = "cancelled"; throw; }
                     finally

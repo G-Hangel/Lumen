@@ -711,3 +711,38 @@ e fechar a solução/instância antes de remover a fixture. Não repetir `Prepar
 sobre manifesto existente. Resultado: **1.505 C# / 206 JS**, 6 requests locais,
 0 pagos e 0 exceções JS; `artifacts/phase5-modes-webview.json`. Exp fechada,
 SHA verificado em `Extensions\hbngbmnp.22r`; sem commit nesta fatia.
+
+## Fase 5b — aplicar plano e orçamento configurável (2026-11-12)
+
+Mesma sequência da fatia de modos, com Exp fechada, sem fixture existente e
+**UI recém-aberta** (o estágio exige modo inicial Ask):
+
+```bash
+dotnet build Lumen.sln -c Release --nologo -v:minimal
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --nologo
+npm run check:ui
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs plan-budget
+node scripts/verify-agent-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`plan-budget` verifica: estado inicial Ask com orçamento padrão 4/8192/8 e
+botão aplicar plano oculto; turno Plan com critérios de aceite; clique em
+aplicar plano muda para Agent sem requests, revoga consentimentos e anuncia;
+orçamento de rodadas 1 interrompe o loop com `tool_budget_exceeded` **antes de
+executar qualquer tool**; budgets forjados via RPC (rodadas 99; tokens 8192.5)
+rejeitados com `invalid_message` sem POST; entrada fora de faixa bloqueia o
+envio localmente; orçamento customizado 2/2048/8 conclui preservando a
+conversa; layout negativo a 203 px. Usa credencial sintética e servidor
+loopback próprios. Não comprova compactação, retry, ParallelTools nem a
+regressão geral. Mesmas regras de interrupção da fatia de modos: não apagar a
+fixture com escritas no journal; não repetir `Prepare` sobre manifesto
+existente. Resultado: **1.527 C# / 210 JS**, 4 requests locais, 0 pagos e
+0 exceções JS; `artifacts/phase5-plan-budget-webview.json`. Exp fechada,
+fixture e manifesto removidos, SHA verificado em `Extensions\vhheq1gz.wvu`.

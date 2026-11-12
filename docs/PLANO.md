@@ -514,20 +514,42 @@ regressão geral **37 requests** e aceitação consolidada **12 requests**, todo
 loopback; **1.505 C# / 207 JS** verdes. Fases 3/4 fechadas; Fase 5 segue aberta
 para aplicar plano, orçamento, compactação e retry.
 
+### Andamento — fatia 5b: aplicar plano + orçamento (2026-11-12)
+
+`ToolBudget` no domínio (rodadas 1–8, tokens acumulados 1024–32768, invocações
+1–32; padrão 4/8192/8) parameteriza o `ToolChatLoop`; o host valida o campo
+opcional `budget` antes de capturar workspace, ler credenciais ou chamar o
+provedor. A UI tem painel de orçamento por envio (bloqueia envio fora da faixa)
+e botão "aplicar plano" visível somente em Plan: muda para Agent, revoga
+consentimentos, anuncia e foca o compositor, sem nenhum POST e preservando a
+conversa. Build Release **0 erros/avisos**; **1.527 C# / 210 JS** verdes.
+Exp com loopback (`plan-budget`): plano → aplicar → rodadas=1 interrompe após
+1 request sem executar tool → budgets forjados rejeitados pelo host → envio
+bloqueado com valor inválido → orçamento maior conclui na mesma conversa;
+**4 requests locais, 0 pagos, 0 exceções JS**, layout 203 px com negativo.
+Evidência: `artifacts/phase5-plan-budget-webview.json`; instalação SHA em
+`Extensions\vhheq1gz.wvu`. Ainda faltam ContextBuilder integral, compactação,
+ParallelTools e retry (fatia 5c), além do AC de tarefa real multi-passos.
+
 ### Tarefas
 
 - [x] `AgentLoop`: monta contexto → chama provider → executa tools → realimenta
       → repete até concluir (`ToolChatLoop`; rodadas, tokens e invocações
       limitados; verificado na Exp com loopback).
-- [ ] Orçamento: máx de iterações, máx de tokens, máx de tools por turno.
+- [x] Orçamento: máx de iterações, máx de tokens, máx de tools por turno.
       Configurável. Ao estourar, para e explica — não continua silenciosamente.
+      (`ToolBudget` 1–8 rodadas / 1024–32768 tokens / 1–32 invocações; painel
+      por envio; host rejeita fora da faixa antes de captura/POST; verificado
+      na Exp com loopback em 2026-11-12.)
 - [ ] `ContextBuilder`: system prompt por modo, seleção do editor, @arquivos,
       skills ativas, estrutura da solução.
 - [ ] **Context window management**: contagem de token, truncamento/compactação
       de histórico antigo preservando tool calls pendentes.
 - [ ] Paralelismo de tools só se o modelo tem `ParallelTools`.
-- [ ] Modo **Plan**: produz plano em fases com critérios de aceite;
-      oferece "aplicar plano" que muda para Agent.
+- [x] Modo **Plan**: produz plano em fases com critérios de aceite;
+      oferece "aplicar plano" que muda para Agent. (Prompt de plano verificado;
+      botão só aparece em Plan, troca para Agent sem POST e preserva histórico;
+      a qualidade do plano depende do modelo.)
 - [x] Modo **Ask**: read-only, respostas com citações `arquivo:linha`
       (política e prompt verificados; qualidade da citação depende do modelo).
 - [x] Troca de modo no meio da conversa preservando histórico (verificado na

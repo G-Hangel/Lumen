@@ -12,8 +12,9 @@ automaticamente com diff; undo reverte somente o último lote. Escrita externa
 exige aprovação por operação; terminal exige aprovação, com opção de
 consentimento por sessão revogada ao fechar/reabrir a solução. `apply_diff` e
 snapshot para buffer/disco, diagnósticos e descoberta de shells estão no commit
-`dd826ea`. A Fase 5 tem seleção de modos e políticas de chat verificadas;
-aplicar plano, orçamento configurável, compactação e retry continuam pendentes.
+`dd826ea`. A Fase 5 tem seleção de modos, políticas de chat, botão aplicar
+plano e orçamento configurável verificados (fatia 5b, abaixo); compactação,
+retry, ParallelTools e ContextBuilder integral continuam pendentes.
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
@@ -27,9 +28,42 @@ houve chamadas pagas.
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
-| Fase 5 — Loop e modos | **em andamento — seleção de modos e segurança do chat verificadas; aplicar plano, orçamento e compactação pendentes** |
+| Fase 5 — Loop e modos | **em andamento — modos, aplicar plano e orçamento verificados; compactação, retry e ParallelTools pendentes** |
 | Fases 6–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 5b — aplicar plano e orçamento configurável (2026-11-12)
+
+- `ToolBudget` (domínio): rodadas 1–8, tokens de saída acumulados 1024–32768,
+  invocações 1–32; padrão 4/8192/8 igual aos tetos anteriores. O loop usa o
+  orçamento recebido; o check de continuação precede a execução da tool, então
+  estourar rodadas/tokens não executa I/O adicional.
+- Host: campo opcional `budget` no `byok.chat`, com shape exato e inteiros;
+  fora da faixa ou malformado retorna `invalid_message` antes de capturar
+  workspace, ler credenciais ou chamar o provedor. Bridge replica a validação.
+- UI: painel "Orçamento do turno" com três inputs por envio (não persiste entre
+  sessões); valor inválido desabilita o envio. Botão "Aplicar plano no modo
+  Agent" aparece somente em Plan: muda para Agent, revoga consentimentos,
+  anuncia via `aria-live` e foca o compositor — sem POST, sem apagar histórico.
+- Build Release **0 erros/avisos**; **1.527 C# / 210 JS** verdes, sem ignorados.
+  Negativos: budgets forjados (rodadas 99, tokens fracionários, campos extras,
+  tipos errados) rejeitados sem POST; rodadas=1 interrompe o loop após 1 request
+  com 0 tools executadas; orçamento de tokens/invocações customizado para o
+  loop; botão ausente em Ask/Agent e inerte durante turno ativo.
+- Exp real (`verify-agent-tools-webview.mjs plan-budget`, UI nova): turno Plan
+  com prompt de critérios de aceite → aplicar plano sem requests → rodadas=1
+  falha com `tool_budget_exceeded` após 1 request → dois budgets forjados via
+  RPC direto rejeitados pelo host → envio bloqueado com rodadas=0 → orçamento
+  2/2048/8 conclui na mesma conversa; layout 203 px sem overflow e mutação
+  negativa detectada. **4 requests loopback, 0 pagos, 0 exceções JS**.
+  Evidência: `artifacts/phase5-plan-budget-webview.json`.
+- Fixture/credenciais/conversas próprias removidas, solução fechada sem salvar,
+  Exp fechada e SHA-256 de todos os arquivos verificado em
+  `Extensions\vhheq1gz.wvu`. Nenhum perfil principal alterado; sem API paga.
+- Lacunas: orçamento é por envio (recarregar a UI restaura padrões); aplicar
+  plano só troca o modo — não reenvia o plano automaticamente; a qualidade do
+  plano depende do modelo. AC de tarefa real multi-passos, ContextBuilder
+  integral, compactação, ParallelTools e retry seguem na fatia 5c.
 
 ## Aceitação consolidada das Fases 3/4 (2026-11-12)
 

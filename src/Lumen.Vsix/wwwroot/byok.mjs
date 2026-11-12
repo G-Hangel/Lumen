@@ -303,6 +303,13 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('probe-budget').textContent = text('byokProbeBudget', { remaining: remainingBudget ?? text('byokUnknown'), max: MAX_PROBE_BUDGET });
   }
   function clearToolConsent() { for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).checked = false; }
+  function readBudget() {
+    const rounds = Number(node('budget-rounds').value), tokens = Number(node('budget-tokens').value), tools = Number(node('budget-tools').value);
+    return Number.isSafeInteger(rounds) && rounds >= 1 && rounds <= 8
+      && Number.isSafeInteger(tokens) && tokens >= 1024 && tokens <= 32768
+      && Number.isSafeInteger(tools) && tools >= 1 && tools <= 32
+      ? { maxRounds: rounds, maxOutputTokens: tokens, maxInvocations: tools } : null;
+  }
   function clearProbeConsent() { node('probe-consent').checked = false; }
   function probeEligible() {
     const config = configurations.find(item => item.id === configurationId);
@@ -428,6 +435,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
     const matchesHistory = !activeConversation || (activeConversation.configurationId === configurationId && activeConversation.modelId === selectedModelId);
     node('mode').disabled = !enabled || locked;
+    for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) node(id).disabled = !enabled || locked;
+    node('apply-plan').hidden = node('mode').value !== 'Plan';
+    node('apply-plan').disabled = !enabled || locked;
     node('auto-read-tools').disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
     for (const id of ['auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory || node('mode').value !== 'Agent';
     node('message').disabled = !enabled || !model || !configurationId || locked || !matchesHistory;
@@ -437,7 +447,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     for (const id of ['context-file', 'context-solution', 'context-selection', 'context-output', 'context-reference']) node(id).disabled = !canCapture();
     for (const remove of node('context-list').querySelectorAll('button')) remove.disabled = !enabled || locked;
     node('context').setAttribute('aria-busy', String(contextBusy && busy));
-    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096;
+    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !readBudget() || !node('message').value.trim() || node('message').value.length > 4096;
     for (const id of ['history-query', 'history-search', 'history-new']) node(id).disabled = !enabled || locked;
     node('history-list').disabled = !enabled || locked || !savedConversations.length;
     for (const id of ['history-name', 'history-rename', 'history-delete']) node(id).disabled = !enabled || locked || !node('history-list').value;
@@ -828,7 +838,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   async function submitChat(event) {
     event.preventDefault();
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
-      || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096
+      || !contextWithinBounds() || !readBudget() || !node('message').value.trim() || node('message').value.length > 4096
       || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
     const readTools = node('auto-read-tools').checked === true && !node('auto-read-tools').disabled && selectedModel().tools;
     const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
@@ -841,7 +851,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
     node('output').scrollTop = node('output').scrollHeight;
     try {
-      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value,
+      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value, budget: readBudget(),
         ...(readTools ? { readTools: true } : {}),
         ...(writeTools ? { writeTools: true } : {}),
         ...(terminal ? { terminal: true } : {}),
@@ -965,7 +975,17 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('configure'), 'submit', configure);
   for (const id of ['provider-id', 'url', 'key', 'deployments']) listen(node(id), 'input', clearToolConsent);
   for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
-  listen(node('mode'), 'change', () => { clearToolConsent(); updateControls(); });
+  const modeChanged = () => { clearToolConsent(); updateControls(); };
+  listen(node('mode'), 'change', modeChanged);
+  listen(node('apply-plan'), 'click', () => {
+    if (node('apply-plan').hidden || node('apply-plan').disabled) return;
+    node('mode').value = 'Agent';
+    modeChanged();
+    const announcement = document.getElementById('announcement');
+    if (announcement) announcement.textContent = text('byokApplyPlanDone');
+    if (!node('message').disabled) node('message').focus({ preventScroll: true });
+  });
+  for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) listen(node(id), 'input', updateControls);
   listen(node('auto-read-tools'), 'change', updateControls);
   listen(node('auto-write-tools'), 'change', updateControls);
   listen(node('auto-terminal'), 'change', updateControls);

@@ -258,6 +258,18 @@
           </div>
           <p id="byok-image-help" class="secondary" data-i18n="byokImageHelp"></p>
         </details>
+        <details id="byok-budget" class="send-options">
+          <summary data-i18n="byokBudgetTitle"></summary>
+          <div class="composer-options">
+            <label for="byok-budget-rounds" data-i18n="byokBudgetRounds"></label>
+            <input id="byok-budget-rounds" type="number" min="1" max="8" step="1" value="4" disabled aria-describedby="byok-budget-help">
+            <label for="byok-budget-tokens" data-i18n="byokBudgetTokens"></label>
+            <input id="byok-budget-tokens" type="number" min="1024" max="32768" step="1" value="8192" disabled aria-describedby="byok-budget-help">
+            <label for="byok-budget-tools" data-i18n="byokBudgetTools"></label>
+            <input id="byok-budget-tools" type="number" min="1" max="32" step="1" value="8" disabled aria-describedby="byok-budget-help">
+          </div>
+          <p id="byok-budget-help" class="secondary" data-i18n="byokBudgetHelp"></p>
+        </details>
         <p id="byok-attachment" class="secondary" role="status" hidden></p>
         <button id="byok-remove-image" type="button" class="text-button" data-i18n="byokRemoveImage" hidden></button>
         <details id="byok-chat-guidance" class="send-options">
@@ -267,6 +279,7 @@
         </details>
         <div class="byok-actions">
           <button id="byok-send" type="submit" class="primary-button" data-i18n="byokSend" disabled aria-keyshortcuts="Control+Enter"></button>
+          <button id="byok-apply-plan" type="button" class="text-button" data-i18n="byokApplyPlan" hidden></button>
           <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancel" disabled></button>
         </div>
       </form>

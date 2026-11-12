@@ -315,6 +315,60 @@ public sealed class AgentToolSessionTests
     }
 
     [Theory]
+    [InlineData("string")]
+    [InlineData("missing")]
+    [InlineData("extra")]
+    [InlineData("rounds_zero")]
+    [InlineData("rounds_nine")]
+    [InlineData("fractional")]
+    [InlineData("tokens_low")]
+    [InlineData("tokens_high")]
+    [InlineData("tools_zero")]
+    [InlineData("tools_high")]
+    [InlineData("rounds_text")]
+    public async Task InvalidBudgetIsRejectedBeforeCaptureCredentialsOrHttp(string kind)
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        var reads = fixture.Credentials.Reads;
+        object budget = kind switch
+        {
+            "string" => "large",
+            "missing" => new { maxRounds = 4 },
+            "extra" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 8, extra = 1 },
+            "rounds_zero" => new { maxRounds = 0, maxOutputTokens = 8192, maxInvocations = 8 },
+            "rounds_nine" => new { maxRounds = 9, maxOutputTokens = 8192, maxInvocations = 8 },
+            "fractional" => new { maxRounds = 4.5, maxOutputTokens = 8192, maxInvocations = 8 },
+            "tokens_low" => new { maxRounds = 4, maxOutputTokens = 1023, maxInvocations = 8 },
+            "tokens_high" => new { maxRounds = 4, maxOutputTokens = 32769, maxInvocations = 8 },
+            "tools_zero" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 0 },
+            "tools_high" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 33 },
+            _ => new { maxRounds = "4", maxOutputTokens = 8192, maxInvocations = 8 }
+        };
+        await fixture.Chat(new Dictionary<string, object> { ["readTools"] = true, ["budget"] = budget });
+        Assert.Equal("invalid_message", fixture.Error);
+        Assert.Equal(0, fixture.Reader.Captures + fixture.Writer.Captures + fixture.Shell.Captures);
+        Assert.Equal(reads, fixture.Credentials.Reads);
+        Assert.Empty(fixture.Handler.Bodies);
+    }
+
+    [Fact]
+    public async Task CustomBudgetBoundsTheToolLoopAndLargerBudgetCompletes()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.ToolName = "read_file";
+        fixture.Handler.Arguments = "{\"path\":\"Sample.cs\"}";
+        await fixture.Chat(new { readTools = true, budget = new { maxRounds = 2, maxOutputTokens = 2048, maxInvocations = 2 } });
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(2, fixture.Handler.Bodies.Count);
+        await fixture.Chat(new { readTools = true, budget = new { maxRounds = 1, maxOutputTokens = 8192, maxInvocations = 8 } });
+        Assert.Equal("tool_budget_exceeded", fixture.Error);
+        Assert.Equal(3, fixture.Handler.Bodies.Count);
+    }
+
+    [Theory]
     [InlineData("Ask", "edit_file")]
     [InlineData("Plan", "edit_file")]
     [InlineData("Ask", "run_command")]

@@ -92,3 +92,22 @@ public sealed class ToolResult
 
     public ToolResultPart ToContentPart() => new(InvocationId, IsError, Content);
 }
+
+public sealed class ToolBudget
+{
+    public static ToolBudget Default { get; } = new(4, 8192, 8);
+
+    public ToolBudget(int maxRounds, int maxOutputTokens, int maxInvocations)
+    {
+        if (maxRounds < 1 || maxRounds > 8) throw new ArgumentOutOfRangeException(nameof(maxRounds));
+        if (maxOutputTokens < 1024 || maxOutputTokens > 32768) throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+        if (maxInvocations < 1 || maxInvocations > 32) throw new ArgumentOutOfRangeException(nameof(maxInvocations));
+        MaxRounds = maxRounds;
+        MaxOutputTokens = maxOutputTokens;
+        MaxInvocations = maxInvocations;
+    }
+
+    public int MaxRounds { get; }
+    public int MaxOutputTokens { get; }
+    public int MaxInvocations { get; }
+}

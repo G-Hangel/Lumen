@@ -113,8 +113,9 @@ public sealed class ToolChatLoop
 
     public async Task<bool> RunAsync(IChatProvider provider, ProviderConfiguration configuration, ModelInfo model,
         IReadOnlyList<Message> input, ReasoningIntent effort, ChatMode mode, IReadToolExecutor? executor, IReadOnlyList<ToolSpec> specs,
-        string? secret, Func<StreamEvent, Task> emit, Func<object, Task> execution, CancellationToken token)
+        string? secret, Func<StreamEvent, Task> emit, Func<object, Task> execution, CancellationToken token, ToolBudget? budget = null)
     {
+        budget ??= ToolBudget.Default;
         var allowed = AllowedFor(mode);
         if (executor is not null && !model.Has(ModelCapabilities.Tools)) throw new ProviderException("tools_not_supported");
         if (specs.Any(spec => !allowed.Contains(spec.Name))) throw new ProviderException("unknown_tool");
@@ -136,10 +137,10 @@ public sealed class ToolChatLoop
         cap = Math.Min(cap, model.MaxOutputTokens ?? cap);
         try
         {
-            for (var round = 0; round < 4; round++)
+            for (var round = 0; round < budget.MaxRounds; round++)
             {
                 token.ThrowIfCancellationRequested();
-                if (allocated + cap > 8192) throw new ProviderException("tool_budget_exceeded");
+                if (allocated + cap > budget.MaxOutputTokens) throw new ProviderException("tool_budget_exceeded");
                 ValidateInput(messages, specs, model, cap);
                 RejectSecret(JsonSerializer.SerializeToElement(messages, ConversationSerializer.Options), secret);
                 foreach (var spec in specs) RejectSecret(JsonSerializer.SerializeToElement(spec), secret);
@@ -272,14 +273,14 @@ public sealed class ToolChatLoop
                     if (executor is null) return batch.Count > 0 && (calls.Length == 0 || done.FinishReason == FinishReason.ToolUse);
                     if (calls.Length == 0) return batch.Count > 0 && done.FinishReason != FinishReason.ToolUse && done.FinishReason != FinishReason.Cancelled;
                     if (done.FinishReason != FinishReason.ToolUse) return false;
-                    if (round == 3 || allocated + cap > 8192 || invocations + calls.Length > 8) throw new ProviderException("tool_budget_exceeded");
+                    if (round == budget.MaxRounds - 1 || allocated + cap > budget.MaxOutputTokens || invocations + calls.Length > budget.MaxInvocations) throw new ProviderException("tool_budget_exceeded");
                     messages.Add(new Message(MessageRole.Assistant, batch.ToArray(), model.ModelId));
                     ValidateInput(messages, specs, model, cap);
                     var results = new List<ContentPart>();
                     foreach (var call in calls)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (invocations >= 8 || resultSize >= 131072) throw new ProviderException("tool_budget_exceeded");
+                        if (invocations >= budget.MaxInvocations || resultSize >= 131072) throw new ProviderException("tool_budget_exceeded");
                         if (results.Count > 0) ValidateInput(messages.Concat(new[] { new Message(MessageRole.Tool, results.ToArray()) }).ToArray(), specs, model, cap);
                         invocations++;
                         ToolResult result;

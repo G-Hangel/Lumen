@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const stage = process.argv[2] || 'verify';
-assert.ok(['verify', 'modes', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
+assert.ok(['verify', 'modes', 'plan-budget', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
 const manifestPath = new URL('../artifacts/context-fixtures.json', import.meta.url);
 const manifest = JSON.parse((await readFile(manifestPath, 'utf8')).replace(/^\uFEFF/, ''));
 const outsidePath = path.join(path.dirname(manifest.root), `${path.basename(manifest.root)}-owned-outside.txt`);
@@ -52,6 +52,9 @@ const server = createServer(async (request, response) => {
         replacements: [{ old: 'public class ContextFixture', new: 'public class PatchedFixture' }] } }], requests.length); return;
     }
   }
+  if (text === 'fixture-plan-budget-plan') { answer(response, 'Plan: phase 1 inspect Sample.cs; acceptance criteria: cite the file.'); return; }
+  if (text === 'fixture-plan-budget-loop') { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }], requests.length); return; }
+  if (text === 'fixture-plan-budget-done' && !results.length) { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }], requests.length); return; }
   if (results.length) { answer(response, `Agent tool results received: ${results.length} <script>window.lumenAgentExecuted=true</script><img src=x onerror="window.lumenAgentExecuted=true">`); return; }
   if (text === 'fixture-agent-acceptance-outside') {
     calls(response, [{ name: 'edit_file', args: { path: outsidePath, content: 'outside-after\n' } }], requests.length); return;
@@ -212,7 +215,7 @@ try {
     const originalBuffer = diagnosticPending ? null : await automation('WriteInspect');
     if (originalBuffer) assert.equal(originalBuffer.saved, false);
     for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(await evaluate(`document.querySelector('#byok-${id}').checked`), false);
-    if (stage === 'verify' || stage === 'modes' || stage === 'acceptance') {
+    if (stage === 'verify' || stage === 'modes' || stage === 'plan-budget' || stage === 'acceptance') {
       assert.equal(manifest.configurationId, null, 'Do not overwrite a fixture provider from an interrupted run.');
       manifest.configurationId = randomUUID(); await saveManifest();
     } else if (stage === 'resume') {
@@ -374,6 +377,60 @@ try {
       report.agentWriteAndUndo = true; report.readOnlyModesAndHistory = true; report.layoutNegativeDetected = true;
       report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
       await writeFile(new URL('../artifacts/phase5-modes-webview.json', import.meta.url), JSON.stringify(report, null, 2));
+      console.log(JSON.stringify(report));
+    } else if (stage === 'plan-budget') {
+      const pt = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/pt-BR.json', import.meta.url), 'utf8'));
+      const en = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/en.json', import.meta.url), 'utf8'));
+      const setBudget = (rounds, tokens, tools) => evaluate(`(()=>{for(const [id,value] of [['budget-rounds',${rounds}],['budget-tokens',${tokens}],['budget-tools',${tools}]]){const input=document.querySelector('#byok-'+id);input.value=String(value);input.dispatchEvent(new Event('input'));}})()`);
+      const initial = await evaluate("({mode:document.querySelector('#byok-mode').value,applyHidden:document.querySelector('#byok-apply-plan').hidden,rounds:document.querySelector('#byok-budget-rounds').value,tokens:document.querySelector('#byok-budget-tokens').value,tools:document.querySelector('#byok-budget-tools').value})");
+      assert.deepEqual(initial, { mode: 'Ask', applyHidden: true, rounds: '4', tokens: '8192', tools: '8' });
+      await evaluate("(()=>{const mode=document.querySelector('#byok-mode');mode.value='Agent';mode.dispatchEvent(new Event('change'));})()");
+      assert.equal(await evaluate("document.querySelector('#byok-apply-plan').hidden"), true, 'apply plan must stay hidden outside Plan');
+      const plan = await agentChat('fixture-plan-budget-plan', ['auto-read-tools'], 'none', 'Plan');
+      assert.equal(plan.type, 'byok.chat.result', JSON.stringify(plan));
+      assert.ok(textOf(requests.at(-1).messages[0]).includes('acceptance criteria'));
+      const planId = plan.payload.conversation.id;
+      assert.deepEqual(await evaluate("({hidden:document.querySelector('#byok-apply-plan').hidden,disabled:document.querySelector('#byok-apply-plan').disabled})"), { hidden: false, disabled: false });
+      await evaluate("(()=>{const consent=document.querySelector('#byok-auto-read-tools');consent.checked=true;consent.dispatchEvent(new Event('change'));})()");
+      const beforeApply = requests.length;
+      await evaluate("document.querySelector('#byok-apply-plan').click()");
+      assert.deepEqual(await evaluate("({mode:document.querySelector('#byok-mode').value,hidden:document.querySelector('#byok-apply-plan').hidden,consent:document.querySelector('#byok-auto-read-tools').checked})"), { mode: 'Agent', hidden: true, consent: false });
+      assert.equal(requests.length, beforeApply, 'apply plan must not call the provider');
+      assert.ok([pt.byokApplyPlanDone, en.byokApplyPlanDone].includes(await evaluate("document.querySelector('#announcement').textContent")));
+      report.applyPlanSwitchWithoutRequests = true;
+      await setBudget(1, 8192, 8);
+      const bounded = await agentChat('fixture-plan-budget-loop', ['auto-read-tools'], 'none', 'Agent');
+      assert.equal(bounded.type, 'error', JSON.stringify(bounded));
+      assert.equal(bounded.payload.code, 'tool_budget_exceeded');
+      assert.equal(requests.length, beforeApply + 1, 'rounds=1 must stop after a single provider request');
+      report.roundBudgetEnforced = true;
+      for (const budget of [{ maxRounds: 99, maxOutputTokens: 8192, maxInvocations: 8 }, { maxRounds: 4, maxOutputTokens: 8192.5, maxInvocations: 8 }]) {
+        const forged = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'forged-budget', effort: 'Off', mode: 'Ask', readTools: true, budget });
+        assert.equal(forged.type, 'error'); assert.equal(forged.payload.code, 'invalid_message');
+      }
+      assert.equal(requests.length, beforeApply + 1, 'forged budgets must never reach the provider');
+      report.forgedBudgetRejected = true;
+      await setBudget(0, 8192, 8);
+      await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='blocked';input.dispatchEvent(new Event('input'));})()");
+      assert.equal(await evaluate("document.querySelector('#byok-send').disabled"), true, 'out-of-range budget must block sending');
+      await evaluate("document.querySelector('#byok-send').click()");
+      assert.equal(requests.length, beforeApply + 1);
+      await setBudget(2, 2048, 8);
+      const done = await agentChat('fixture-plan-budget-done', ['auto-read-tools'], 'none', 'Agent');
+      assert.equal(done.type, 'byok.chat.result', JSON.stringify(done));
+      assert.equal(done.payload.completed, true);
+      assert.equal(done.payload.conversation.id, planId, 'apply plan and failed turns must preserve the conversation');
+      assert.equal(requests.length, beforeApply + 3);
+      report.customBudgetCompletesAndHistoryPreserved = true;
+      await command_('Emulation.setDeviceMetricsOverride', { width: 203, height: 900, deviceScaleFactor: 1, mobile: false });
+      assert.equal(await evaluate('document.documentElement.scrollWidth>innerWidth'), false);
+      assert.equal(await evaluate("(()=>{const app=document.querySelector('.app');app.style.minWidth='240px';const rejected=document.documentElement.scrollWidth>innerWidth;app.style.removeProperty('min-width');return rejected})()"), true);
+      await command_('Emulation.clearDeviceMetricsOverride');
+      assert.deepEqual(exceptions, []);
+      await collectOwnedConversations();
+      report.layoutNegativeDetected = true;
+      report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
+      await writeFile(new URL('../artifacts/phase5-plan-budget-webview.json', import.meta.url), JSON.stringify(report, null, 2));
       console.log(JSON.stringify(report));
     } else {
     let writeConversationId = manifest.conversationIds[0];

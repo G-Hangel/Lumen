@@ -257,12 +257,16 @@ function validRequest(type, p) {
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
-    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode']) && guid(p.configurationId)
+    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'budget']) && guid(p.configurationId)
       && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))
       && (p.mode === 'Agent' || (p.writeTools !== true && p.terminal !== true))
       && (!Object.hasOwn(p, 'readTools') || typeof p.readTools === 'boolean')
       && (!Object.hasOwn(p, 'writeTools') || typeof p.writeTools === 'boolean')
       && (!Object.hasOwn(p, 'terminal') || typeof p.terminal === 'boolean')
+      && (!Object.hasOwn(p, 'budget') || (fields(p.budget, ['maxRounds', 'maxOutputTokens', 'maxInvocations'])
+        && Number.isSafeInteger(p.budget.maxRounds) && p.budget.maxRounds >= 1 && p.budget.maxRounds <= 8
+        && Number.isSafeInteger(p.budget.maxOutputTokens) && p.budget.maxOutputTokens >= 1024 && p.budget.maxOutputTokens <= 32768
+        && Number.isSafeInteger(p.budget.maxInvocations) && p.budget.maxInvocations >= 1 && p.budget.maxInvocations <= 32))
       && (!Object.hasOwn(p, 'contextIds') || contextIds(p.contextIds))
       && string(p.text, 4096) && EFFORTS.includes(p.effort) && (!Object.hasOwn(p, 'image') || (fields(p.image, ['mediaType', 'base64Data'])
         && IMAGE_TYPES.includes(p.image.mediaType) && string(p.image.base64Data, Math.ceil(MAX_IMAGE_BYTES / 3) * 4)

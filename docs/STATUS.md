@@ -64,6 +64,8 @@ houve chamadas pagas.
   plano só troca o modo — não reenvia o plano automaticamente; a qualidade do
   plano depende do modelo. AC de tarefa real multi-passos, ContextBuilder
   integral, compactação, ParallelTools e retry seguem na fatia 5c.
+- Checkpoint commitado em `6ae1092` e enviado ao remoto; evidências de teste
+  e do verificador ficam locais em `artifacts/` (ignorado pelo git).
 
 ## Aceitação consolidada das Fases 3/4 (2026-11-12)
 
@@ -139,10 +141,10 @@ O registro e o controle negativo estão no commit `8ab46d3`, já enviado ao remo
   desabilitado em Ask, declaração global duplicada no CDP e diário da fixture
   anterior ainda ativo; fixture própria foi limpa e a validação foi reduzida
   aos modos, sem reivindicar aprovação da regressão geral nessa execução.
-- Ainda faltam aplicar plano com mudança explícita para Agent, orçamento
-  configurável, compactação, retry e demais critérios integrais da Fase 5.
-  B9 foi encerrado posteriormente com regressão readonly completa; alterações
-  desta fatia estão locais, sem commit.
+- Aplicar plano e orçamento configurável foram concluídos na fatia 5b (acima);
+  compactação, retry e demais critérios integrais da Fase 5 seguem pendentes.
+  B9 foi encerrado posteriormente com regressão readonly completa; as
+  alterações desta fatia de modos foram commitadas em `91e4ba5`.
 
 ## Registro anterior — snapshot e apply_diff (2026-11-11)
 

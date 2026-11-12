@@ -32,8 +32,7 @@ public sealed class ByokSession : IDisposable
     private readonly HashSet<string> requestIds = new HashSet<string>();
     private readonly object approvalGate = new object();
     private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
-    private Func<string, Task>? approvalSend;
-    private string? approvalChatId;
+    private Func<object, Task>? approvalEmit;
     public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null)
     {
         this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools;
@@ -353,7 +352,8 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { model = ModelView(probedModel), supported = support, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.chat":
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal" });
+                {
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
                     var readToolsValue = JsonWire.Get(payload, "readTools");
@@ -362,10 +362,23 @@ public sealed class ByokSession : IDisposable
                     if ((readToolsValue.ValueKind != JsonValueKind.Undefined && readToolsValue.ValueKind != JsonValueKind.True && readToolsValue.ValueKind != JsonValueKind.False) ||
                         (writeToolsValue.ValueKind != JsonValueKind.Undefined && writeToolsValue.ValueKind != JsonValueKind.True && writeToolsValue.ValueKind != JsonValueKind.False) ||
                         (terminalValue.ValueKind != JsonValueKind.Undefined && terminalValue.ValueKind != JsonValueKind.True && terminalValue.ValueKind != JsonValueKind.False)) throw new ProviderException("invalid_message");
+                    var modeValue = JsonWire.Get(payload, "mode");
+                    var mode = ChatMode.Ask;
+                    if (modeValue.ValueKind != JsonValueKind.Undefined)
+                    {
+                        if (modeValue.ValueKind != JsonValueKind.String) throw new ProviderException("invalid_message");
+                        mode = modeValue.GetString() switch
+                        {
+                            "Ask" => ChatMode.Ask,
+                            "Plan" => ChatMode.Plan,
+                            "Agent" => ChatMode.Agent,
+                            _ => throw new ProviderException("invalid_message")
+                        };
+                    }
                     var enableWriteTools = writeToolsValue.ValueKind == JsonValueKind.True;
                     var enableTerminal = terminalValue.ValueKind == JsonValueKind.True;
+                    if (mode != ChatMode.Agent && (enableWriteTools || enableTerminal)) throw new ProviderException("mode_denied");
                     var enableReadTools = readToolsValue.ValueKind == JsonValueKind.True || enableWriteTools || enableTerminal;
-                    var mode = enableWriteTools || enableTerminal ? ChatMode.Agent : ChatMode.Ask;
                     if (enableReadTools && !chatModel.Has(ModelCapabilities.Tools)) throw new ProviderException("tools_not_supported");
                     if (enableReadTools && readTools is null) throw new ProviderException("workspace_unavailable");
                     if (enableWriteTools && writeTools is null) throw new ProviderException("workspace_unavailable");
@@ -413,12 +426,20 @@ public sealed class ByokSession : IDisposable
                     if (capturedWrite is not null) await capturedWrite.BeginTurnAsync(true, cancellationToken).ConfigureAwait(false);
                     var loop = new ToolChatLoop();
                     var turnState = "failed";
-                    lock (approvalGate) { approvalSend = send; approvalChatId = id; }
+                    var eventSequence = 0;
+                    using var eventGate = new SemaphoreSlim(1, 1);
+                    async Task EmitChatEvent(object eventPayload)
+                    {
+                        await eventGate.WaitAsync().ConfigureAwait(false);
+                        try { await send(JsonWire.Serialize(new { version = 1, id, type = "byok.event", sequence = ++eventSequence, payload = eventPayload })).ConfigureAwait(false); }
+                        finally { eventGate.Release(); }
+                    }
+                    lock (approvalGate) approvalEmit = EmitChatEvent;
                     try
                     {
                         if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
-                            streamEvent => Reply(send, id, "byok.event", EventView(streamEvent)),
-                            executionEvent => Reply(send, id, "byok.event", executionEvent), cancellationToken).ConfigureAwait(false)) turnState = "completed";
+                            streamEvent => EmitChatEvent(EventView(streamEvent)),
+                            EmitChatEvent, cancellationToken).ConfigureAwait(false)) turnState = "completed";
                     }
                     catch (OperationCanceledException) { turnState = "cancelled"; throw; }
                     finally
@@ -427,7 +448,7 @@ public sealed class ByokSession : IDisposable
                         var assistant = loop.Parts.ToList();
                         if (assistant.Count == 0) assistant.Add(new TextPart(string.Empty));
                         var domain = currentConversation.Conversation;
-                        var updated = new Conversation(domain.Id, domain.Mode,
+                        var updated = new Conversation(domain.Id, mode,
                             domain.Messages.Concat(new[] { userMessage, new Message(MessageRole.Assistant, assistant, chatModel.ModelId) }).ToArray(),
                             domain.Title, chatModel.ModelId, effort, domain.CreatedAtUtc, DateTimeOffset.UtcNow);
                         if (!string.IsNullOrEmpty(chatSecret))
@@ -443,6 +464,7 @@ public sealed class ByokSession : IDisposable
                     foreach (var selectedContext in selectedContexts) contexts.Remove(selectedContext);
                     await Reply(send, id, type + ".result", new { completed = turnState == "completed", conversation = ConversationView(conversation!) }).ConfigureAwait(false);
                     break;
+                }
                 default: throw new ProviderException("invalid_message");
             }
         }
@@ -453,8 +475,7 @@ public sealed class ByokSession : IDisposable
         {
             lock (approvalGate)
             {
-                approvalSend = null;
-                approvalChatId = null;
+                approvalEmit = null;
                 foreach (var pending in approvals.Values) pending.Decision.TrySetCanceled();
                 approvals.Clear();
             }
@@ -466,21 +487,19 @@ public sealed class ByokSession : IDisposable
 
     public async Task<ApprovalResponse> RequestApprovalAsync(ApprovalRequest request, CancellationToken cancellationToken)
     {
-        Func<string, Task> send;
-        string chatId;
+        Func<object, Task> emit;
         var requestId = Guid.NewGuid().ToString("D");
         PendingApproval pending;
         lock (approvalGate)
         {
-            if (approvalSend is null || approvalChatId is null || approvals.Count >= 8) return ApprovalResponse.Deny;
-            send = approvalSend;
-            chatId = approvalChatId;
+            if (approvalEmit is null || approvals.Count >= 8) return ApprovalResponse.Deny;
+            emit = approvalEmit;
             pending = new PendingApproval(request.Category, cancellationToken);
             approvals.Add(requestId, pending);
         }
         try
         {
-            await Reply(send, chatId, "byok.event", new
+            await emit(new
             {
                 kind = "ApprovalRequest", id = requestId, toolName = request.ToolName, category = request.Category.ToString(),
                 arguments = request.Arguments, targetPath = request.TargetPath, canAllowSession = request.CanAllowCommandsForSession

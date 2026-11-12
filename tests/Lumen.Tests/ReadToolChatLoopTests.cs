@@ -207,7 +207,7 @@ public sealed class ReadToolChatLoopTests
         fixture.Provider.Run = async (_, emit, _) => { await Call(emit); await emit(new Done(FinishReason.ToolUse)); };
         Assert.True(await fixture.Run(null));
         Assert.Empty(Assert.Single(fixture.Provider.Requests).Tools);
-        Assert.Single(fixture.Provider.Requests[0].Messages);
+        Assert.Equal(new[] { MessageRole.System, MessageRole.User }, fixture.Provider.Requests[0].Messages.Select(message => message.Role));
         Assert.Empty(fixture.Executions);
     }
 

@@ -254,14 +254,15 @@ ocultado por cancelamento tardio. Undo parcial remove apenas registros concluíd
 
 ### 2.7 Fluxo de uma mensagem (modo Agent)
 
-**Fatias automáticas readonly/4d:** `ByokSession` usa `ToolChatLoop` em
-`Lumen.Providers`, sem introduzir os modos completos da Fase 5.
-`byok.chat.readTools`, `writeTools` e `terminal` são booleanos opcionais;
-write/terminal implicam leitura e modo Agent restrito às ferramentas consentidas.
-Ausentes/false não capturam workspace nem anunciam/executam ferramentas.
-Opt-in vale somente para aquele envio; a UI avisa sobre conteúdo enviado,
-custo e histórico local não criptografado. Formulários manuais continuam
-separados do chat.
+**Loop automático e seleção de modos:** `ByokSession` usa `ToolChatLoop` em
+`Lumen.Providers`. `byok.chat.mode` admite Ask, Plan e Agent; ausência é Ask.
+O host rejeita `writeTools`/`terminal` em Ask ou Plan antes de captura/HTTP.
+Essas flags e `readTools` são booleanos opcionais por envio; escrita/terminal
+em Agent implicam leitura, com apenas ferramentas consentidas. Prompts de sistema
+por modo são enviados mesmo sem ferramentas; a troca preserva o histórico e
+atualiza o modo da conversa. A UI limpa consentimentos ao trocar o modo e avisa
+sobre conteúdo enviado, custo e histórico local não criptografado. Formulários
+manuais continuam separados e independentes do modo automático do chat.
 
 Antes de ler credenciais ou fazer POST, o host captura raiz e caminho da solução
 via `IReadToolExecutor.CaptureAsync`. `VisualStudioReadTools` valida essa mesma

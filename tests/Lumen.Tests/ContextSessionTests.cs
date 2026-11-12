@@ -87,7 +87,7 @@ public sealed class ContextSessionTests
         Assert.Equal(2, fixture.Source.Captures.Count);
         Assert.Equal(new[] { "second native buffer\nline 2", "first native buffer" }, fixture.Source.Validated.Select(snapshot => snapshot.Text));
         using (var body = JsonDocument.Parse(Assert.Single(fixture.Handler.ChatBodies)))
-            AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), prompt, contextText);
+            AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), prompt, contextText);
         var id = Payload(response).GetProperty("conversation").GetProperty("id").GetString()!;
         var stored = await new ConversationStore(fixture.HistoryPath).ReadAsync(id, CancellationToken.None);
         Assert.NotNull(stored);
@@ -118,7 +118,7 @@ public sealed class ContextSessionTests
         var response = await fixture.Chat("plain prompt", explicitEmptyIds ? Array.Empty<string>() : null);
         AssertCompleted(response);
         using var body = JsonDocument.Parse(Assert.Single(fixture.Handler.ChatBodies));
-        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), "plain prompt");
+        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "plain prompt");
         var id = Payload(response).GetProperty("conversation").GetProperty("id").GetString()!;
         var turn = Assert.Single(Payload(await fixture.Open(id)).GetProperty("turns").EnumerateArray());
         Assert.Equal("plain prompt", turn.GetProperty("userText").GetString());
@@ -238,7 +238,7 @@ public sealed class ContextSessionTests
         }
         AssertCompleted(await fixture.Chat("eight contexts", ids.ToArray()));
         using var body = JsonDocument.Parse(Assert.Single(fixture.Handler.ChatBodies));
-        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), "eight contexts", string.Join("\n\n", texts));
+        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "eight contexts", string.Join("\n\n", texts));
         Assert.Equal(8, fixture.Source.Validated.Count);
     }
 
@@ -279,7 +279,7 @@ public sealed class ContextSessionTests
         AssertCompleted(await fixture.Chat("retry after echo", new[] { id }));
         Assert.Equal(2, fixture.Handler.ChatBodies.Count);
         using var body = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
-        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), "retry after echo", "[Context: native.cs]\nnative text");
+        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "retry after echo", "[Context: native.cs]\nnative text");
         Assert.DoesNotContain("echo attempt", fixture.Handler.ChatBodies.Last());
         Assert.Single(fixture.Source.Captures);
     }
@@ -304,7 +304,7 @@ public sealed class ContextSessionTests
         Assert.Equal(2, fixture.Source.Validated.Count);
         Assert.Single(fixture.Source.Captures);
         using var body = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
-        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), "retry after cancel", "[Context: native.cs]\nnative text");
+        AssertWireTexts(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "retry after cancel", "[Context: native.cs]\nnative text");
     }
 
     [Fact]
@@ -366,10 +366,11 @@ public sealed class ContextSessionTests
         AssertCompleted(await fixture.Chat("explicit continuation"));
         using var replay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
         var messages = replay.RootElement.GetProperty("messages");
-        Assert.Equal(3, messages.GetArrayLength());
-        AssertWireTexts(messages[0], "original prompt", contextText);
-        Assert.Equal("assistant", messages[1].GetProperty("role").GetString());
-        AssertWireTexts(messages[2], "explicit continuation");
+        Assert.Equal(4, messages.GetArrayLength());
+        Assert.Equal("system", messages[0].GetProperty("role").GetString());
+        AssertWireTexts(messages[1], "original prompt", contextText);
+        Assert.Equal("assistant", messages[2].GetProperty("role").GetString());
+        AssertWireTexts(messages[3], "explicit continuation");
         Assert.Equal(2, fixture.Source.Captures.Count);
         Assert.Single(fixture.Source.Validated);
         AssertSecretAbsent(fixture.Replies.Concat(Directory.GetFiles(fixture.Root, "*.json", SearchOption.AllDirectories).Select(File.ReadAllText)));

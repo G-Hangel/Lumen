@@ -58,10 +58,11 @@ public sealed class ConversationSessionTests
         using (var replay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last()))
         {
             var messages = replay.RootElement.GetProperty("messages");
-            Assert.Equal(3, messages.GetArrayLength());
-            AssertWireText(messages[0], "user", "previous completed question");
-            AssertWireText(messages[1], "assistant", "completed answer");
-            AssertWireText(messages[2], "user", "next explicit question");
+            Assert.Equal(4, messages.GetArrayLength());
+            Assert.Equal("system", messages[0].GetProperty("role").GetString());
+            AssertWireText(messages[1], "user", "previous completed question");
+            AssertWireText(messages[2], "assistant", "completed answer");
+            AssertWireText(messages[3], "user", "next explicit question");
         }
 
         disk = Snapshot(fixture.Root);
@@ -73,7 +74,7 @@ public sealed class ConversationSessionTests
         var newId = ChatSummary(third, fixture.ConfigurationId, Model, 1).GetProperty("id").GetString();
         Assert.NotEqual(conversationId, newId);
         using (var fresh = JsonDocument.Parse(fixture.Handler.ChatBodies.Last()))
-            AssertWireText(Assert.Single(fresh.RootElement.GetProperty("messages").EnumerateArray()), "user", "new conversation question");
+            AssertWireText(Assert.Single(fresh.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "user", "new conversation question");
         var archives = Payload(await fixture.List()).GetProperty("conversations");
         Assert.Equal(2, archives.GetArrayLength());
         Assert.Contains(archives.EnumerateArray(), item => item.GetProperty("id").GetString() == conversationId && item.GetProperty("turnCount").GetInt32() == 2);
@@ -91,7 +92,7 @@ public sealed class ConversationSessionTests
         await fixture.Select();
         Assert.Equal(originalId, ChatSummary(await fixture.Chat("same selection question"), fixture.ConfigurationId, Model, 2).GetProperty("id").GetString());
         using (var replay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last()))
-            Assert.Equal(3, replay.RootElement.GetProperty("messages").GetArrayLength());
+            Assert.Equal(4, replay.RootElement.GetProperty("messages").GetArrayLength());
 
         if (changeConfiguration)
         {
@@ -112,7 +113,7 @@ public sealed class ConversationSessionTests
         var freshId = ChatSummary(await fixture.Chat("after different selection"), fixture.ConfigurationId, Model, 1).GetProperty("id").GetString();
         Assert.NotEqual(originalId, freshId);
         using var fresh = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
-        AssertWireText(Assert.Single(fresh.RootElement.GetProperty("messages").EnumerateArray()), "user", "after different selection");
+        AssertWireText(Assert.Single(fresh.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "user", "after different selection");
         Assert.Equal(2, Payload(await fixture.List()).GetProperty("conversations").GetArrayLength());
     }
 
@@ -180,7 +181,7 @@ public sealed class ConversationSessionTests
         var nextId = ChatSummary(await fixture.Chat("after deletion"), fixture.ConfigurationId, Model, 1).GetProperty("id").GetString();
         Assert.NotEqual(deletedId, nextId);
         using var body = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
-        AssertWireText(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray()), "user", "after deletion");
+        AssertWireText(Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "user", "after deletion");
     }
 
     [Fact]
@@ -374,7 +375,7 @@ public sealed class ConversationSessionTests
         Assert.DoesNotContain("failed partial answer", body);
         Assert.DoesNotContain("failed user question", body);
         using var parsed = JsonDocument.Parse(body);
-        Assert.Single(parsed.RootElement.GetProperty(kind == "Gemini" ? "contents" : "messages").EnumerateArray());
+        Assert.Equal(kind == "OpenAI" ? 2 : 1, parsed.RootElement.GetProperty(kind == "Gemini" ? "contents" : "messages").GetArrayLength());
     }
 
     [Theory]

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Prepare', 'Initialize', 'Inspect', 'WriteInspect', 'OutputInspect', 'NativeUndo', 'NativeRedo', 'UserRoundTrip', 'Switch', 'Close', 'Cleanup')][string]$Action = 'Prepare',
+    [ValidateSet('Prepare', 'Initialize', 'Inspect', 'WriteInspect', 'OutputInspect', 'BuildFixtureError', 'RestoreFixtureError', 'NativeUndo', 'NativeRedo', 'UserRoundTrip', 'Switch', 'Close', 'Cleanup')][string]$Action = 'Prepare',
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-fA-F0-9]+$')][string]$InstanceId
 )
 $ErrorActionPreference = 'Stop'
@@ -38,6 +38,11 @@ public static class LumenExperimentalAutomation
         var pane = dte.ToolWindows.OutputWindow.OutputWindowPanes.Item(name);
         var document = pane.TextDocument;
         return document.StartPoint.CreateEditPoint().GetText(document.EndPoint);
+    }
+    public static void Build(object automation)
+    {
+        var dte = (EnvDTE80.DTE2)automation;
+        dte.Solution.SolutionBuild.Build(true);
     }
     public static void Output(object automation, string marker)
     {
@@ -88,7 +93,7 @@ EndGlobal
 "@
     $project = @"
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <PropertyGroup><ProjectGuid>$projectId</ProjectGuid><OutputType>Library</OutputType><RootNamespace>ContextFixture</RootNamespace><AssemblyName>ContextFixture</AssemblyName><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup>
+  <PropertyGroup><ProjectGuid>$projectId</ProjectGuid><OutputType>Library</OutputType><RootNamespace>ContextFixture</RootNamespace><AssemblyName>ContextFixture</AssemblyName><OutputPath>bin\</OutputPath><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup>
   <ItemGroup><Reference Include="System" /><Compile Include="Sample.cs" /></ItemGroup>
   <Import Project="`$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
@@ -132,6 +137,43 @@ if ($Action -eq 'OutputInspect') {
     if ([IO.Path]::GetFullPath($dte.Solution.FullName) -ne (Join-Path $root 'ContextFixture.sln')) { throw 'Refusing to use an unrelated solution.' }
     @{ text = [LumenExperimentalAutomation]::ReadOutput($dte, 'Lumen') } | ConvertTo-Json -Compress
     return
+}
+if ($Action -eq 'BuildFixtureError') {
+    $dte = Get-ExperimentalDte
+    if ([IO.Path]::GetFullPath($dte.Solution.FullName) -ne (Join-Path $root 'ContextFixture.sln')) { throw 'Refusing to build an unrelated solution.' }
+    $source = Join-Path $root 'Sample.cs'
+    $document = @($dte.Documents | Where-Object { $_.FullName -eq $source })[0]
+    if (-not $document) { throw 'Owned document is not open.' }
+    $document.Close(2)
+    $sourceBackup = Join-Path $root 'Sample.cs.lumen-fixture-backup'
+    [IO.File]::Copy($source, $sourceBackup, $false)
+    $assets = Join-Path $root 'obj\project.assets.json'
+    $backup = Join-Path $root 'obj\project.assets.lumen-backup'
+    if (Test-Path -LiteralPath $backup) { throw 'The owned assets backup already exists.' }
+    $movedAssets = Test-Path -LiteralPath $assets
+    if ($movedAssets) { [IO.File]::Move($assets, $backup) }
+    try {
+        [IO.File]::WriteAllText($source, "#error lumen-acceptance-diagnostic`r`n")
+        [LumenExperimentalAutomation]::Build($dte)
+    } catch {
+        [IO.File]::Copy($sourceBackup, $source, $true)
+        [IO.File]::Delete($sourceBackup)
+        throw
+    } finally {
+        if ($movedAssets) { [IO.File]::Move($backup, $assets) }
+    }
+    Write-Output 'Owned fixture error generated; restore the source before cleanup.'
+    return
+}
+if ($Action -eq 'RestoreFixtureError') {
+    $dte = Get-ExperimentalDte
+    if ([IO.Path]::GetFullPath($dte.Solution.FullName) -ne (Join-Path $root 'ContextFixture.sln')) { throw 'Refusing to restore an unrelated solution.' }
+    $source = Join-Path $root 'Sample.cs'
+    $sourceBackup = Join-Path $root 'Sample.cs.lumen-fixture-backup'
+    if (-not (Test-Path -LiteralPath $sourceBackup -PathType Leaf)) { throw 'Owned source backup is missing.' }
+    [IO.File]::Copy($sourceBackup, $source, $true)
+    [IO.File]::Delete($sourceBackup)
+    $Action = 'Initialize'
 }
 if ($Action -eq 'Initialize') {
     $dte = Get-ExperimentalDte

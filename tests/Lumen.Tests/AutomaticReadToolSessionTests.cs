@@ -127,7 +127,7 @@ public sealed class AutomaticReadToolSessionTests
         fixture.Handler.RequestTool = false;
         await fixture.Chat(false);
         using var replay = JsonDocument.Parse(fixture.Handler.Bodies.Last());
-        Assert.Equal(new[] { "user", "assistant", "tool", "assistant", "user" }, replay.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()));
+        Assert.Equal(new[] { "system", "user", "assistant", "tool", "assistant", "user" }, replay.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()));
         Assert.False(replay.RootElement.TryGetProperty("tools", out _));
     }
 

@@ -263,7 +263,7 @@ public sealed class ByokSessionTests
         await session.HandleAsync("https://lumen.local/index.html", Request("byok.select", new { configurationId, modelId = "text-only-fixture" }), Send, CancellationToken.None);
         for (var turn = 0; turn < 2; turn++) await session.HandleAsync("https://lumen.local/index.html", Request("byok.chat", new { configurationId, text = "hi", effort = "Off" }), Send, CancellationToken.None);
         using var replay = JsonDocument.Parse(handler.ChatBodies.Last());
-        var details = replay.RootElement.GetProperty("messages")[1].GetProperty("reasoning_details");
+        var details = replay.RootElement.GetProperty("messages")[2].GetProperty("reasoning_details");
         Assert.Equal(2, details.GetArrayLength());
         Assert.Equal("opaque-a", details[0].GetProperty("data").GetString());
         Assert.Equal("opaque-b", details[1].GetProperty("data").GetString());
@@ -313,7 +313,7 @@ public sealed class ByokSessionTests
         handler.Stream = "data: {\"choices\":[{\"delta\":{\"content\":\"complete\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
         await session.HandleAsync("https://lumen.local/index.html", Request("byok.chat", new { configurationId, text = "retry", effort = "Off" }), Send, CancellationToken.None);
         using var retry = JsonDocument.Parse(handler.ChatBodies.Last());
-        Assert.Equal(1, retry.RootElement.GetProperty("messages").GetArrayLength());
+        Assert.Equal(2, retry.RootElement.GetProperty("messages").GetArrayLength());
     }
 
     [Fact]

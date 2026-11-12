@@ -195,7 +195,9 @@ function writeToolResult(value) {
 }
 
 export function isByokEnvelope(value) {
-  if (!fields(value, ['version', 'id', 'type', 'payload']) || value.version !== 1 || !guid(value.id) || !boundedJson(value)) return false;
+  const required = value?.type === 'byok.event' ? ['version', 'id', 'type', 'sequence', 'payload'] : ['version', 'id', 'type', 'payload'];
+  if (!fields(value, required) || value.version !== 1 || !guid(value.id) || !boundedJson(value)) return false;
+  if (value.type === 'byok.event' && (!Number.isSafeInteger(value.sequence) || value.sequence < 1)) return false;
   const p = value.payload;
   switch (value.type) {
     case 'error': return fields(p, ['code']) && errorCode(p.code);
@@ -255,7 +257,9 @@ function validRequest(type, p) {
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
-    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal']) && guid(p.configurationId)
+    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode']) && guid(p.configurationId)
+      && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))
+      && (p.mode === 'Agent' || (p.writeTools !== true && p.terminal !== true))
       && (!Object.hasOwn(p, 'readTools') || typeof p.readTools === 'boolean')
       && (!Object.hasOwn(p, 'writeTools') || typeof p.writeTools === 'boolean')
       && (!Object.hasOwn(p, 'terminal') || typeof p.terminal === 'boolean')
@@ -316,7 +320,7 @@ export class ByokBridge {
         : writeTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, 'apply_diff'] : READ_TOOL_NAMES);
       this.pending.set(id, { type, expected, onEvent, resolve, reject, timer,
         readTools: payload.readTools === true || writeTools || terminalTools, writeTools, terminalTools, toolNames,
-        approvals: new Map(), terminal: null, tools: new Map(), streamSize: 0, eventCount: 0 });
+        approvals: new Map(), terminal: null, tools: new Map(), streamSize: 0, eventCount: 0, nextSequence: 1 });
       try { this.transport.postMessage({ version: 1, id, type, payload }); }
       catch { this.finish(id, new ByokError('bridge_unavailable')); }
       finally { payload = null; }
@@ -339,7 +343,8 @@ export class ByokBridge {
     if (message.type === 'error') { this.finish(message.id, new ByokError(message.payload.code, message.payload.retryAfter)); return true; }
     const p = message.payload;
     if (message.type === 'byok.event') {
-      if (pending.type !== 'byok.chat' || pending.terminal) { this.finish(message.id, new ByokError('invalid_response')); return false; }
+      if (pending.type !== 'byok.chat' || pending.terminal || message.sequence !== pending.nextSequence) { this.finish(message.id, new ByokError('invalid_response')); return false; }
+      pending.nextSequence++;
       if (++pending.eventCount > 32768) { this.finish(message.id, new ByokError('stream_too_large')); return false; }
       if (p.kind === 'ToolCallStart') {
         if (pending.tools.has(p.id) || pending.tools.size >= 128) { this.finish(message.id, new ByokError('invalid_response')); return false; }

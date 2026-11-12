@@ -1,21 +1,23 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-11**.
+Atualizado em **2026-11-12**.
 
 ## Estado atual
 
-**Fases 0, 1 e 2 concluídas; fatias 3a–3d e 4a–4d implementadas e verificadas.
-Fases 3/4/5 ainda abertas para seus critérios integrais.** O modelo pode ler,
-criar/editar arquivos e executar comandos com opt-in por envio. Escrita interna
-aplica automaticamente com diff; undo reverte somente o último lote. Escrita
-externa exige aprovação por operação; terminal exige aprovação, com opção de
+**Fases 0–4 concluídas; Fase 5 em andamento.** A aceitação consolidada de
+2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
+experimental, com as limitações registradas. O modelo pode ler, criar/editar
+arquivos e executar comandos com opt-in por envio. Escrita interna aplica
+automaticamente com diff; undo reverte somente o último lote. Escrita externa
+exige aprovação por operação; terminal exige aprovação, com opção de
 consentimento por sessão revogada ao fechar/reabrir a solução. `apply_diff` e
-snapshot para buffer/disco estão implementados e verificados localmente, ainda
-sem commit. Diagnósticos e descoberta de shells foram implementados e verificados como
-descrito abaixo; os modos Agent/Ask/Plan integrais ainda pertencem à Fase 5. B9 continua sendo a captura da regressão readonly anterior, não a
-captura bem-sucedida da 4d. A Fase 2 mantém os limites aceitos em 2026-11-07:
-Ollama local dispensado (B7), inventário Azure manual (B8). Sem APIs pagas,
-commit, remote ou push nesta fatia.
+snapshot para buffer/disco, diagnósticos e descoberta de shells estão no commit
+`dd826ea`. A Fase 5 tem seleção de modos e políticas de chat verificadas;
+aplicar plano, orçamento configurável, compactação e retry continuam pendentes.
+B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
+original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
+Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
+houve chamadas pagas.
 
 | Fase | Estado |
 | --- | --- |
@@ -23,14 +25,94 @@ commit, remote ou push nesta fatia.
 | Fase 0 — Spike de toolchain e UI | **concluído** |
 | Fase 1 — Núcleo de domínio | **concluído** |
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
-| Fase 3 — UI do chat | **em andamento — 3a, 3b, 3c e 3d concluídas** |
-| Fase 4 — Ferramentas e segurança | **ferramentas solicitadas verificadas; limitações e B9 descritos abaixo** |
-| Fase 5 — Loop e modos | **loop restrito de leitura/escrita/terminal verificado; Agent completo/modos pendentes** |
+| Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
+| Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
+| Fase 5 — Loop e modos | **em andamento — seleção de modos e segurança do chat verificadas; aplicar plano, orçamento e compactação pendentes** |
 | Fases 6–8 | não iniciadas |
+| Fase 9 — Subagentes e delegação | planejada; não iniciada |
 
-## Em andamento — snapshot e apply_diff (2026-11-11)
+## Aceitação consolidada das Fases 3/4 (2026-11-12)
 
-Implementação local ainda **não commitada**: `get_edit_snapshot` devolve texto
+- **Causa raiz dos stalls silenciosos do verificador:** a Exp estava executando
+  o build de **outro worktree** (branch `g-hangel-completar-fase-3`, implantado
+  às 10:19), cuja UI usa um RPC assíncrono `byok.mode.set` com gate `modeReady`
+  que corre contra o clique de envio do robô. O código deste worktree não tem
+  esse RPC — o modo vai no payload de `byok.chat`. Evidência: o `byok.mjs`
+  instalado era byte-idêntico ao do worktree Copilot e o wire log terminava em
+  `byok.mode.set` sem `byok.chat` subsequente. Não é bug de produto deste branch.
+- **Correção:** rebuild Release deste worktree (0 erros/avisos), desinstalação
+  do pacote alheio e instalação do VSIX atual com SHA-256 de todos os arquivos
+  em `Extensions\l2sbkly1.rv1`; fixture nova; reexecução integral.
+- **Aceitação consolidada** (`verify-agent-tools-webview.mjs acceptance`):
+  colar 1 MiB em **97 ms** com clamp 4096 e negativo 4097; escrita externa
+  negada → permitida → undo; `dotnet test` real aprovado e reprovado pela UI;
+  Error List populada com `#error` e negativo; cancelamento de stream em
+  **623 ms** e de ferramenta em **95 ms** com processo morto (ESRCH) e sem
+  sobrevivente; sequências de eventos contíguas; **12 requests loopback,
+  0 pagos, 0 exceções JS**. Evidência: `artifacts/phase34-acceptance.json`.
+- Regressão geral reexecutada no build atual: **37 requests loopback, 0 pagos,
+  0 exceções JS**, todas as asserções funcionais e negativas verdes
+  (`artifacts/agent-tools-webview.json`). Modos em Exp recém-aberta:
+  **6 requests, 0 pagos** (`artifacts/phase5-modes-webview.json`). A primeira
+  tentativa de modos após a regressão falhou apenas porque a UI reutilizada
+  ficou em Agent; com Exp nova passou — o critério "Ask inicial" exige UI nova.
+- Build Release **0 erros/avisos**; **1.505 C# / 207 JS** verdes.
+- **Limitações registradas:** symlink de arquivo exige elevação/Developer Mode
+  (`NewItemSymbolicLinkElevationRequired` confirmado hoje); o controle real não
+  foi exercitado — junction real e reparse points nos ancestrais passam.
+  Passada manual de leitor de tela (NVDA/Narrator) pendente do usuário.
+- **Nota de worktree paralelo:** o worktree Copilot
+  (`~/.copilot/repos/copilot-worktrees/Extensão/g-hangel-effective-parakeet`)
+  tem commits próprios (`af96a74`, `7349de1`, `6d2f418`) que implementam modos
+  com `byok.mode.set` e declaram as fases 3/4 fechadas lá. Este branch
+  implementa o mesmo escopo de forma diferente (modo no payload do chat) e as
+  evidências acima são deste branch. A decisão de mesclar é do usuário;
+  nenhum merge foi feito aqui.
+
+## B9 — regressão readonly concluída (2026-11-11)
+
+Uma execução integral na Exp com o pacote local da Fase 5 concluiu asserções
+funcionais, captura PNG válida, 0 exceções JS e controle negativo que rejeitou
+PNG corrompido. Foram 12 requests loopback, sem API paga; dados sintéticos
+limpos, Exp fechada e pacote instalado verificado. Evidências:
+`artifacts/auto-tools-webview.json` e `artifacts/auto-tools-webview.png`.
+A causa do timeout CDP anterior não foi identificada: a conclusão descreve a
+regressão atual, não garante ausência de intermitência em todos os ambientes.
+O registro e o controle negativo estão no commit `8ab46d3`, já enviado ao remoto.
+
+## Em andamento — Fase 5: seleção de modo (2026-11-11)
+
+- Seletor Agent/Ask/Plan no chat, com Ask inicial. Trocar de modo limpa os
+  consentimentos por envio; escrita/terminal só são habilitados em Agent.
+  O host valida `mode` e rejeita flags de escrita/terminal em Ask ou Plan antes
+  de capturar workspace, ler credenciais ou chamar o provedor. Sem `mode`, o
+  padrão seguro é Ask. Ferramentas não anunciadas são rejeitadas no loop.
+- Prompts de sistema distinguem Ask (responder e citar `arquivo:linha`), Plan
+  (plano em fases com critérios de aceite, sem implementar) e Agent. O prompt
+  é enviado mesmo sem ferramentas; modo ativo é gravado na conversa, sem apagar
+  turnos anteriores ao trocar de modo. O painel separado de escrita manual é
+  uma ação explícita independente do modo de ferramentas automáticas do chat.
+- Build Release **0 erros/avisos**, **1.505 C# / 206 JS** verdes. Os controles
+  negativos forjam flags e tool calls de escrita/terminal em Ask e Plan e
+  verificam ausência de execução; troca de modo preserva a conversa.
+- Exp: `verify-agent-tools-webview.mjs modes` usou provedor loopback: Agent
+  editou buffer e desfez, Plan e Ask rejeitaram tool calls forjadas, histórico
+  preservado e layout 203 px com mutação negativa detectada. **6 requests
+  locais, 0 pagos e 0 exceções JS**. Evidência:
+  `artifacts/phase5-modes-webview.json`. Fixtures/credenciais próprias limpas,
+  Exp fechada, arquivos instalados verificados em `Extensions\hbngbmnp.22r`.
+- Tentativas anteriores do verificador geral falharam por espera de checkbox
+  desabilitado em Ask, declaração global duplicada no CDP e diário da fixture
+  anterior ainda ativo; fixture própria foi limpa e a validação foi reduzida
+  aos modos, sem reivindicar aprovação da regressão geral nessa execução.
+- Ainda faltam aplicar plano com mudança explícita para Agent, orçamento
+  configurável, compactação, retry e demais critérios integrais da Fase 5.
+  B9 foi encerrado posteriormente com regressão readonly completa; alterações
+  desta fatia estão locais, sem commit.
+
+## Registro anterior — snapshot e apply_diff (2026-11-11)
+
+Implementação commitada em `dd826ea`: `get_edit_snapshot` devolve texto
 integral e SHA-256 UTF-8 sem BOM de arquivo ou buffer MEF aberto, limitado a
 65.536 caracteres JSON; resultado excessivo é recusado, não truncado. O consentimento
 informa que o provedor pode receber buffers não salvos. `apply_diff` exige hash
@@ -81,7 +163,7 @@ o commit após concluir essas pendências.
   demais arquivos coincidiram. O pacote limpo foi reinstalado e teve todos os
   arquivos verificados em `Extensions\n0a1c00s.vyu`; a UI não foi repetida
   após essa reinstalação. Evidências: `artifacts/agent-tools-webview.json` e
-  `artifacts/agent-tools-webview.png`. B9 anterior permanece aberto.
+  `artifacts/agent-tools-webview.png`. B9 foi encerrado em uma execução posterior.
 
 ## Escrita pelo modelo e terminal aprovado — fatia 4d (2026-11-11)
 
@@ -122,7 +204,7 @@ o commit após concluir essas pendências.
   `Extensions\xont1ooq.0ro`. Nenhum perfil principal/servidor alheio alterado.
 - Evidências: `artifacts/agent-tools.binlog`, `artifacts/tests/agent-tools.trx`,
   `artifacts/agent-tools-ui-tests.log`, `artifacts/agent-tools-webview.json`,
-  `artifacts/agent-tools-webview.png`. B9 anterior continua aberto.
+  `artifacts/agent-tools-webview.png`. B9 foi encerrado em uma execução posterior.
 - Lacunas: `apply_diff`, diagnósticos, detecção completa de shells e modos
   integrais. UI real exercitou cmd e negação externa, não uma escrita externa
   aprovada nem todos os shells; demais cenários são testes de backend.
@@ -160,8 +242,8 @@ Registro histórico; limitações superadas na 4d estão descritas acima.
   negativo de layout e regressão readonly manual completa também passaram.
 - Regressão readonly automática chegou ao fim dos controles funcionais, mas
   expirou na captura CDP antes do relatório final/asserção de exceções JS (B9).
-  Captura isolada também expirou; nenhum turno foi repetido. Não se declara
-  aprovação integral dessa regressão. Provedor/chave/conversas sintéticos próprios
+  Captura isolada também expirou; nenhum turno foi repetido naquele checkpoint.
+  A regressão foi concluída posteriormente (B9 em `BLOQUEIOS.md`). Provedor/chave/conversas sintéticos próprios
   removidos; fixtures limpas, Exp fechada, preview próprio 4177 parado e SHA de
   todos os arquivos instalados confirmado. Sem commit/push.
 - Falhas corrigidas com evidência: identidade JSON net48/netstandard separada
@@ -740,11 +822,12 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Ferramentas da Fase 4 verificadas com os limites acima; Fase 5 permanece
-aberta.** A próxima etapa é implementar os modos Agent/Ask/Plan integrais e
-seus critérios, além de acompanhar B9. Fatias 4a–4d estão no commit `aaf818e`;
-as alterações posteriores aguardam commit. O remoto `origin` foi configurado
-pelo usuário.
+**Fases 3/4 fechadas pela aceitação consolidada de 2026-11-12; Fase 5 aberta.**
+Próxima etapa: aplicar plano com transição explícita para Agent e orçamento
+configurável (fatia 5b), depois compactação segura e retry sem reexecutar
+ferramentas (5c). O remoto `origin` foi configurado pelo usuário, que autorizou
+commits e pushes. Atenção ao worktree paralelo `g-hangel-completar-fase-3`
+(ver nota acima) antes de qualquer merge.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

@@ -56,6 +56,7 @@ export async function readImageAttachment(file) {
 export function startByok({ transport, connected = () => false, text, renderMarkdown } = {}) {
   const node = id => document.getElementById(`byok-${id}`);
   const panel = node('panel');
+  node('mode').value = 'Ask';
   let connectedState = Boolean(connected()), disposed = false, busy = false, imageLoading = false, cancelling = false;
   let cancelRequested = false, cancelRequest = null;
   let configurations = [], models = [], configurationId = '', selectedModelId = '', loaded = false;
@@ -426,7 +427,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('apply-override').disabled = !enabled || locked || !model || Object.keys(capabilityNames).some(key => node(key).value === '');
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
     const matchesHistory = !activeConversation || (activeConversation.configurationId === configurationId && activeConversation.modelId === selectedModelId);
-    for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
+    node('mode').disabled = !enabled || locked;
+    node('auto-read-tools').disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
+    for (const id of ['auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory || node('mode').value !== 'Agent';
     node('message').disabled = !enabled || !model || !configurationId || locked || !matchesHistory;
     node('image').disabled = !enabled || locked || !model?.vision;
     node('remove-image').disabled = locked;
@@ -838,7 +841,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
     node('output').scrollTop = node('output').scrollHeight;
     try {
-      const request = bridge.request('byok.chat', { configurationId, text: value,
+      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value,
         ...(readTools ? { readTools: true } : {}),
         ...(writeTools ? { writeTools: true } : {}),
         ...(terminal ? { terminal: true } : {}),
@@ -962,6 +965,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('configure'), 'submit', configure);
   for (const id of ['provider-id', 'url', 'key', 'deployments']) listen(node(id), 'input', clearToolConsent);
   for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
+  listen(node('mode'), 'change', () => { clearToolConsent(); updateControls(); });
   listen(node('auto-read-tools'), 'change', updateControls);
   listen(node('auto-write-tools'), 'change', updateControls);
   listen(node('auto-terminal'), 'change', updateControls);

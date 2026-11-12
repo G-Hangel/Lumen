@@ -139,6 +139,7 @@ public sealed class AgentToolSessionTests
         {
             var payload = new Dictionary<string, object> { ["configurationId"] = Id, ["text"] = "agent task", ["effort"] = "Off" };
             if (extra is not null) foreach (var property in JsonSerializer.SerializeToElement(extra).EnumerateObject()) payload[property.Name] = property.Value.Clone();
+            if (!payload.ContainsKey("mode")) payload["mode"] = payload.ContainsKey("writeTools") || payload.ContainsKey("terminal") ? "Agent" : "Ask";
             return Send("byok.chat", payload);
         }
         public Task<JsonElement> WaitApproval() => ApprovalSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -168,6 +169,10 @@ public sealed class AgentToolSessionTests
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
         Assert.Equal(1, fixture.Shell.Calls);
+        var eventSequence = fixture.Replies.Where(reply => reply.GetProperty("type").GetString() == "byok.event")
+            .Select(reply => reply.GetProperty("sequence").GetInt32()).ToArray();
+        Assert.Equal(Enumerable.Range(1, eventSequence.Length), eventSequence);
+        Assert.Contains(approval.GetProperty("sequence").GetInt32(), eventSequence);
         Assert.Equal(1, fixture.Reader.Captures);
         Assert.Equal(1, fixture.Shell.Captures);
         Assert.Equal(0, fixture.Writer.Captures);
@@ -289,6 +294,75 @@ public sealed class AgentToolSessionTests
         await fixture.Chat(new { terminal = true });
         Assert.Equal("workspace_unavailable", fixture.Error);
         Assert.Equal(reads, fixture.Credentials.Reads);
+        Assert.Empty(fixture.Handler.Bodies);
+    }
+
+    [Theory]
+    [InlineData("Ask", true, false)]
+    [InlineData("Plan", true, false)]
+    [InlineData("Ask", false, true)]
+    [InlineData("Plan", false, true)]
+    public async Task ReadOnlyModesRejectForgedWriteOrTerminalBeforeCapture(string mode, bool writeTools, bool terminal)
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        var reads = fixture.Credentials.Reads;
+        await fixture.Chat(new { mode, writeTools, terminal });
+        Assert.Equal("mode_denied", fixture.Error);
+        Assert.Equal(0, fixture.Reader.Captures + fixture.Writer.Captures + fixture.Shell.Captures);
+        Assert.Equal(reads, fixture.Credentials.Reads);
+        Assert.Empty(fixture.Handler.Bodies);
+    }
+
+    [Theory]
+    [InlineData("Ask", "edit_file")]
+    [InlineData("Plan", "edit_file")]
+    [InlineData("Ask", "run_command")]
+    [InlineData("Plan", "run_command")]
+    public async Task ReadOnlyModesRejectModelToolRequests(string mode, string tool)
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.ToolName = tool;
+        fixture.Handler.Arguments = tool == "edit_file" ? "{\"path\":\"Sample.cs\",\"content\":\"x\"}" : "{\"command\":\"cmd\",\"args\":[\"/c\",\"echo x\"]}";
+        await fixture.Chat(new { mode, readTools = true });
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.Equal(0, fixture.Writer.Calls + fixture.Shell.Calls);
+        Assert.Contains("unknown_tool", fixture.Handler.Bodies.Last());
+    }
+
+    [Fact]
+    public async Task SwitchingModesKeepsHistoryAndChangesSystemInstruction()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.RequestTool = false;
+        await fixture.Chat(new { mode = "Plan" });
+        var id = fixture.Last.GetProperty("payload").GetProperty("conversation").GetProperty("id").GetString()!;
+        using (var body = JsonDocument.Parse(fixture.Handler.Bodies[0]))
+            Assert.Contains("acceptance criteria", body.RootElement.GetProperty("messages")[0].GetProperty("content")[0].GetProperty("text").GetString());
+        await fixture.Chat(new { mode = "Ask" });
+        Assert.Equal(id, fixture.Last.GetProperty("payload").GetProperty("conversation").GetProperty("id").GetString());
+        using (var body = JsonDocument.Parse(fixture.Handler.Bodies[1]))
+        {
+            var messages = body.RootElement.GetProperty("messages");
+            Assert.Equal(4, messages.GetArrayLength());
+            Assert.Contains("cite paths:lines", messages[0].GetProperty("content")[0].GetProperty("text").GetString());
+        }
+        var stored = await new ConversationStore(Path.Combine(fixture.Root, "conversations")).ReadAsync(id, CancellationToken.None);
+        Assert.Equal(ChatMode.Ask, stored!.Conversation.Mode);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("agent")]
+    [InlineData("unknown")]
+    public async Task InvalidModeNeverCallsProvider(string mode)
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        await fixture.Chat(new { mode });
+        Assert.Equal("invalid_message", fixture.Error);
         Assert.Empty(fixture.Handler.Bodies);
     }
 

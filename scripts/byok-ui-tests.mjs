@@ -66,10 +66,19 @@ const snapshot = (kind = 'file', extra = {}) => ({ id: otherId, kind, label: 'sr
 class FakeTransport {
   messages = [];
   listeners = new Set();
+  sequences = new Map();
   addEventListener(type, listener) { assert.equal(type, 'message'); this.listeners.add(listener); }
   removeEventListener(type, listener) { this.listeners.delete(listener); }
   postMessage(message) { this.messages.push(message); }
-  emit(message) { for (const listener of this.listeners) listener({ data: message }); }
+  emit(message) {
+    if (message.type === 'byok.event' && !Object.hasOwn(message, 'sequence')) {
+      const sequence = (this.sequences.get(message.id) ?? 0) + 1;
+      this.sequences.set(message.id, sequence);
+      message = { ...message, sequence };
+    }
+    this.emitRaw(message);
+  }
+  emitRaw(message) { for (const listener of this.listeners) listener({ data: message }); }
   reply(payload, request = this.messages.at(-1)) { this.emit(envelope(`${request.type}.result`, payload, request.id)); }
 }
 function fixture(t, options = {}) {
@@ -91,14 +100,17 @@ const approvalEvent = (category = 'ExecuteCommand', extra = {}) => ({ kind: 'App
   toolName: category === 'ExecuteCommand' ? 'run_command' : 'edit_file', category,
   arguments: { command: 'cmd', args: ['echo', 'hi'] }, targetPath: category === 'ExecuteCommand' ? null : 'C:/outside/target.cs',
   canAllowSession: category === 'ExecuteCommand', ...extra });
-const agentChat = { configurationId, text: 'Edit and run', effort: 'Off', readTools: true, writeTools: true, terminal: true };
+const agentChat = { configurationId, text: 'Edit and run', effort: 'Off', mode: 'Agent', readTools: true, writeTools: true, terminal: true };
 const approvalCards = f => f.node('live').querySelectorAll('section').filter(item => item.className === 'byok-approval');
 
 test('automatic chat request accepts optional booleans only; omits declarations and browser authority', async t => {
   const f = fixture(t);
   for (const readTools of [null, 1, 'true', {}, []]) await rejects(f.bridge.request('byok.chat', { ...autoChat, readTools }), 'invalid_message');
-  for (const extra of [{ tools: [] }, { maxCalls: 4 }, { workspace: '.' }, { mode: 'Agent' }]) {
+  for (const extra of [{ tools: [] }, { maxCalls: 4 }, { workspace: '.' }, { mode: 'Bogus' }]) {
     await rejects(f.bridge.request('byok.chat', { ...autoChat, ...extra }), 'invalid_message');
+  }
+  for (const mode of ['Ask', 'Plan']) {
+    await rejects(f.bridge.request('byok.chat', { ...agentChat, mode }), 'invalid_message');
   }
   assert.equal(f.transport.messages.length, 0);
   for (const payload of [{ configurationId, text: 'manual', effort: 'Off' }, { ...autoChat, readTools: false }, autoChat]) {
@@ -106,6 +118,27 @@ test('automatic chat request accepts optional booleans only; omits declarations 
     assert.deepEqual(f.transport.messages.at(-1).payload, payload);
     f.transport.reply({ completed: true, conversation: summary }); await pending;
   }
+});
+
+test('chat event sequence rejects duplicates, gaps, reordering and missing indices', async t => {
+  for (const sequence of [undefined, 0, 2, 1.5]) {
+    const f = fixture(t), events = [];
+    const pending = f.bridge.request('byok.chat', { configurationId, text: 'test', effort: 'Off' }, { onEvent: event => events.push(event) });
+    const id = f.transport.messages.at(-1).id;
+    const event = envelope('byok.event', { kind: 'TextDelta', text: 'bad' }, id);
+    if (sequence !== undefined) event.sequence = sequence;
+    const rejected = rejects(pending, 'invalid_response');
+    f.transport.emitRaw(event); await rejected;
+    assert.deepEqual(events, []);
+  }
+  const f = fixture(t), events = [];
+  const pending = f.bridge.request('byok.chat', { configurationId, text: 'test', effort: 'Off' }, { onEvent: event => events.push(event) });
+  const id = f.transport.messages.at(-1).id;
+  f.transport.emitRaw({ ...envelope('byok.event', { kind: 'TextDelta', text: 'first' }, id), sequence: 1 });
+  const rejected = rejects(pending, 'invalid_response');
+  f.transport.emitRaw({ ...envelope('byok.event', { kind: 'TextDelta', text: 'first' }, id), sequence: 1 });
+  await rejected;
+  assert.deepEqual(events.map(event => event.text), ['first']);
 });
 
 test('execution schema rejects malformed and oversized events including nonempty Running/Cancelled', () => {
@@ -358,7 +391,7 @@ test('approval events require the matching consent flag, unique ids and a bounde
     { flags: { terminal: true }, bad: approvalEvent('WriteOutsideWorkspace') }
   ];
   for (const value of cases) {
-    const f = fixture(t); const pending = f.bridge.request('byok.chat', { configurationId, text: 'x', effort: 'Off', ...value.flags });
+    const f = fixture(t); const pending = f.bridge.request('byok.chat', { configurationId, text: 'x', effort: 'Off', mode: 'Agent', ...value.flags });
     const sent = f.transport.messages.at(-1); const rejected = rejects(pending, 'invalid_response');
     f.transport.emit(envelope('byok.event', value.bad, sent.id)); await rejected;
   }
@@ -379,10 +412,31 @@ test('a chat result with an unanswered approval is rejected as an invalid respon
   f.transport.reply({ completed: true, conversation: summary }, sent); await rejected;
 });
 
+test('mode switch revokes consent and Plan sends read-only intent', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  assert.equal(f.node('mode').value, 'Ask');
+  assert.equal(f.node('auto-write-tools').disabled, true);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
+  f.node('auto-write-tools').checked = true; f.node('auto-terminal').checked = true;
+  f.node('mode').value = 'Plan'; await f.node('mode').emit('change');
+  assert.equal(f.node('auto-write-tools').checked, false);
+  assert.equal(f.node('auto-terminal').checked, false);
+  assert.equal(f.node('auto-write-tools').disabled, true);
+  assert.equal(f.node('auto-terminal').disabled, true);
+  f.node('message').value = 'plan this'; await f.node('message').emit('input');
+  const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
+  assert.equal(sent.payload.mode, 'Plan');
+  assert.equal(Object.hasOwn(sent.payload, 'writeTools'), false);
+  assert.equal(Object.hasOwn(sent.payload, 'terminal'), false);
+  f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
+});
+
 test('write and terminal consent default off, travel per-send and reset on disconnect', async t => {
   const f = uiFixture(t);
   for (const id of ['auto-write-tools', 'auto-terminal']) { assert.equal(f.node(id).checked, false); assert.equal(f.node(id).disabled, true); }
   await openWithModel(f);
+  for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(f.node(id).disabled, true);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(f.node(id).disabled, false);
   f.node('message').value = 'edit'; await f.node('message').emit('input');
   f.node('auto-write-tools').checked = true; f.node('auto-terminal').checked = true;
@@ -398,6 +452,7 @@ test('write and terminal consent default off, travel per-send and reset on disco
 
 test('approval card renders inert arguments, focuses Deny and settles on the host decision', async t => {
   const f = uiFixture(t); await openWithModel(f);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   const arguments_ = { command: 'cmd', args: ['echo', '<script>inert()</script>'] };
@@ -419,6 +474,7 @@ test('approval card renders inert arguments, focuses Deny and settles on the hos
 
 test('outside-write approval hides the session decision and a failed respond expires the card', async t => {
   const f = uiFixture(t); await openWithModel(f);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   f.node('message').value = 'write'; await f.node('message').emit('input'); f.node('auto-write-tools').checked = true;
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   f.transport.emit(envelope('byok.event', approvalEvent('WriteOutsideWorkspace'), sent.id));
@@ -434,6 +490,7 @@ test('outside-write approval hides the session decision and a failed respond exp
 
 test('unanswered approvals expire when the chat ends or errors', async t => {
   const f = uiFixture(t); await openWithModel(f);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   f.transport.emit(envelope('byok.event', approvalEvent(), sent.id));
@@ -1543,7 +1600,7 @@ for (const completed of [true, false]) {
     await attachContext(f, 'file', first); await attachContext(f, 'solution', second);
     f.node('message').value = 'prompt'; await f.node('message').emit('input');
     const sending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
-    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', effort: 'Low', contextIds: [first.id, second.id] });
+    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', mode: 'Ask', effort: 'Low', contextIds: [first.id, second.id] });
     const joined = `[Context: ${first.label}]\n${first.text}\n\n[Context: ${second.label}]\n${second.text}`;
     const turn = f.node('live').children[0], details = turn.querySelector('details');
     assert.equal(details.open, false); assert.equal(details.querySelector('pre').textContent, joined);

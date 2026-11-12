@@ -36,6 +36,10 @@ de teste morre.
 **Mitigação:** manifesto com range `[18.0,)` (não `[18.12,)`), e testar em VS 18
 estável quando disponível. Não prender o projeto ao Insiders.
 
+---
+
+## Resolvidos
+
 ### B4 — `gh` CLI ausente
 
 Não há CLI do GitHub, então não dá para criar remote nem abrir PR
@@ -43,10 +47,6 @@ automaticamente.
 
 **Mitigação:** o repositório é **local**. Criar remote e dar push é decisão e
 ação do usuário (`AGENTS.md` §6). Não tentar contornar.
-
----
-
-## Resolvidos
 
 ### B9 — Regressão readonly e captura CDP concluídas (2026-11-11)
 
@@ -71,6 +71,24 @@ limitação observada, não uma causa diagnosticada.
 Inicialmente `git remote -v` não retornou destino. Após criação do repositório
 privado pelo usuário, o comando mostra `origin` e `git branch -vv` mostra
 `main` rastreando `origin/main`. O push ainda não foi realizado nesta etapa.
+
+### B11 — Exp executava build de worktree paralelo (2026-11-12)
+
+A aceitação consolidada travava em silêncio: o clique de envio não postava
+`byok.chat`. O wire log do WebView terminava em `byok.mode.set` — um RPC que
+não existe no código deste worktree. Causa: a Extensão implantada na Exp às
+10:19 vinha do worktree Copilot
+(`~/.copilot/repos/copilot-worktrees/Extensão/g-hangel-effective-parakeet`,
+branch `g-hangel-completar-fase-3`), cuja UI sincroniza o modo por RPC
+assíncrono com gate `modeReady`; o robô clicava enviar antes do gate abrir.
+Evidência: `wwwroot/byok.mjs` instalado byte-idêntico ao daquele worktree
+(`cmp`), VSIX dele gerado às 10:17, e DLLs instaladas sem o protocolo antigo.
+Resolução: desinstalar o pacote alheio e instalar o VSIX deste worktree com
+SHA-256 de todos os arquivos (`Extensions\l2sbkly1.rv1`); fixture nova;
+aceitação, regressão e modos passaram (12 + 37 + 6 requests loopback, 0 pagos).
+**Armadilha:** antes de verificar na Exp, conferir que o pacote instalado é o
+deste worktree (`cmp` do `wwwroot` ou SHA do VSIX), não apenas o timestamp.
+O branch paralelo permanece sem merge; decisão do usuário.
 
 ### B7 — Ollama real: AC dispensado pelo usuário (2026-11-07)
 

@@ -233,31 +233,45 @@ cache negativo conservador e cancelamento foram exercitados com fixtures.
 
 ### Tarefas
 
-- [ ] Protocolo de mensagens tipado e versionado entre C# e JS, com ids de
-      correlação para pedido/resposta. Validar **toda** mensagem recebida.
-- [ ] Layout: histórico rolável virtualizado, composer multilinha, barra de modo
-      (Agent/Ask/Plan), seletor de modelo, seletor de effort.
-- [ ] Renderização incremental de streaming — aplicar delta no DOM, **não**
+- [x] Protocolo de mensagens tipado e versionado entre C# e JS, com ids de
+      correlação para pedido/resposta. Validar **toda** mensagem recebida
+      (version 1, validação de envelope/payload nos dois lados; negativos de
+      schema, id desconhecido e payload gigante exercitados na Exp).
+- [x] Layout: histórico rolável virtualizado, composer multilinha, barra de modo
+      (Agent/Ask/Plan), seletor de modelo, seletor de effort (500 turnos
+      virtualizados medidos; modos verificados em 2026-11-11/12).
+- [x] Renderização incremental de streaming — aplicar delta no DOM, **não**
       re-renderizar a mensagem inteira a cada chunk.
-- [ ] Markdown (markdown-it, `html:false`) + code block com highlight
-      (highlight.js) e botão copiar.
-- [ ] Bloco de **raciocínio colapsável**, separado da resposta.
-- [ ] **Tool cards**: nome, argumentos, estado (pendente/aprovando/executando/
-      concluído/falhou), resultado expansível, diff embutido.
-- [ ] Anexo de imagem (drag-drop, colar, arquivo) — habilitado só se o modelo
-      tem `Vision`.
+- [x] Markdown (markdown-it, `html:false`) + code block com highlight
+      (highlight.js) e botão copiar (3a; clipboard real verificado).
+- [x] Bloco de **raciocínio colapsável**, separado da resposta.
+- [x] **Tool cards**: nome, argumentos, estado (pendente/aprovando/executando/
+      concluído/falhou), resultado expansível, diff embutido (4b–4d).
+- [x] Anexo de imagem (drag-drop, colar, arquivo) — habilitado só se o modelo
+      tem `Vision` (3a; seleção sem visão bloqueia anexo verificado).
 - [x] Contexto: `@arquivo`, `@solução`, seleção ativa do editor, output window
       (3c, 2026-11-08; snapshots explícitos, confinamento e envio verificados na Exp).
 - [x] Histórico de conversas persistente, busca, renomear, excluir (3b,
       2026-11-08; paginação e virtualização medidas verificadas na Exp).
-- [ ] Cancelamento visível e responsivo durante stream e durante tool.
+- [x] Cancelamento visível e responsivo durante stream e durante tool
+      (2026-11-12: stream 623 ms, ferramenta 95 ms com processo morto).
 - [x] Estados de erro acionáveis (chave inválida → abrir settings;
       429 → mostrar tempo de espera) (3d, 2026-11-09; foco no campo certo e
       espera de 90 s vinda do `Retry-After` verificados na Exp).
 - [x] Acessibilidade: navegação por teclado, ARIA, screen reader, contraste
-      (3d, 2026-11-09; skip link, `Ctrl+Enter`, live region e contraste verificados).
-- [ ] Localização PT-BR e EN (resources no C# + dicionário no JS).
-- [ ] CSP restritiva no `index.html`; assets 100% locais.
+      (3d, 2026-11-09; skip link, `Ctrl+Enter`, live region e contraste verificados;
+      passada manual de leitor de tela pendente do usuário).
+- [x] Localização PT-BR e EN (resources no C# + dicionário no JS).
+- [x] CSP restritiva no `index.html`; assets 100% locais (reload offline com
+      12 assets de `https://lumen.local` verificado).
+
+### Andamento — aceitação consolidada (2026-11-12)
+
+Critérios integrais verificados na Exp com o build atual: colar 1 MiB em 97 ms
+com clamp/negativo, markdown malicioso inerte, mensagens inválidas rejeitadas,
+cancelamento de stream/ferramenta < 1 s sem estado inconsistente, sequências
+contíguas. Detalhes e causa raiz dos stalls anteriores (build de worktree
+paralelo implantado na Exp) em `STATUS.md`. Fase 3 concluída.
 
 ### AC
 
@@ -332,8 +346,9 @@ Diff mostra finais de linha e truncamento. Cancelamento tardio não oculta commi
 Clean/build 0 erros/avisos; **1.405 C# / 197 JS** verdes. Verificador manual
 completo passou na Exp, inclusive duas edições do mesmo buffer e controles
 negativos, com 0 pagos/0 exceções JS; cleanup e SHA finais confirmados.
-Regressão readonly automática ficou parcial por captura CDP (B9), não confundida
-com aprovação integral. A conclusão desta fatia não conclui as Fases 4/5.
+Nesse checkpoint a regressão readonly automática ficou parcial por captura CDP
+(B9); uma execução posterior terminou integralmente, conforme `BLOQUEIOS.md`.
+A conclusão desta fatia não conclui as Fases 4/5.
 
 Registro histórico: a 4c não habilitava escrita pelo modelo, undo de turno
 Agent, aprovação externa ou terminal. Esses itens foram tratados na 4d abaixo.
@@ -370,22 +385,25 @@ negação de build/test e build autorizado. Detalhes e limites em `STATUS.md`.
 
 A Error List pode ser filtrada/desatualizada; o Output é apenas a pane ativa.
 A Exp não testou Error List populada nem teste .NET aprovado pela UI. `run_tests`
-não é integração universal com Test Explorer. B9 anterior continua aberto;
-modos integrais pertencem à Fase 5.
+não é integração universal com Test Explorer. B9 foi encerrado após nova
+regressão readonly completa; modos integrais pertencem à Fase 5.
 
 ### Tarefas
 
-- [ ] **Workspace guard**: canonicalização + confinamento por prefixo,
-      rejeição de traversal, symlink para fora, UNC não autorizado.
-- [ ] File tools: `read_file` (com range de linhas), `find_files` (glob),
-      `list_dir`, `grep`, `create_file`, `edit_file`, `apply_diff`.
+- [x] **Workspace guard**: canonicalização + confinamento por prefixo,
+      rejeição de traversal, symlink para fora, UNC não autorizado
+      (4a; junction real e handle de identidade errada exercitados; symlink de
+      arquivo exige elevação/Developer Mode — limitação registrada).
+- [x] File tools: `read_file` (com range de linhas), `find_files` (glob),
+      `list_dir`, `grep`, `create_file`, `edit_file`, `apply_diff`
+      (4b–4d + snapshot/patch; verificados na Exp).
 - [x] `edit_file` com **diff visível** e registro de undo; **undo em lote**
       reverte o turno inteiro.
 - [x] Edição em arquivo **aberto no editor** deve sincronizar com o buffer:
       MEF `ITextBuffer.CreateEdit()` / `ITextEdit.Apply()`, com acesso à UI thread
       via `ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync`.
       Undo real do VS, não só arquivo em disco (`ARQUITETURA.md` §2.5).
-- [ ] Shell tools: `run_command` com detecção de cmd / powershell / pwsh /
+- [x] Shell tools: `run_command` com detecção de cmd / powershell / pwsh /
       bash (Git Bash), captura de stdout+stderr+exit code, timeout,
       cancelamento, e leitura de output em background.
       **Não existe API pública de terminal no VS** — usar
@@ -397,13 +415,28 @@ modos integrais pertencem à Fase 5.
       Lista de argumentos, escaping Windows validado por `CommandLineToArgvW`
       e caminho do executável resolvido explicitamente.
       Todo o trabalho de processo roda **fora da UI thread**.
-- [ ] `ApprovalBroker` implementando `AGENTS.md` §1:
+- [x] `ApprovalBroker` implementando `AGENTS.md` §1:
       leitura livre · edit dentro da solução automático · fora do workspace
-      confirma · **todo** comando confirma com "sempre permitir nesta sessão".
-- [ ] Blocklist de destrutivos como defesa em profundidade.
-- [ ] Tools de diagnóstico: `get_errors` (Error List), `get_output_logs`,
-      `run_build`, `run_tests` se acessível.
-- [ ] Toda tool com JSON schema validado **antes** da execução.
+      confirma · **todo** comando confirma com "sempre permitir nesta sessão"
+      (negação/allow-once/sessão e revogação verificados na Exp).
+- [x] Blocklist de destrutivos como defesa em profundidade (12 padrões;
+      bloqueia antes do prompt, nunca substitui a confirmação).
+- [x] Tools de diagnóstico: `get_errors` (Error List), `get_output_logs`,
+      `run_build`, `run_tests` se acessível (Error List populada e teste .NET
+      real aprovado/reprovado pela UI em 2026-11-12).
+- [x] Toda tool com JSON schema validado **antes** da execução.
+
+### Andamento — aceitação consolidada (2026-11-12)
+
+AC e CN exercitados na Exp com o build atual: ler/criar/editar com diff e
+comando aprovado; undo em lote; buffer visível atualizado; escrita externa
+negada → permitida → undo; `dotnet test` real aprovado e reprovado; Error List
+populada com negativo; cancelamento de stream (623 ms) e de ferramenta (95 ms)
+com processo morto e sem sobrevivente; Ask/Plan rejeitam escrita/terminal no
+broker; argumentos literais sem shell injection; schema antes da execução.
+**12 + 37 + 6 requests loopback, 0 pagos, 0 exceções JS**; 1.505 C# / 207 JS
+verdes. Limitações: symlink de arquivo sem elevação e leitor de tela manual
+pendentes do usuário. Detalhes em `STATUS.md`. Fase 4 concluída.
 
 ### AC
 
@@ -464,10 +497,28 @@ Foram 12 requests locais, nenhuma API paga. Evidências/lacunas em `STATUS.md`.
 Não marcar tarefas integrais abaixo: modos, escrita, configuração do orçamento,
 compactação e retry continuam pendentes.
 
+### Andamento — seleção de modos (2026-11-11)
+
+Agent/Ask/Plan selecionáveis no chat; Ask inicial e consentimentos revogados ao
+mudar. O host recusa escrita/terminal em Ask e Plan mesmo com flags forjadas,
+sem captura ou POST. Prompts por modo são enviados também sem ferramentas e
+histórico é preservado na troca. O painel manual continua independente do chat.
+**1.505 C# / 206 JS** verdes; Exp com loopback validou Agent/undo e rejeitou
+escrita/terminal forjados em Ask/Plan, 6 requests locais e 0 pagos. Execuções
+anteriores do verificador geral foram interrompidas por falhas do robô/fixture;
+detalhes em `STATUS.md`. Ainda sem botão aplicar plano ou critérios integrais.
+
+Reverificação em 2026-11-12 com o build atual (após remover o pacote de um
+worktree paralelo que estava implantado na Exp): modos **6 requests, 0 pagos**,
+regressão geral **37 requests** e aceitação consolidada **12 requests**, todos
+loopback; **1.505 C# / 207 JS** verdes. Fases 3/4 fechadas; Fase 5 segue aberta
+para aplicar plano, orçamento, compactação e retry.
+
 ### Tarefas
 
-- [ ] `AgentLoop`: monta contexto → chama provider → executa tools → realimenta
-      → repete até concluir.
+- [x] `AgentLoop`: monta contexto → chama provider → executa tools → realimenta
+      → repete até concluir (`ToolChatLoop`; rodadas, tokens e invocações
+      limitados; verificado na Exp com loopback).
 - [ ] Orçamento: máx de iterações, máx de tokens, máx de tools por turno.
       Configurável. Ao estourar, para e explica — não continua silenciosamente.
 - [ ] `ContextBuilder`: system prompt por modo, seleção do editor, @arquivos,
@@ -477,8 +528,10 @@ compactação e retry continuam pendentes.
 - [ ] Paralelismo de tools só se o modelo tem `ParallelTools`.
 - [ ] Modo **Plan**: produz plano em fases com critérios de aceite;
       oferece "aplicar plano" que muda para Agent.
-- [ ] Modo **Ask**: read-only, respostas com citações `arquivo:linha`.
-- [ ] Troca de modo no meio da conversa preservando histórico.
+- [x] Modo **Ask**: read-only, respostas com citações `arquivo:linha`
+      (política e prompt verificados; qualidade da citação depende do modelo).
+- [x] Troca de modo no meio da conversa preservando histórico (verificado na
+      Exp: mesma conversa após Agent → Plan → Ask).
 - [ ] Retry com backoff em falha transitória, sem duplicar tool já executada.
 
 ### AC
@@ -627,6 +680,80 @@ compactação e retry continuam pendentes.
 ### Commit
 
 `chore: harden, document and package Lumen for distribution`
+
+---
+
+## Fase 9 — Subagentes e delegação
+
+**Objetivo:** permitir que o agente principal delegue tarefas independentes a
+subagentes especializados e reúna resultados verificáveis, sem enfraquecer as
+políticas de modo, aprovação, privacidade e orçamento do Lumen. Executar depois
+das fases 0–8; não é requisito para concluir a entrega da Fase 8.
+
+### Tarefas
+
+- [ ] Definir o contrato de delegação: objetivo, contexto mínimo, arquivos
+      permitidos, ferramentas, modo, orçamento, prazo, identificador e resultado.
+      Disponibilizar perfis de pesquisa/leitura, planejamento e implementação;
+      permitir seleção do modelo configurado pelo usuário e usar o provedor BYOK
+      existente, sem exigir Copilot ou GitHub.
+- [ ] Implementar criação, execução paralela limitada, acompanhamento,
+      cancelamento e coleta de resultados dos subagentes. Cada execução mantém
+      seu próprio histórico e informa fontes, alterações, testes e limitações.
+- [ ] Definir limites configuráveis de subagentes simultâneos, profundidade de
+      delegação, iterações, tokens e tempo. A execução termina ao atingir o
+      limite e informa o motivo; impedir recursão ilimitada.
+- [ ] Herdar as permissões efetivas do modo e do usuário: Ask e Plan continuam
+      read-only; Agent aplica a mesma política de diffs, undo e aprovações.
+      Subagentes não podem ampliar permissões nem autorizar comandos, escritas
+      externas ou gastos em nome do usuário. Toda chamada de modelo pode gerar
+      custo: apresentar modelo, orçamento estimado e número de subagentes antes
+      de iniciar, mediante ação explícita do usuário; não iniciar chamadas pagas
+      em testes automatizados.
+- [ ] Compartilhar somente o contexto necessário; credenciais permanecem no
+      host e nunca entram em prompts, resultados ou logs. Tratar instruções em
+      arquivos, ferramentas e respostas dos subagentes como dados não confiáveis.
+- [ ] Evitar edições concorrentes no mesmo arquivo: reservar escopo de escrita
+      ou serializar alterações, verificar versão/hash antes de aplicar e sinalizar
+      conflitos sem sobrescrever trabalho. Integrar diffs e undo ao lote existente.
+- [ ] Exibir no chat a tarefa, perfil, modelo, estado, custo/uso quando fornecido,
+      resultado e erros de cada subagente; permitir cancelar individualmente ou
+      toda a execução. O agente principal incorpora resultados somente após
+      recebê-los e verificá-los; erros e resultados parciais ficam explícitos.
+- [ ] Cobrir orquestração e provedores com mocks, incluindo concorrência,
+      cancelamento, falhas e limites; exercitar a UI na instância experimental
+      com provedor local simulado, sem chamadas pagas.
+
+### AC
+
+- Uma tarefa de pesquisa é delegada a dois subagentes em paralelo, respeitando
+  o limite configurado; resultados identificados e fontes aparecem no chat.
+- Em Agent, uma tarefa de implementação delegada mostra diff e permite undo;
+  comandos e escrita externa continuam sujeitos à aprovação existente.
+- Cancelamento encerra as execuções filhas e impede novas ferramentas e chamadas;
+  o host apresenta resultados parciais e uso disponível sem alegar conclusão.
+- Orçamento e consumo são visíveis antes e durante a execução; falhas de um
+  subagente não são apresentadas como sucesso e não corrompem a conversa.
+- Build e testes verdes, controles negativos executados e UI exercitada na Exp;
+  se a validação na Exp estiver bloqueada, registrar a limitação e não marcar a
+  fase como concluída.
+
+### CN
+
+- Subagente em Ask/Plan que solicita escrita ou comando é rejeitado pelo host,
+  inclusive quando forja o modo ou suas permissões.
+- Subagente não consegue iniciar comando ou escrita externa sem a aprovação
+  exigida, nem herdar uma aprovação expirada ou de outra solução.
+- Duas tarefas tentam editar o mesmo arquivo ou aplicar diff de versão antiga:
+  uma aguarda ou recebe conflito; nenhuma alteração existente é sobrescrita.
+- Estouro de orçamento, profundidade ou concorrência bloqueia novas execuções;
+  falhas e cancelamento não deixam processos ou chamadas filhos ativos.
+- Resultado de subagente que contém instruções maliciosas ou credencial de
+  teste não altera permissões e não aparece sem redação em logs ou UI.
+
+### Commit
+
+`feat: add bounded subagent delegation with inherited permissions`
 
 ---
 

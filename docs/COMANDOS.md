@@ -555,6 +555,13 @@ Evidências: `artifacts/auto-tools.binlog`, `artifacts/tests/auto-tools.trx`,
 `artifacts/webview-verification.json`. Limitações de transporte real, I/O longo,
 symlink e leitor de tela estão em `STATUS.md`. Não conclui Fases 4/5.
 
+Em 2026-11-11, nova execução integral com o pacote local da Fase 5 chegou à
+captura PNG e à asserção de exceções, com 12 requests loopback, 0 pagos e 0
+exceções JS. O verificador confere assinatura e dimensões PNG e rejeita uma
+cópia deliberadamente corrompida. Fixtures/credenciais próprias foram limpas,
+Exp fechada e SHA verificado em `Extensions\hbngbmnp.22r`. B9 foi encerrado
+quanto à regressão; a causa do timeout CDP original continua desconhecida.
+
 ## Fatia 4c — escrita manual interna (2026-11-10)
 
 Com a Exp fechada e sem manifesto anterior:
@@ -654,8 +661,9 @@ Resultado: clean/build **0 erros/avisos**, **1.466 C# / 205 JS**, sem ignorados.
 Retomada: **11 requests loopback, 0 pagos, 0 exceções JS**, Output/cancel/sessão/
 readonly/fora/HTML/segredos/stale/reabertura/layout negativo aprovados. Relatório
 explicita o marco anterior, não uma nova execução integral única. Screenshot
-salvo; não resolve B9 da regressão readonly anterior. Cleanup e SHA de todos os
-arquivos em `Extensions\xont1ooq.0ro` confirmados, Exp fechada; sem commit/push.
+salvo; naquela ocasião não resolveu B9 da regressão readonly anterior, que foi
+encerrado em execução posterior. Cleanup e SHA de todos os arquivos em
+`Extensions\xont1ooq.0ro` confirmados, Exp fechada; sem commit/push naquele checkpoint.
 Evidências: `artifacts/agent-tools.binlog`, `artifacts/tests/agent-tools.trx`,
 `artifacts/agent-tools-ui-tests.log`, `artifacts/agent-tools-webview.json` e
 `artifacts/agent-tools-webview.png`. Próximos itens/limites em `STATUS.md`.
@@ -673,4 +681,33 @@ inspeção, sem criar outra fixture. A Exp testou `Extensions\le2lbosl.32w`.
 Após o clean/build, apenas `manifest.json` (diretório gerado aleatório) e
 `catalog.json` diferiram; os demais arquivos coincidiram. O pacote reconstruído
 foi reinstalado e verificado em `Extensions\n0a1c00s.vyu`, sem repetir a UI.
-Cleanup foi confirmado; B9 anterior permanece aberto.
+Cleanup foi confirmado; B9 foi encerrado em execução posterior.
+
+## Fase 5 — validação focada dos modos (2026-11-11)
+
+Com Exp fechada e sem fixture existente:
+
+```bash
+dotnet build Lumen.sln -c Release --nologo -v:minimal
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --nologo
+npm run check:ui
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs modes
+node scripts/verify-agent-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`modes` verifica somente Agent/undo, Ask/Plan rejeitando edição e comando
+forjados, troca com histórico e layout negativo. Usa credencial sintética e
+servidor loopback próprios. Não comprova aplicação do plano, orçamento ajustável,
+compactação nem a regressão geral. Se interrompido, não apagar a fixture enquanto
+houver escritas no journal da Exp: inspecionar o estado, limpar os IDs próprios
+e fechar a solução/instância antes de remover a fixture. Não repetir `Prepare`
+sobre manifesto existente. Resultado: **1.505 C# / 206 JS**, 6 requests locais,
+0 pagos e 0 exceções JS; `artifacts/phase5-modes-webview.json`. Exp fechada,
+SHA verificado em `Extensions\hbngbmnp.22r`; sem commit nesta fatia.

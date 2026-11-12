@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { watch } from 'node:fs';
 import { randomUUID, createHash } from 'node:crypto';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -8,10 +9,13 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const stage = process.argv[2] || 'verify';
-assert.ok(['verify', 'resume', 'cleanup'].includes(stage));
+assert.ok(['verify', 'modes', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
 const manifestPath = new URL('../artifacts/context-fixtures.json', import.meta.url);
 const manifest = JSON.parse((await readFile(manifestPath, 'utf8')).replace(/^\uFEFF/, ''));
+const outsidePath = path.join(path.dirname(manifest.root), `${path.basename(manifest.root)}-owned-outside.txt`);
 const requests = [], sockets = new Set();
+let streamReached;
+const streamReady = new Promise(resolve => { streamReached = resolve; });
 const textOf = message => typeof message.content === 'string' ? message.content : (message.content ?? []).map(part => part.text ?? '').join('');
 const command = { name: 'run_command', args: { command: 'cmd', args: ['/c', 'echo', 'lumen-agent-marker'] } };
 const currentResults = payload => payload.messages.slice(payload.messages.findLastIndex(message => message.role === 'user') + 1).filter(message => message.role === 'tool');
@@ -35,6 +39,11 @@ const server = createServer(async (request, response) => {
   const userIndex = payload.messages.findLastIndex(message => message.role === 'user');
   const text = textOf(payload.messages[userIndex]);
   const results = payload.messages.slice(userIndex + 1).filter(message => message.role === 'tool');
+  if (text === 'fixture-agent-acceptance-stream') {
+    response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'stream-start' }, finish_reason: null }] })}\n\n`);
+    response.write(': waiting for cancellation\n\n');
+    streamReached(); return;
+  }
   if (text === 'fixture-agent-patch' || text === 'fixture-agent-patch-negative') {
     if (!results.length) { calls(response, [{ name: 'get_edit_snapshot', args: { path: 'Sample.cs' } }], requests.length); return; }
     if (results.length === 1) {
@@ -44,6 +53,18 @@ const server = createServer(async (request, response) => {
     }
   }
   if (results.length) { answer(response, `Agent tool results received: ${results.length} <script>window.lumenAgentExecuted=true</script><img src=x onerror="window.lumenAgentExecuted=true">`); return; }
+  if (text === 'fixture-agent-acceptance-outside') {
+    calls(response, [{ name: 'edit_file', args: { path: outsidePath, content: 'outside-after\n' } }], requests.length); return;
+  }
+  if (text === 'fixture-agent-acceptance-tests') {
+    calls(response, [{ name: 'run_tests', args: { path: 'Acceptance.Tests.csproj', timeout_ms: 60000 } }], requests.length); return;
+  }
+  if (text === 'fixture-agent-acceptance-errors') {
+    calls(response, [{ name: 'get_errors', args: {} }], requests.length); return;
+  }
+  if (text === 'fixture-agent-acceptance-tool') {
+    calls(response, [{ name: 'run_command', args: { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-File', 'Wait.ps1'], timeout_ms: 60000 } }], requests.length); return;
+  }
   if (text === 'fixture-agent-diagnostics') {
     calls(response, [{ name: 'get_errors', args: {} }, { name: 'get_output_logs', args: {} }, { name: 'detect_shells', args: {} }], requests.length); return;
   }
@@ -59,7 +80,7 @@ const server = createServer(async (request, response) => {
   if (text === 'fixture-agent-build' || text === 'fixture-agent-tests') {
     calls(response, [{ name: text === 'fixture-agent-build' ? 'run_build' : 'run_tests', args: { path: 'ContextFixture.csproj' } }], requests.length); return;
   }
-  if (text === 'fixture-agent-negative') {
+  if (text === 'fixture-agent-negative' || text === 'fixture-mode-plan' || text === 'fixture-mode-ask') {
     calls(response, [{ name: 'edit_file', args: { path: 'Sample.cs', content: 'forged' } }, command], requests.length); return;
   }
   if (text === 'fixture-agent-outside') {
@@ -127,25 +148,27 @@ async function collectOwnedConversations() {
   await saveManifest();
 }
 // decision: 'none' (no approval expected; auto-deny if one appears), 0/1/2 (button index), or 'cancel'.
-async function agentChat(text, checkboxes, decision) {
+async function agentChat(text, checkboxes, decision, mode = checkboxes.some(id => id === 'auto-write-tools' || id === 'auto-terminal') ? 'Agent' : 'Ask') {
   await idle();
+  await evaluate(`(()=>{const mode=document.querySelector('#byok-mode');mode.value=${JSON.stringify(mode)};mode.dispatchEvent(new Event('change'));})()`);
   const setters = checkboxes.map(id => `const c_${id.replace(/-/g, '_')}=document.querySelector('#byok-${id}');c_${id.replace(/-/g, '_')}.checked=true;c_${id.replace(/-/g, '_')}.dispatchEvent(new Event('change'));`).join('');
   const onApproval = decision === 'cancel'
     ? "approval={category:e.data.payload.category};document.querySelector('#byok-cancel').click();"
-    : `const buttons=card.querySelectorAll('button');approval={toolName:e.data.payload.toolName,category:e.data.payload.category,arguments:e.data.payload.arguments,buttonCount:buttons.length,canAllowSession:e.data.payload.canAllowSession};buttons[${decision === 'none' ? 0 : decision}].click();${decision === 'none' ? 'approvalUnexpected=true;' : ''}`;
+    : `const buttons=card.querySelectorAll('button');approval={toolName:e.data.payload.toolName,category:e.data.payload.category,arguments:e.data.payload.arguments,targetPath:e.data.payload.targetPath,buttonCount:buttons.length,canAllowSession:e.data.payload.canAllowSession};buttons[${decision === 'none' ? 0 : decision}].click();${decision === 'none' ? 'approvalUnexpected=true;' : ''}`;
   return evaluate(`new Promise((resolve,reject)=>{
-   const events=[];let approval=null,approvalUnexpected=false;
-   const timer=setTimeout(()=>{chrome.webview.removeEventListener('message',handler);reject(new Error('agent chat timeout'));},30000);
+   const events=[],sequences=[];let approval=null,approvalUnexpected=false,settled=false;
+   const timer=setTimeout(()=>{chrome.webview.removeEventListener('message',handler);reject(new Error('agent chat timeout; stall='+JSON.stringify(window.__lumenStall||null)+'; wire='+JSON.stringify((window.__lumenWire||[]).slice(-6))));},30000);
    const handler=e=>{
-     if(e.data.type==='byok.event'){events.push(e.data.payload);
+     if(e.data.type==='byok.event'){events.push(e.data.payload);sequences.push(e.data.sequence);
        if(e.data.payload.kind==='ApprovalRequest'){setTimeout(()=>{const card=[...document.querySelectorAll('#byok-output .byok-approval')].pop();${onApproval}},0);}
        return;}
-     if(e.data.type==='byok.chat.result'||e.data.type==='error'){clearTimeout(timer);chrome.webview.removeEventListener('message',handler);resolve({...e.data,events,approval,approvalUnexpected});}
+     if(e.data.type==='byok.chat.result'||e.data.type==='error'){settled=true;clearTimeout(timer);chrome.webview.removeEventListener('message',handler);resolve({...e.data,events,sequences,approval,approvalUnexpected});}
    };
    chrome.webview.addEventListener('message',handler);
    const input=document.querySelector('#byok-message');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input'));
    ${setters}
-   document.querySelector('#byok-send').click();})`);
+   document.querySelector('#byok-send').click();
+   setTimeout(()=>{if(!settled&&events.length===0){window.__lumenStall={sendDisabled:document.querySelector('#byok-send').disabled,live:document.querySelector('#byok-live').children.length,error:document.querySelector('#byok-error')?.textContent||null,mode:document.querySelector('#byok-mode').value,inputLen:input.value.length,autoWrite:document.querySelector('#byok-auto-write-tools').checked,autoTerminal:document.querySelector('#byok-auto-terminal').checked,wire:(window.__lumenWire||[]).slice(-6)};}},2500);})`);
 }
 const report = { startedAt: new Date().toISOString(), source: 'real VS Exp/WebView2 + owned loopback provider; no paid APIs' };
 const root = manifest.root;
@@ -153,9 +176,10 @@ const sample = path.join(root, 'Sample.cs');
 try {
   await command_('Runtime.enable'); await command_('Page.enable');
   await wait("document.querySelector('#connection-status')?.dataset.state==='connected'");
+  await evaluate(`(()=>{if(window.__lumenWire)return true;window.__lumenWire=[];const original=chrome.webview.postMessage.bind(chrome.webview);chrome.webview.postMessage=message=>{try{window.__lumenWire.push({type:message&&message.type,id:message&&message.id,at:Math.round(performance.now())});if(window.__lumenWire.length>512)window.__lumenWire.shift();}catch{}return original(message);};return true;})()`);
   if (stage !== 'cleanup') {
     let port = 0;
-    if (stage === 'resume') {
+    if (stage === 'resume' || stage === 'acceptance-resume') {
       const listed = await rpc('byok.list', {});
       const configuration = listed.payload.configurations.find(value => value.id === manifest.configurationId);
       assert.ok(configuration);
@@ -176,16 +200,22 @@ try {
       const listed = await rpc('byok.list', {});
       if (listed.payload.configurations.some(value => value.id === manifest.configurationId)) assert.equal((await rpc('byok.remove', { configurationId: manifest.configurationId })).type, 'byok.remove.result');
     }
-    console.log('Owned agent-tools provider, credential and conversations removed.');
+    if (manifest.outsideFile) {
+      assert.equal(path.resolve(manifest.outsideFile), path.resolve(outsidePath));
+      await unlink(outsidePath).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    }
+    console.log('Owned agent-tools provider, credential, conversations and external fixture removed.');
   } else {
-    const beforeDisk = await readFile(sample);
-    const originalBuffer = await automation('WriteInspect');
-    assert.equal(originalBuffer.saved, false);
+    const diagnosticBackup = path.join(root, 'Sample.cs.lumen-fixture-backup');
+    const diagnosticPending = stage === 'acceptance-resume' && await readFile(diagnosticBackup).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
+    const beforeDisk = await readFile(diagnosticPending ? diagnosticBackup : sample);
+    const originalBuffer = diagnosticPending ? null : await automation('WriteInspect');
+    if (originalBuffer) assert.equal(originalBuffer.saved, false);
     for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(await evaluate(`document.querySelector('#byok-${id}').checked`), false);
-    if (stage === 'verify') {
+    if (stage === 'verify' || stage === 'modes' || stage === 'acceptance') {
       assert.equal(manifest.configurationId, null, 'Do not overwrite a fixture provider from an interrupted run.');
       manifest.configurationId = randomUUID(); await saveManifest();
-    } else {
+    } else if (stage === 'resume') {
       assert.ok(manifest.configurationId && manifest.conversationIds.length);
       assert.ok(originalBuffer.text.includes(manifest.marker));
       await assert.rejects(readFile(path.join(root, 'AgentCreated.txt')));
@@ -194,6 +224,12 @@ try {
       await wait("document.querySelector('#byok-write-pending').textContent.includes('0 / 64')");
       await evaluate("document.querySelector('#byok-write-tools').open=false");
       report.resumedAfter = 'manual + two automatic batches, isolated undo, terminal deny and allow-once passed before OutputInspect COM correction';
+    } else {
+      assert.ok(manifest.configurationId && manifest.outsideFile);
+      assert.equal(path.resolve(manifest.outsideFile), path.resolve(outsidePath));
+      assert.equal(await readFile(outsidePath, 'utf8'), 'outside-before\n');
+      if (originalBuffer) assert.ok(originalBuffer.text.includes(manifest.marker));
+      report.resumedAfter = 'large text input, external deny/allow/undo and passing/failing dotnet tests passed before correcting the fixture build path';
     }
     const configured = await rpc('byok.configure', { id: manifest.configurationId, providerId: manifest.marker, kind: 'OpenRouter', baseUrl: `http://127.0.0.1:${server.address().port}/`, key: 'synthetic-agent-tool-key' });
     assert.equal(configured.type, 'byok.configure.result');
@@ -203,8 +239,143 @@ try {
     await action('byok.select.result', "const m=document.querySelector('#byok-models');m.value='fixture/auto';m.dispatchEvent(new Event('change'));");
     await action('byok.history.new.result', "document.querySelector('#byok-history-new').click()");
     await evaluate("document.querySelector('#byok-panel').open=false");
-    await wait("document.querySelector('#byok-auto-terminal').disabled===false");
+    await wait("document.querySelector('#byok-auto-read-tools').disabled===false");
 
+    if (stage === 'acceptance' || stage === 'acceptance-resume') {
+      if (stage === 'acceptance') {
+      await evaluate("document.querySelector('#byok-message').value='';document.querySelector('#byok-message').focus()");
+      const pasteStart = performance.now();
+      await command_('Input.insertText', { text: 'x'.repeat(1024 * 1024) });
+      report.largeInputMs = Math.round(performance.now() - pasteStart);
+      assert.ok(report.largeInputMs < 3000, `Large input took ${report.largeInputMs} ms.`);
+      const inputState = await evaluate("({length:document.querySelector('#byok-message').value.length,max:document.querySelector('#byok-message').maxLength})");
+      assert.equal(inputState.length, 4096); assert.equal(inputState.max, 4096);
+      assert.equal(await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='x'.repeat(4097);input.dispatchEvent(new Event('input'));return document.querySelector('#byok-send').disabled})()"), true);
+      await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='';input.dispatchEvent(new Event('input'));})()");
+      report.largeTextInputAndNegative = true;
+
+      await writeFile(outsidePath, 'outside-before\n', { flag: 'wx' });
+      manifest.outsideFile = outsidePath; await saveManifest();
+      const outsideDenied = await agentChat('fixture-agent-acceptance-outside', ['auto-write-tools'], 0);
+      assert.equal(outsideDenied.type, 'byok.chat.result');
+      assert.equal(outsideDenied.approval.category, 'WriteOutsideWorkspace');
+      assert.equal(outsideDenied.approval.canAllowSession, false);
+      assert.equal(outsideDenied.approval.buttonCount, 2);
+      assert.equal(JSON.parse(currentResults(requests.at(-1))[0].content).code, 'approval_denied');
+      assert.equal(await readFile(outsidePath, 'utf8'), 'outside-before\n');
+      const outsideAllowed = await agentChat('fixture-agent-acceptance-outside', ['auto-write-tools'], 1);
+      assert.equal(outsideAllowed.type, 'byok.chat.result');
+      assert.equal(path.resolve(outsideAllowed.approval.targetPath).toLowerCase(), path.resolve(outsidePath).toLowerCase());
+      assert.equal(await readFile(outsidePath, 'utf8'), 'outside-after\n');
+      await evaluate("document.querySelector('#byok-write-tools').open=true");
+      await wait("document.querySelector('#byok-write-pending').textContent.includes('1 / 64')");
+      const outsideUndo = await action('byok.tool.write.undo.result', "document.querySelector('#byok-write-undo').click()");
+      assert.equal(outsideUndo.type, 'byok.tool.write.undo.result'); assert.equal(outsideUndo.payload.pending, 0);
+      assert.equal(await readFile(outsidePath, 'utf8'), 'outside-before\n');
+      report.outsideApprovalDenialAndUndo = true;
+
+      const project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><IsTestProject>true</IsTestProject><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0"/><PackageReference Include="xunit" Version="2.9.3"/><PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all"/><Compile Include="AcceptanceTests.cs"/></ItemGroup></Project>';
+      await writeFile(path.join(root, 'Acceptance.Tests.csproj'), project, { flag: 'wx' });
+      await writeFile(path.join(root, 'AcceptanceTests.cs'), 'using Xunit; public class AcceptanceTests { [Fact] public void Fixture() => Assert.Equal(2, 1 + 1); }', { flag: 'wx' });
+      await promisify(execFile)('dotnet', ['restore', path.join(root, 'Acceptance.Tests.csproj'), '--source', root, '--no-http-cache'], { timeout: 60000 });
+      const testsPositive = await agentChat('fixture-agent-acceptance-tests', ['auto-terminal'], 1);
+      assert.equal(testsPositive.type, 'byok.chat.result', JSON.stringify(testsPositive));
+      assert.equal(testsPositive.approval.toolName, 'run_tests');
+      const successfulTests = JSON.parse(currentResults(requests.at(-1))[0].content);
+      assert.equal(successfulTests.exitCode, 0);
+      assert.match(successfulTests.stdout, /Aprovado|Passed/i);
+      await writeFile(path.join(root, 'AcceptanceTests.cs'), 'using Xunit; public class AcceptanceTests { [Fact] public void Fixture() => Assert.Equal(3, 1 + 1); }');
+      const testsNegative = await agentChat('fixture-agent-acceptance-tests', ['auto-terminal'], 1);
+      assert.equal(testsNegative.type, 'byok.chat.result');
+      const failedTests = JSON.parse(currentResults(requests.at(-1))[0].content);
+      assert.notEqual(failedTests.exitCode, 0);
+      assert.match(failedTests.stdout + failedTests.stderr, /fail|falha/i);
+      report.approvedTestsAndNegative = true;
+      }
+      if (!diagnosticPending) await automation('BuildFixtureError');
+      try {
+        const diagnostic = await agentChat('fixture-agent-acceptance-errors', ['auto-read-tools'], 'none');
+        assert.equal(diagnostic.type, 'byok.chat.result');
+        const errors = JSON.parse(currentResults(requests.at(-1))[0].content).errors;
+        assert.ok(errors.some(error => error.description.includes('lumen-acceptance-diagnostic')), JSON.stringify(errors));
+        assert.ok(!errors.some(error => error.description.includes('lumen-nonexistent-diagnostic')));
+        report.populatedErrorListAndNegative = true;
+      } finally { await automation('RestoreFixtureError'); }
+
+      const streaming = agentChat('fixture-agent-acceptance-stream', [], 'none', 'Ask');
+      await Promise.race([streamReady, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Stream did not start')), 15000); timer.unref(); })]);
+      const streamCancelStart = performance.now();
+      await evaluate("document.querySelector('#byok-cancel').click()");
+      const streamCancelled = await streaming; await idle();
+      report.streamCancelMs = Math.round(performance.now() - streamCancelStart);
+      assert.equal(streamCancelled.type, 'error'); assert.equal(streamCancelled.payload.code, 'cancelled');
+      assert.ok(report.streamCancelMs < 1000, `Stream cancellation took ${report.streamCancelMs} ms.`);
+      assert.deepEqual(streamCancelled.sequences, streamCancelled.sequences.map((_, index) => index + 1));
+      report.streamCancellation = true;
+
+      await writeFile(path.join(root, 'Wait.ps1'), "[IO.File]::WriteAllText('process.marker', [string]$PID)\nStart-Sleep -Seconds 30\n[IO.File]::WriteAllText('unexpected-survivor', 'bad')\n", { flag: 'wx' });
+      let signalStarted;
+      const started = new Promise(resolve => { signalStarted = resolve; });
+      const watcher = watch(root, (_, name) => { if (String(name) === 'process.marker') signalStarted(); });
+      try {
+        const running = agentChat('fixture-agent-acceptance-tool', ['auto-terminal'], 1);
+        await Promise.race([started, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Controlled tool did not start')), 15000); timer.unref(); })]);
+        const cancelStart = performance.now();
+        await evaluate("document.querySelector('#byok-cancel').click()");
+        const stopped = await running; await idle();
+        report.toolCancelMs = Math.round(performance.now() - cancelStart);
+        assert.equal(stopped.type, 'error'); assert.equal(stopped.payload.code, 'cancelled');
+        assert.ok(report.toolCancelMs < 1000, `Tool cancellation took ${report.toolCancelMs} ms.`);
+        assert.deepEqual(stopped.sequences, stopped.sequences.map((_, index) => index + 1));
+        const pid = Number(await readFile(path.join(root, 'process.marker'), 'utf8'));
+        assert.ok(Number.isSafeInteger(pid) && pid > 0);
+        let alive = true;
+        try { process.kill(pid, 0); } catch (error) { if (error.code !== 'ESRCH') throw error; alive = false; }
+        assert.equal(alive, false, 'Cancelled test process is still alive.');
+        await assert.rejects(readFile(path.join(root, 'unexpected-survivor')));
+      } finally { watcher.close(); }
+      report.toolCancellationAndProcessExit = true;
+      assert.deepEqual(exceptions, []);
+      await collectOwnedConversations();
+      report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
+      await writeFile(new URL('../artifacts/phase34-acceptance.json', import.meta.url), JSON.stringify(report, null, 2));
+      console.log(JSON.stringify(report));
+    } else if (stage === 'modes') {
+      const initialMode = await evaluate("({mode:document.querySelector('#byok-mode').value,writeDisabled:document.querySelector('#byok-auto-write-tools').disabled,terminalDisabled:document.querySelector('#byok-auto-terminal').disabled})");
+      assert.deepEqual(initialMode, { mode: 'Ask', writeDisabled: true, terminalDisabled: true });
+      await evaluate("document.querySelector('#byok-write-tools').open=true");
+      await wait("document.querySelector('#byok-write-pending').textContent.includes('0 / 64')");
+      const agent = await agentChat('fixture-agent-write', ['auto-write-tools'], 'none', 'Agent');
+      assert.equal(agent.type, 'byok.chat.result', JSON.stringify(agent));
+      assert.equal(agent.approval, null);
+      assert.equal((await automation('WriteInspect')).text.replaceAll('\r\n', '\n'), 'public class AgentEdited {}\n');
+      assert.deepEqual(await readFile(sample), beforeDisk);
+      const undo = await action('byok.tool.write.undo.result', "document.querySelector('#byok-write-undo').click()");
+      assert.equal(undo.payload.pending, 0);
+      assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
+      await assert.rejects(readFile(path.join(root, 'AgentCreated.txt')));
+      for (const mode of ['Plan', 'Ask']) {
+        const readonly = await agentChat(`fixture-mode-${mode.toLowerCase()}`, ['auto-read-tools'], 'none', mode);
+        assert.equal(readonly.type, 'byok.chat.result', JSON.stringify(readonly));
+        assert.equal(readonly.payload.conversation.id, agent.payload.conversation.id);
+        assert.equal(readonly.approval, null);
+        assert.deepEqual(currentResults(requests.at(-1)).map(value => JSON.parse(value.content).code), ['unknown_tool', 'unknown_tool']);
+        const instruction = textOf(requests.at(-2).messages[0]);
+        assert.ok(mode === 'Plan' ? instruction.includes('acceptance criteria') : instruction.includes('cite paths:lines'));
+        assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
+      }
+      assert.deepEqual(await readFile(sample), beforeDisk);
+      await command_('Emulation.setDeviceMetricsOverride', { width: 203, height: 900, deviceScaleFactor: 1, mobile: false });
+      assert.equal(await evaluate('document.documentElement.scrollWidth>innerWidth'), false);
+      assert.equal(await evaluate("(()=>{const app=document.querySelector('.app');app.style.minWidth='240px';const rejected=document.documentElement.scrollWidth>innerWidth;app.style.removeProperty('min-width');return rejected})()"), true);
+      await command_('Emulation.clearDeviceMetricsOverride');
+      assert.deepEqual(exceptions, []);
+      await collectOwnedConversations();
+      report.agentWriteAndUndo = true; report.readOnlyModesAndHistory = true; report.layoutNegativeDetected = true;
+      report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
+      await writeFile(new URL('../artifacts/phase5-modes-webview.json', import.meta.url), JSON.stringify(report, null, 2));
+      console.log(JSON.stringify(report));
+    } else {
     let writeConversationId = manifest.conversationIds[0];
     if (stage === 'verify') {
     // 1. Model-requested writes inside the solution auto-apply with diff + batch undo.
@@ -266,6 +437,19 @@ try {
     assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
     assert.deepEqual(await readFile(sample), beforeDisk);
     report.bufferSnapshotPatchUndo = true; report.invalidPatchHashRejected = true;
+    for (const mode of ['Ask', 'Plan']) {
+      const modeChat = await agentChat(`fixture-mode-${mode.toLowerCase()}`, ['auto-read-tools'], 'none', mode);
+      assert.equal(modeChat.type, 'byok.chat.result', JSON.stringify(modeChat));
+      assert.equal(modeChat.payload.conversation.id, write.payload.conversation.id);
+      assert.equal(modeChat.approval, null);
+      assert.deepEqual(currentResults(requests.at(-1)).map(value => JSON.parse(value.content).code), ['unknown_tool', 'unknown_tool']);
+      const initial = requests.at(-2);
+      const instruction = textOf(initial.messages[0]);
+      assert.ok(mode === 'Plan' ? instruction.includes('acceptance criteria') : instruction.includes('cite paths:lines'));
+      assert.ok(!initial.tools.some(tool => ['edit_file', 'run_command'].includes(tool.function.name)));
+      assert.equal((await automation('WriteInspect')).text, originalBuffer.text);
+    }
+    report.readOnlyModesAndHistory = true;
     const diagnostics = await agentChat('fixture-agent-diagnostics', ['auto-read-tools'], 'none');
     assert.equal(diagnostics.type, 'byok.chat.result', JSON.stringify(diagnostics));
     assert.equal(diagnostics.approval, null);
@@ -354,7 +538,7 @@ try {
 
     await automation('Close');
     const beforeClosed = requests.length;
-    const closed = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'fixture-agent-closed', effort: 'Off', terminal: true });
+    const closed = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'fixture-agent-closed', effort: 'Off', mode: 'Agent', terminal: true });
     assert.equal(closed.type, 'error'); assert.equal(closed.payload.code, 'workspace_unavailable'); assert.equal(requests.length, beforeClosed);
     report.closedSolutionNoProviderRequest = true;
     await automation('Initialize');
@@ -375,6 +559,7 @@ try {
     } catch { report.screenshot = false; }
     assert.deepEqual(exceptions, []); report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
     await writeFile(new URL('../artifacts/agent-tools-webview.json', import.meta.url), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
+    }
   }
 } finally {
   try { await command_('Emulation.clearDeviceMetricsOverride'); } catch {}

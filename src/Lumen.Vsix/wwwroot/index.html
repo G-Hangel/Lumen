@@ -206,6 +206,13 @@
         </div>
         <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter"></textarea>
         <p id="byok-active-model" class="secondary" role="status"></p>
+        <label for="byok-mode" data-i18n="byokMode"></label>
+        <select id="byok-mode" aria-describedby="byok-mode-help" disabled>
+          <option value="Ask" data-i18n="byokModeAsk"></option>
+          <option value="Plan" data-i18n="byokModePlan"></option>
+          <option value="Agent" data-i18n="byokModeAgent"></option>
+        </select>
+        <p id="byok-mode-help" class="secondary" data-i18n="byokModeHelp"></p>
         <div class="byok-auto-consent">
           <input id="byok-auto-read-tools" type="checkbox" disabled aria-describedby="byok-auto-read-help">
           <label for="byok-auto-read-tools" data-i18n="byokAutoReadConsent"></label>

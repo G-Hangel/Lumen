@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { ByokBridge, isByokEnvelope, isByokEvent, MAX_IMAGE_BYTES, PROBE_CAPABILITIES, PROBE_PROVIDER_KINDS, MAX_PROBE_BUDGET } from '../src/Lumen.Vsix/wwwroot/byok-bridge.mjs';
-import { startByok, capabilityState, errorLabel, readImageAttachment, DEFAULT_BASE_URLS } from '../src/Lumen.Vsix/wwwroot/byok.mjs';
+import { startByok, capabilityState, errorLabel, parseMentions, readImageAttachment, DEFAULT_BASE_URLS } from '../src/Lumen.Vsix/wwwroot/byok.mjs';
 import { createMarkdownRenderer, isSafeLink } from '../src/Lumen.Vsix/wwwroot/renderers.mjs';
 
 const root = new URL('../src/Lumen.Vsix/wwwroot/', import.meta.url);
@@ -1949,6 +1949,107 @@ test('UI renders compaction and retry notices as localized lines with live annou
   assert.ok(f.node('output').textContent.includes(pt.byokNoticeRetrying));
   f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Stop' }, chat.id));
   f.transport.reply({ completed: true, conversation: summary }); await send;
+  f.ui.dispose();
+});
+
+test('parseMentions extracts whitespace-delimited tokens, deduplicates and never matches inline emails', () => {
+  assert.deepEqual(parseMentions(''), []);
+  assert.deepEqual(parseMentions('no mentions here'), []);
+  assert.deepEqual(parseMentions('contact a@b.com or @@x or @'), []);
+  assert.deepEqual(parseMentions('@Sample.cs'), [{ kind: 'file', token: 'Sample.cs', path: 'Sample.cs' }]);
+  assert.deepEqual(parseMentions('see @src/File.cs and @Sample.cs please'), [
+    { kind: 'file', token: 'src/File.cs', path: 'src/File.cs' },
+    { kind: 'file', token: 'Sample.cs', path: 'Sample.cs' }]);
+  assert.deepEqual(parseMentions('@Sample.cs @./sample.cs @SAMPLE.CS'), [{ kind: 'file', token: 'Sample.cs', path: 'Sample.cs' }]);
+  assert.deepEqual(parseMentions('@solution @solução @SOLUTION'), [{ kind: 'solution', token: 'solution' }]);
+  assert.deepEqual(parseMentions('line one\n@After.cs\t@Tab.cs'), [
+    { kind: 'file', token: 'After.cs', path: 'After.cs' },
+    { kind: 'file', token: 'Tab.cs', path: 'Tab.cs' }]);
+  // Tokens are strict: trailing punctuation stays in the path and the host guard decides.
+  assert.equal(parseMentions('@Sample.cs,')[0].path, 'Sample.cs,');
+  for (const locale of [pt, en]) {
+    assert.ok(locale.byokMentionFailed.includes('{mention}') && locale.byokMentionFailed.includes('{reason}'));
+    assert.ok(locale.byokMentions.length > 0);
+  }
+});
+
+test('UI composer mentions capture files before chat, preserve the text and attach contextIds', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('message').value = 'analyze @Sample.cs and @docs/Notes.md'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit');
+  const first = f.transport.messages.at(-1);
+  assert.equal(first.type, 'byok.context.capture'); assert.deepEqual(first.payload, { kind: 'file', path: 'Sample.cs' });
+  assert.equal(f.node('send').disabled, true, 'send stays locked while mentions resolve');
+  f.transport.reply({ context: snapshot('file', { id: randomUUID(), label: 'Sample.cs', text: 'class Sample {}' }) }, first); await tick();
+  const second = f.transport.messages.at(-1);
+  assert.equal(second.type, 'byok.context.capture'); assert.deepEqual(second.payload, { kind: 'file', path: 'docs/Notes.md' });
+  assert.equal(attachedRows(f).length, 1, 'resolved mention is visible before the chat starts');
+  f.transport.reply({ context: snapshot('file', { id: randomUUID(), label: 'docs/Notes.md', text: 'notes' }) }, second); await tick();
+  const chat = f.transport.messages.at(-1);
+  assert.equal(chat.type, 'byok.chat');
+  assert.equal(chat.payload.text, 'analyze @Sample.cs and @docs/Notes.md');
+  assert.equal(chat.payload.contextIds.length, 2);
+  assert.ok(f.node('output').textContent.includes('[Context: Sample.cs]'));
+  f.transport.reply({ completed: true, conversation: summary }); await send;
+  assert.equal(f.node('message').value, '');
+  assert.equal(attachedRows(f).length, 0, 'consumed contexts are cleared after the send');
+  f.ui.dispose();
+});
+
+test('UI blocked mention never posts chat, names the failing token and keeps the draft', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('message').value = 'read @../Outside.cs'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit');
+  const capture = f.transport.messages.at(-1);
+  assert.equal(capture.type, 'byok.context.capture'); assert.deepEqual(capture.payload, { kind: 'file', path: '../Outside.cs' });
+  f.transport.emit(envelope('error', { code: 'context_outside_workspace' }, capture.id));
+  await send; await tick();
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.chat').length, 0, 'a rejected mention must never reach the provider');
+  assert.equal(f.node('error').hidden, false);
+  assert.equal(f.node('error').textContent, en.byokMentionFailed.replace('{mention}', '@../Outside.cs').replace('{reason}', en.contextErrorOutside));
+  assert.equal(f.node('message').value, 'read @../Outside.cs');
+  assert.equal(f.node('send').disabled, false);
+  assert.equal(attachedRows(f).length, 0);
+  f.ui.dispose();
+});
+
+test('UI mention already attached via the panel is not captured twice; @solution captures the solution', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('context-path').value = 'Sample.cs'; await f.node('context-path').emit('input');
+  const attach = f.node('context-reference').emit('click');
+  f.transport.reply({ context: snapshot('file', { label: 'Sample.cs', text: 'class Sample {}' }) }); await attach; await tick();
+  f.node('message').value = 'look @Sample.cs @solution'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit');
+  const capture = f.transport.messages.at(-1);
+  assert.equal(capture.type, 'byok.context.capture'); assert.deepEqual(capture.payload, { kind: 'solution' });
+  f.transport.reply({ context: snapshot('solution', { id: randomUUID(), label: 'Fixture.sln', text: 'solution inventory' }) }, capture); await tick();
+  const chat = f.transport.messages.at(-1);
+  assert.equal(chat.type, 'byok.chat');
+  assert.equal(chat.payload.contextIds.length, 2);
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.context.capture').length, 2, 'panel capture + solution only');
+  f.transport.reply({ completed: true, conversation: summary }); await send;
+  f.ui.dispose();
+});
+
+test('UI mention beyond the context limit fails locally without a ninth capture', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('message').value = Array.from({ length: 9 }, (_, index) => `@File${index}.cs`).join(' '); await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit');
+  for (let index = 0; index < 8; index++) {
+    const capture = f.transport.messages.at(-1);
+    assert.equal(capture.type, 'byok.context.capture');
+    f.transport.reply({ context: snapshot('file', { id: randomUUID(), label: `File${index}.cs`, text: 'content' }) }, capture);
+    await tick();
+  }
+  await send; await tick();
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.context.capture').length, 8);
+  assert.equal(f.transport.messages.filter(message => message.type === 'byok.chat').length, 0);
+  assert.equal(f.node('error').textContent, en.byokMentionFailed.replace('{mention}', '@File8.cs').replace('{reason}', en.contextErrorSize));
+  assert.equal(attachedRows(f).length, 8, 'resolved attachments stay visible and removable');
   f.ui.dispose();
 });
 

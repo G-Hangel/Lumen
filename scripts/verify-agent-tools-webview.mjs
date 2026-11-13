@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const stage = process.argv[2] || 'verify';
-assert.ok(['verify', 'modes', 'plan-budget', 'loop-resilience', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
+assert.ok(['verify', 'modes', 'plan-budget', 'loop-resilience', 'agent-task', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
 const manifestPath = new URL('../artifacts/context-fixtures.json', import.meta.url);
 const manifest = JSON.parse((await readFile(manifestPath, 'utf8')).replace(/^\uFEFF/, ''));
 const outsidePath = path.join(path.dirname(manifest.root), `${path.basename(manifest.root)}-owned-outside.txt`);
@@ -76,6 +76,24 @@ const server = createServer(async (request, response) => {
     if (!results.length) { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }, { name: 'read_file', args: { path: 'ContextFixture.csproj' } }], requests.length); return; }
     answer(response, `parallel results received: ${results.length}`); return;
   }
+  if (text.startsWith('fixture-agent-task')) {
+    if (text === 'fixture-agent-task-negative') {
+      if (!results.length) { calls(response, [{ name: 'create_file', args: { path: 'Sample.cs', content: 'collision\r\n' } }], requests.length); return; }
+      answer(response, `recovered from ${JSON.parse(results[0].content).code}`); return;
+    }
+    if (!results.length) { calls(response, [{ name: 'create_file', args: { path: 'Calculator.cs', content: 'public class Calculator\r\n{\r\n    public static int Add(int a, int b) => a + b;\r\n}\r\n' } }], requests.length); return; }
+    if (results.length === 1) { calls(response, [{ name: 'create_file', args: { path: 'CalculatorTests.cs', content: 'public static class CalculatorTests\r\n{\r\n    public static void Run()\r\n    {\r\n        if (Calculator.Add(2, 3) != 5) throw new System.Exception("fixture test failed");\r\n    }\r\n}\r\n' } }], requests.length); return; }
+    // The open legacy project file lives in a read-only project-system buffer that edit_file
+    // correctly refuses, so the model scaffolds a dedicated project for the new sources instead.
+    if (results.length === 2) { calls(response, [{ name: 'create_file', args: { path: 'Calculator.csproj', content: '<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\r\n  <PropertyGroup><OutputType>Library</OutputType><TargetFrameworkVersion>v4.8</TargetFrameworkVersion></PropertyGroup>\r\n  <ItemGroup><Reference Include="System" /><Compile Include="Calculator.cs" /><Compile Include="CalculatorTests.cs" /></ItemGroup>\r\n  <Import Project="$(MSBuildToolsPath)\\Microsoft.CSharp.targets" />\r\n</Project>\r\n' } }], requests.length); return; }
+    if (results.length === 3) { calls(response, [{ name: 'run_build', args: { path: 'Calculator.csproj', timeout_ms: 60000 } }], requests.length); return; }
+    const build = JSON.parse(results[3].content);
+    answer(response, build.exitCode === 0 ? 'fixture-agent-task-complete: build succeeded' : `fixture-agent-task-failed: exit ${build.exitCode}`); return;
+  }
+  if (text.includes('fixture-agent-mention')) {
+    // The open Sample.cs buffer holds the unsaved marker; capture must prefer it over disk.
+    answer(response, text.includes('[Context: Sample.cs]') && text.includes(manifest.marker) ? 'mention-context-received' : 'mention-context-missing'); return;
+  }
   if (results.length) { answer(response, `Agent tool results received: ${results.length} <script>window.lumenAgentExecuted=true</script><img src=x onerror="window.lumenAgentExecuted=true">`); return; }
   if (text === 'fixture-agent-acceptance-outside') {
     calls(response, [{ name: 'edit_file', args: { path: outsidePath, content: 'outside-after\n' } }], requests.length); return;
@@ -128,14 +146,14 @@ socket.addEventListener('message', event => {
   pending.delete(value.id); clearTimeout(task.timer);
   if (value.error) task.reject(new Error(value.error.message)); else task.resolve(value.result);
 });
-function command_(method, params = {}) {
+function command_(method, params = {}, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
-    const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(new Error(method)); }, 30000);
+    const id = ++sequence, timer = setTimeout(() => { pending.delete(id); reject(new Error(method)); }, timeoutMs);
     pending.set(id, { resolve, reject, timer }); socket.send(JSON.stringify({ id, method, params }));
   });
 }
-async function evaluate(expression) {
-  const result = await command_('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+async function evaluate(expression, timeoutMs) {
+  const result = await command_('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, timeoutMs);
   assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails)); return result.result.value;
 }
 const wait = predicate => evaluate(`new Promise((resolve,reject)=>{
@@ -172,7 +190,7 @@ async function collectOwnedConversations() {
   await saveManifest();
 }
 // decision: 'none' (no approval expected; auto-deny if one appears), 0/1/2 (button index), or 'cancel'.
-async function agentChat(text, checkboxes, decision, mode = checkboxes.some(id => id === 'auto-write-tools' || id === 'auto-terminal') ? 'Agent' : 'Ask') {
+async function agentChat(text, checkboxes, decision, mode = checkboxes.some(id => id === 'auto-write-tools' || id === 'auto-terminal') ? 'Agent' : 'Ask', timeoutMs = 30000) {
   await idle();
   await evaluate(`(()=>{const mode=document.querySelector('#byok-mode');mode.value=${JSON.stringify(mode)};mode.dispatchEvent(new Event('change'));})()`);
   const setters = checkboxes.map(id => `const c_${id.replace(/-/g, '_')}=document.querySelector('#byok-${id}');c_${id.replace(/-/g, '_')}.checked=true;c_${id.replace(/-/g, '_')}.dispatchEvent(new Event('change'));`).join('');
@@ -181,7 +199,7 @@ async function agentChat(text, checkboxes, decision, mode = checkboxes.some(id =
     : `const buttons=card.querySelectorAll('button');approval={toolName:e.data.payload.toolName,category:e.data.payload.category,arguments:e.data.payload.arguments,targetPath:e.data.payload.targetPath,buttonCount:buttons.length,canAllowSession:e.data.payload.canAllowSession};buttons[${decision === 'none' ? 0 : decision}].click();${decision === 'none' ? 'approvalUnexpected=true;' : ''}`;
   return evaluate(`new Promise((resolve,reject)=>{
    const events=[],sequences=[];let approval=null,approvalUnexpected=false,settled=false;
-   const timer=setTimeout(()=>{chrome.webview.removeEventListener('message',handler);reject(new Error('agent chat timeout; stall='+JSON.stringify(window.__lumenStall||null)+'; wire='+JSON.stringify((window.__lumenWire||[]).slice(-6))));},30000);
+   const timer=setTimeout(()=>{chrome.webview.removeEventListener('message',handler);reject(new Error('agent chat timeout; stall='+JSON.stringify(window.__lumenStall||null)+'; wire='+JSON.stringify((window.__lumenWire||[]).slice(-6))));},${timeoutMs});
    const handler=e=>{
      if(e.data.type==='byok.event'){events.push(e.data.payload);sequences.push(e.data.sequence);
        if(e.data.payload.kind==='ApprovalRequest'){setTimeout(()=>{const card=[...document.querySelectorAll('#byok-output .byok-approval')].pop();${onApproval}},0);}
@@ -192,7 +210,7 @@ async function agentChat(text, checkboxes, decision, mode = checkboxes.some(id =
    const input=document.querySelector('#byok-message');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input'));
    ${setters}
    document.querySelector('#byok-send').click();
-   setTimeout(()=>{if(!settled&&events.length===0){window.__lumenStall={sendDisabled:document.querySelector('#byok-send').disabled,live:document.querySelector('#byok-live').children.length,error:document.querySelector('#byok-error')?.textContent||null,mode:document.querySelector('#byok-mode').value,inputLen:input.value.length,autoWrite:document.querySelector('#byok-auto-write-tools').checked,autoTerminal:document.querySelector('#byok-auto-terminal').checked,wire:(window.__lumenWire||[]).slice(-6)};}},2500);})`);
+   setTimeout(()=>{if(!settled&&events.length===0){window.__lumenStall={sendDisabled:document.querySelector('#byok-send').disabled,live:document.querySelector('#byok-live').children.length,error:document.querySelector('#byok-error')?.textContent||null,mode:document.querySelector('#byok-mode').value,inputLen:input.value.length,autoWrite:document.querySelector('#byok-auto-write-tools').checked,autoTerminal:document.querySelector('#byok-auto-terminal').checked,wire:(window.__lumenWire||[]).slice(-6)};}},2500);})`, timeoutMs + 5000);
 }
 const report = { startedAt: new Date().toISOString(), source: 'real VS Exp/WebView2 + owned loopback provider; no paid APIs' };
 const root = manifest.root;
@@ -236,7 +254,7 @@ try {
     const originalBuffer = diagnosticPending ? null : await automation('WriteInspect');
     if (originalBuffer) assert.equal(originalBuffer.saved, false);
     for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(await evaluate(`document.querySelector('#byok-${id}').checked`), false);
-    if (stage === 'verify' || stage === 'modes' || stage === 'plan-budget' || stage === 'loop-resilience' || stage === 'acceptance') {
+    if (stage === 'verify' || stage === 'modes' || stage === 'plan-budget' || stage === 'loop-resilience' || stage === 'agent-task' || stage === 'acceptance') {
       assert.equal(manifest.configurationId, null, 'Do not overwrite a fixture provider from an interrupted run.');
       manifest.configurationId = randomUUID(); await saveManifest();
     } else if (stage === 'resume') {
@@ -519,6 +537,86 @@ try {
       await collectOwnedConversations();
       report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
       await writeFile(new URL('../artifacts/phase5-loop-resilience-webview.json', import.meta.url), JSON.stringify(report, null, 2));
+      console.log(JSON.stringify(report));
+    } else if (stage === 'agent-task') {
+      const pt = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/pt-BR.json', import.meta.url), 'utf8'));
+      const en = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/en.json', import.meta.url), 'utf8'));
+      // A. @file mention resolves through the guarded capture pipeline and reaches the provider as context.
+      const beforeMention = requests.length;
+      const mention = await agentChat('fixture-agent-mention @Sample.cs', [], 'none', 'Ask');
+      assert.equal(mention.type, 'byok.chat.result', JSON.stringify(mention));
+      assert.equal(mention.payload.completed, true);
+      assert.equal(requests.length - beforeMention, 1);
+      const mentionUser = textOf(requests.at(-1).messages.findLast(message => message.role === 'user'));
+      assert.ok(mentionUser.includes('[Context: Sample.cs]'), 'mention must inject a labeled context block');
+      assert.ok(mentionUser.includes(manifest.marker), 'capture must prefer the open unsaved buffer over disk');
+      assert.ok((await evaluate("document.querySelector('#byok-output').textContent")).includes('mention-context-received'));
+      report.mentionInjectsContext = true;
+      // B. Negative: a traversal mention is blocked locally, never posts a chat, names the token and keeps the draft.
+      const beforeBlocked = requests.length;
+      await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='fixture-agent-mention-blocked @../Outside.cs';input.dispatchEvent(new Event('input'));document.querySelector('#byok-send').click();})()");
+      await wait("document.querySelector('#byok-error').textContent.includes('@../Outside.cs')");
+      assert.equal(requests.length, beforeBlocked, 'blocked mention must never reach the provider');
+      assert.equal(await evaluate("document.querySelector('#byok-message').value"), 'fixture-agent-mention-blocked @../Outside.cs');
+      const mentionError = await evaluate("document.querySelector('#byok-error').textContent");
+      assert.ok(mentionError.includes(pt.contextErrorOutside) || mentionError.includes(en.contextErrorOutside), mentionError);
+      assert.equal(await evaluate("document.querySelector('#byok-send').disabled"), false);
+      await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='';input.dispatchEvent(new Event('input'));})()");
+      report.mentionTraversalBlocked = true;
+      // C. Multi-step Agent task: create class + test + a dedicated project, then a real approved build.
+      // Five provider rounds exceed the default 4-round budget; raise it (this is the configurable budget working as intended).
+      const setBudget = (rounds, tokens, tools) => evaluate(`(()=>{for(const [id,value] of [['budget-rounds',${rounds}],['budget-tokens',${tokens}],['budget-tools',${tools}]]){const input=document.querySelector('#byok-'+id);input.value=String(value);input.dispatchEvent(new Event('input'));}})()`);
+      await setBudget(8, 32768, 16);
+      const beforeTask = requests.length;
+      const task = await agentChat('fixture-agent-task', ['auto-read-tools', 'auto-write-tools', 'auto-terminal'], 1, 'Agent', 90000);
+      assert.equal(task.type, 'byok.chat.result', JSON.stringify(task));
+      assert.equal(task.payload.completed, true);
+      assert.equal(requests.length - beforeTask, 5, 'create + create + create project + build + answer');
+      assert.equal(task.approval.toolName, 'run_build');
+      assert.equal(task.approval.arguments.command, 'dotnet');
+      assert.equal(task.approval.arguments.args[0], 'build');
+      assert.ok(task.approval.arguments.args[1].endsWith('Calculator.csproj'));
+      assert.equal(task.approval.arguments.args[2], '--no-restore');
+      const taskResults = currentResults(requests.at(-1));
+      assert.equal(taskResults.length, 4);
+      const buildOutcome = JSON.parse(taskResults[3].content);
+      assert.equal(buildOutcome.exitCode, 0, JSON.stringify(buildOutcome));
+      assert.match(buildOutcome.stdout, /succeeded|êxito/i);
+      assert.equal(task.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed').length, 4);
+      assert.ok((await evaluate("document.querySelector('#byok-output').textContent")).includes('fixture-agent-task-complete'));
+      assert.ok((await readFile(path.join(root, 'Calculator.cs'), 'utf8')).includes('public static int Add'));
+      assert.ok((await readFile(path.join(root, 'CalculatorTests.cs'), 'utf8')).includes('Calculator.Add(2, 3)'));
+      const createdProject = await readFile(path.join(root, 'Calculator.csproj'), 'utf8');
+      assert.ok(createdProject.includes('<Compile Include="Calculator.cs" />'));
+      assert.ok(createdProject.includes('<Compile Include="CalculatorTests.cs" />'));
+      // CalculatorTests references Calculator.Add, so a successful build proves both sources compiled together.
+      report.multiStepTaskBuildVerified = true;
+      // Batch undo restores the fixture: the two sources and the scaffolded project disappear; the open project is untouched.
+      await evaluate("document.querySelector('#byok-write-tools').open=true");
+      await wait("document.querySelector('#byok-write-pending').textContent.includes('3 / 64')");
+      const taskUndo = await action('byok.tool.write.undo.result', "document.querySelector('#byok-write-undo').click()");
+      assert.equal(taskUndo.type, 'byok.tool.write.undo.result', JSON.stringify(taskUndo));
+      assert.equal(taskUndo.payload.pending, 0);
+      await assert.rejects(readFile(path.join(root, 'Calculator.cs')));
+      await assert.rejects(readFile(path.join(root, 'CalculatorTests.cs')));
+      await assert.rejects(readFile(path.join(root, 'Calculator.csproj')));
+      assert.ok(!(await readFile(path.join(root, 'ContextFixture.csproj'), 'utf8')).includes('Calculator.cs'));
+      await evaluate("document.querySelector('#byok-write-tools').open=false");
+      report.taskBatchUndoRestores = true;
+      // D. Negative: a mid-task create_file collision is reinjected as file_exists and the loop recovers without approval.
+      const beforeCollision = requests.length;
+      const collision = await agentChat('fixture-agent-task-negative', ['auto-write-tools'], 'none', 'Agent');
+      assert.equal(collision.type, 'byok.chat.result', JSON.stringify(collision));
+      assert.equal(collision.approvalUnexpected, false); assert.equal(collision.approval, null);
+      assert.equal(requests.length - beforeCollision, 2);
+      assert.equal(JSON.parse(currentResults(requests.at(-1))[0].content).code, 'file_exists');
+      assert.ok((await evaluate("document.querySelector('#byok-output').textContent")).includes('recovered from file_exists'));
+      assert.deepEqual(await readFile(sample), beforeDisk, 'a failed create must not touch the existing file');
+      report.midTaskCollisionRecovered = true;
+      assert.deepEqual(exceptions, []);
+      await collectOwnedConversations();
+      report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
+      await writeFile(new URL('../artifacts/phase5-agent-task-webview.json', import.meta.url), JSON.stringify(report, null, 2));
       console.log(JSON.stringify(report));
     } else {
     let writeConversationId = manifest.conversationIds[0];

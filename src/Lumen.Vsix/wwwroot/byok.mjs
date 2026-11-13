@@ -26,6 +26,20 @@ const errorLabels = {
 };
 export const errorLabel = code => errorLabels[safeErrorCode(code)] || 'byokErrorUnknown';
 
+export function parseMentions(text) {
+  const mentions = [];
+  const seen = new Set();
+  for (const match of text.matchAll(/(?:^|\s)@([^\s@]+)/g)) {
+    const token = match[1];
+    const kind = /^(solução|solution)$/i.test(token) ? 'solution' : 'file';
+    const key = kind === 'solution' ? 'solution' : `file:${token.replace(/^\.\//, '').toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    mentions.push({ kind, token, ...(kind === 'file' ? { path: token } : {}) });
+  }
+  return mentions;
+}
+
 export function capabilityState(model, capability) {
   const origin = model.origins.find(item => item.capability === capabilityNames[capability]);
   return {
@@ -850,13 +864,27 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
     const terminal = node('auto-terminal').checked === true && !node('auto-terminal').disabled && selectedModel().tools;
     clearToolConsent();
-    busy = true; streaming = true; clearError(); setStatus('byokStreaming'); updateControls();
     const value = node('message').value;
-    const contextText = contexts.map(item => `[Context: ${item.label}]\n${item.text}`).join('\n\n');
-    const turn = createTurn(value, contextText); turn.record.hasImage = Boolean(attachment);
-    liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
-    node('output').scrollTop = node('output').scrollHeight;
+    const mentions = parseMentions(value);
+    busy = true; clearError(); setStatus(mentions.length ? 'byokMentions' : 'byokStreaming'); updateControls();
+    let turn = null, failedMention = null;
     try {
+      for (const mention of mentions) {
+        const normalized = mention.kind === 'file' ? mention.path.replace(/^\.\//, '').toLowerCase() : null;
+        if (contexts.some(item => mention.kind === 'solution' ? item.kind === 'solution' : item.kind === 'file' && item.label.toLowerCase() === normalized)) continue;
+        if (contexts.length >= MAX_CONTEXTS || contextSize() >= MAX_CONTEXT_TOTAL) { failedMention = mention.token; throw new ByokError('context_too_large'); }
+        let captured;
+        try { captured = await bridge.request('byok.context.capture', { kind: mention.kind, ...(mention.kind === 'file' ? { path: mention.path } : {}) }); }
+        catch (error) { failedMention = mention.token; throw error; }
+        if (disposed) return;
+        contexts.push(captured.context); renderContexts();
+        if (!contextWithinBounds()) { failedMention = mention.token; throw new ByokError('context_too_large'); }
+      }
+      streaming = true; setStatus('byokStreaming'); updateControls();
+      const contextText = contexts.map(item => `[Context: ${item.label}]\n${item.text}`).join('\n\n');
+      turn = createTurn(value, contextText); turn.record.hasImage = Boolean(attachment);
+      liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
+      node('output').scrollTop = node('output').scrollHeight;
       const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value, budget: readBudget(),
         ...(readTools ? { readTools: true } : {}),
         ...(writeTools ? { writeTools: true } : {}),
@@ -878,16 +906,20 @@ export function startByok({ transport, connected = () => false, text, renderMark
       else if (!errorCode) showError('provider_error');
     } catch (error) {
       if (!disposed) {
-        showError(error.code); historyLoaded = false;
-        turn.article.append(localized('p', error.code === 'cancelled' ? 'historyCancelledTurn' : 'historyInterruptedTurn', 'secondary'));
+        showError(error.code);
+        if (failedMention) node('error').textContent = text('byokMentionFailed', { mention: `@${failedMention}`, reason: text(errorLabel(error.code)) });
+        if (turn) {
+          historyLoaded = false;
+          turn.article.append(localized('p', error.code === 'cancelled' ? 'historyCancelledTurn' : 'historyInterruptedTurn', 'secondary'));
+        }
         if (error.code === 'timeout' || error.code === 'invalid_response' || error.code === 'stream_too_large') needsCancel = true;
       }
     } finally {
       busy = false; streaming = false; if (!cancelling) cancelRequested = false; clearProbeConsent();
       // The host revokes unanswered approvals when the chat ends; the card must never stay actionable.
-      for (const approval of turn.approvals.values()) if (!approval.answered) approval.expire();
-      if (writeTools) requestWriteStatus();
-      if (!disposed) { if (liveTurn === turn) finishMarkdown(turn); updateControls(); queueMicrotask(pumpHistory); if (!node('message').disabled) node('message').focus({ preventScroll: true }); }
+      if (turn) for (const approval of turn.approvals.values()) if (!approval.answered) approval.expire();
+      if (writeTools && turn) requestWriteStatus();
+      if (!disposed) { if (turn && liveTurn === turn) finishMarkdown(turn); updateControls(); queueMicrotask(pumpHistory); if (!node('message').disabled) node('message').focus({ preventScroll: true }); }
     }
   }
   async function cancel() {

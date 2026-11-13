@@ -569,4 +569,34 @@ public sealed class AgentToolSessionTests
         Assert.DoesNotContain(fixture.Replies, reply => reply.GetProperty("type").GetString() == "byok.event"
             && reply.GetProperty("payload").GetProperty("kind").GetString() == "Notice");
     }
+
+    [Fact]
+    public async Task MultiStepCreateEditBuildFeedsEachOutcomeBeforeTheNextRound()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.PostResponses.Enqueue(() => ToolCallResponse("call-create", "create_file", "{\"path\":\"Calculator.cs\",\"content\":\"public class Calculator {}\"}"));
+        fixture.Handler.PostResponses.Enqueue(() => ToolCallResponse("call-edit", "edit_file", "{\"path\":\"Fixture.csproj\",\"content\":\"<Project/>\"}"));
+        fixture.Handler.PostResponses.Enqueue(() => ToolCallResponse("call-build", "run_build", "{\"path\":\"Fixture.csproj\"}"));
+        fixture.Handler.PostResponses.Enqueue(() => Sse("{\"choices\":[{\"delta\":{\"content\":\"task done\"},\"finish_reason\":\"stop\"}]}"));
+        var chat = fixture.Chat(new { writeTools = true, terminal = true });
+        var approval = await fixture.WaitApproval();
+        Assert.Equal("run_build", approval.GetProperty("payload").GetProperty("toolName").GetString());
+        await fixture.Send("byok.approval.respond", new { requestId = approval.GetProperty("payload").GetProperty("id").GetString(), decision = "allow_once" });
+        await chat.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(4, fixture.Handler.Bodies.Count);
+        Assert.Equal(2, fixture.Writer.Calls);
+        Assert.Equal(1, fixture.Shell.Calls);
+        using var final = JsonDocument.Parse(fixture.Handler.Bodies[3]);
+        var outcomes = final.RootElement.GetProperty("messages").EnumerateArray().Where(message => message.GetProperty("role").GetString() == "tool").ToArray();
+        Assert.Equal(new[] { "call-create", "call-edit", "call-build" }, outcomes.Select(message => message.GetProperty("tool_call_id").GetString()));
+        Assert.Contains("exitCode", outcomes[2].GetProperty("content").GetString());
+        var id = fixture.Last.GetProperty("payload").GetProperty("conversation").GetProperty("id").GetString();
+        await fixture.Send("byok.history.open", new { conversationId = id, offset = 0, limit = 1 });
+        var cards = fixture.Last.GetProperty("payload").GetProperty("turns")[0].GetProperty("tools").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "create_file", "edit_file", "run_build" }, cards.Select(card => card.GetProperty("name").GetString()));
+        Assert.All(cards, card => Assert.Equal("Completed", card.GetProperty("status").GetString()));
+    }
 }

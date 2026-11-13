@@ -4,7 +4,7 @@ Atualizado em **2026-11-13**.
 
 ## Estado atual
 
-**Fases 0–4 concluídas; Fase 5 em andamento.** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 não iniciada.** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -15,8 +15,9 @@ snapshot para buffer/disco, diagnósticos e descoberta de shells estão no commi
 `dd826ea`. A Fase 5 tem seleção de modos, políticas de chat, botão aplicar
 plano e orçamento configurável (fatia 5b), compactação de histórico, retry
 transitório sem reexecutar tools e paralelismo gated por `ParallelTools`
-verificados (fatia 5c, abaixo); ContextBuilder integral e o AC de tarefa real
-multi-passos continuam pendentes.
+verificados (fatia 5c, abaixo); ContextBuilder integral (@arquivos + contexto
+unificado) e o AC de tarefa real multi-passos verificados na fatia 5d (abaixo).
+Skills ativas ficam para a Fase 6 (dependem do sistema de Skills).
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
@@ -30,9 +31,58 @@ houve chamadas pagas.
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
-| Fase 5 — Loop e modos | **em andamento — modos, orçamento, compactação, retry e ParallelTools verificados; ContextBuilder integral e AC multi-passos pendentes** |
+| Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fases 6–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 5d — ContextBuilder integral + AC multi-passos (2026-11-13)
+
+- **5d-1 — @arquivos e contexto unificado.** `parseMentions` no compositor
+  extrai `@arquivo` e `@solução`/`@solution` (deduplica por caminho
+  normalizado; nunca casa e-mail inline). Cada menção é resolvida via
+  `byok.context.capture` **antes** de criar o turno: buffer aberto preferido
+  sobre disco, path canonicalizado e confinado ao workspace. Menção já
+  anexada pelo painel não captura duas vezes; limites de contexto (8 itens /
+  tamanho total) bloqueiam o envio localmente. Falha de captura bloqueia o
+  envio, preserva o rascunho e nomeia o token com motivo localizado
+  (`byokMentionFailed`, pt-BR/EN). O contexto entra na mesma mensagem User
+  como segundo TextPart `[Context: label]`. System prompt por modo, seleção
+  do editor e estrutura da solução já existiam (3c/5a); **skills ativas ficam
+  para a Fase 6** (dependem do sistema de Skills, ainda não implementado).
+- **5d-2 — AC de tarefa real multi-passos.** Estágio `agent-task` do
+  verificador na Exp real com provedor loopback roteirizado: menção positiva
+  injeta contexto do buffer aberto; menção traversal `../` é bloqueada sem
+  POST (controle negativo); o modelo cria `Calculator.cs`,
+  `CalculatorTests.cs` e um `Calculator.csproj` próprio e executa `run_build`
+  aprovado — exit 0 prova que **ambos** os fontes compilaram juntos (o teste
+  referencia `Calculator.Add(2, 3)`; CS0103 derrubaria o build se qualquer
+  fonte faltasse); undo em lote restaura os 3 arquivos; colisão mid-task
+  (`file_exists`) recupera sem duplicar escrita. **8 requests loopback,
+  0 pagos, 0 exceções JS**. Orçamento 8/32768/16 necessário: 4 rodadas de
+  tool + resposta = 5 rodadas; o padrão 4 aborta o build com
+  `tool_budget_exceeded` (orçamento configurável funcionando como projetado).
+- **Achado (não é bug do produto):** o `.csproj` legado da fixture vive em um
+  buffer RDT somente-leitura do project system do VS cujo snapshot muda
+  continuamente; `edit_file` corretamente recusa com `edit_conflict`, mesmo
+  em solução recém-carregada. O verificador contorna criando um projeto
+  dedicado. Curingas `*.cs`/SDK-style foram rejeitados: puxariam o
+  `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
+  `BuildFixtureError`.
+- Build Release **0 erros/avisos**; **1.550 C# / 217 JS** verdes, sem
+  ignorados. Novos: teste C# create→edit→build realimentando cada resultado
+  antes da próxima rodada (aprovação de terminal + cards Completed); 5 testes
+  JS de menção (positivo, bloqueado sem POST, duplicata, `@solution`, limite).
+  Evidência: `artifacts/phase5-agent-task-webview.json`.
+- Fixture/credenciais/conversas próprias removidas, solução fechada sem
+  salvar, Exp fechada e SHA-256 de todos os arquivos verificado em
+  `Extensions\4hgcddl3.sps`. Nenhum perfil principal alterado; sem API paga.
+- Lacunas: skills ativas dependem da Fase 6; a qualidade do plano/contexto
+  depende do modelo; o estágio não reroda a regressão geral nem o layout
+  203 px. Pendências do usuário: teste de symlink exige Developer
+  Mode/elevação; passada manual de leitor de tela (NVDA/Narrator); decisão de
+  merge do worktree paralelo `g-hangel-completar-fase-3`.
+- Checkpoint commitado em `1acf6ac` e enviado ao remoto; evidências de teste
+  e do verificador ficam locais em `artifacts/` (ignorado pelo git).
 
 ## Fase 5c — compactação, retry e paralelismo gated (2026-11-13)
 
@@ -909,12 +959,14 @@ principal do VS permanece intocado.
 
 ## Próximo passo exato
 
-**Fases 3/4 fechadas pela aceitação consolidada de 2026-11-12; Fase 5 aberta.**
-Compactação, retry e ParallelTools foram concluídos na fatia 5c (acima).
-Próxima etapa: ContextBuilder integral (seleção do editor, @arquivos, skills
-ativas, estrutura da solução) e o AC de tarefa real multi-passos no modo Agent
-com verificação (fatia 5d). O remoto `origin` foi configurado pelo usuário, que
-autorizou commits e pushes. Atenção ao worktree paralelo
+**Fase 5 fechada pela fatia 5d (2026-11-13); Fase 6 não iniciada.**
+ContextBuilder integral (@arquivos + contexto unificado) e o AC de tarefa real
+multi-passos foram verificados na Exp com loopback (acima). Todos os demais
+critérios da Fase 5 já estavam verificados nas fatias 5a–5c; skills ativas
+ficam para a Fase 6 por dependerem do sistema de Skills. Próxima etapa:
+**Fase 6 — Skills** (formato agentskills.io, discovery, progressive disclosure,
+acionamento e UI), na ordem de `PLANO.md`. O remoto `origin` foi configurado
+pelo usuário, que autorizou commits e pushes. Atenção ao worktree paralelo
 `g-hangel-completar-fase-3` (ver nota acima) antes de qualquer merge.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste

@@ -782,3 +782,51 @@ fixture com escritas no journal; não repetir `Prepare` sobre manifesto
 existente. Resultado: **1.549 C# / 212 JS**, 27 requests locais, 0 pagos e
 0 exceções JS; `artifacts/phase5-loop-resilience-webview.json`. Exp fechada,
 fixture e manifesto removidos, SHA verificado em `Extensions\f3dzgvrn.jkl`.
+
+## Fase 5d — ContextBuilder integral + AC multi-passos (2026-11-13)
+
+Mesma sequência da fatia 5c, com Exp fechada, sem fixture existente e **UI
+recém-aberta** (o estágio define o modo por envio, não exige modo inicial):
+
+```bash
+dotnet build Lumen.sln -c Release --nologo -v:minimal
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --nologo
+npm run check:ui
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs agent-task
+node scripts/verify-agent-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`agent-task` verifica: menção `@Sample.cs` captura o buffer aberto não salvo
+(preferido sobre disco) e injeta `[Context: Sample.cs]` na mensagem User;
+menção traversal `@../Outside.cs` é bloqueada localmente sem POST, nomeia o
+token, preserva o rascunho e reabilita o envio (controle negativo); tarefa
+Agent de 5 rodadas com orçamento 8/32768/16 — create `Calculator.cs` + create
+`CalculatorTests.cs` + create `Calculator.csproj` dedicado + `run_build`
+aprovado (exit 0; o teste referencia `Calculator.Add`, então o build prova que
+ambos os fontes compilaram juntos) + resposta; undo em lote restaura os 3
+arquivos; colisão mid-task `file_exists` recupera sem duplicar escrita. Usa
+credencial sintética e servidor loopback próprios. **O orçamento padrão 4
+aborta a rodada do build** — o estágio eleva para 8 rodadas de propósito.
+Não comprova skills ativas (Fase 6), a regressão geral nem o layout 203 px.
+Mesmas regras de interrupção das fatias anteriores: não apagar a fixture com
+escritas no journal; não repetir `Prepare` sobre manifesto existente.
+
+**Achado que moldou o estágio:** o `.csproj` legado da fixture vive em um
+buffer RDT somente-leitura do project system do VS cujo snapshot muda
+continuamente; `edit_file` recusa com `edit_conflict` (comportamento correto
+do produto). Por isso o modelo cria um projeto dedicado em vez de editar o
+csproj aberto. Curingas `*.cs`/SDK-style não servem: puxariam o
+`AcceptanceTests.cs` do estágio de aceitação e quebrariam o
+`BuildFixtureError`. Se o estágio falhar com 4 eventos Completed em vez de 5,
+inspecionar os cards de tool via CDP antes de suspeitar de corrida de eventos.
+
+Resultado: **1.550 C# / 217 JS**, 8 requests locais, 0 pagos e 0 exceções JS;
+`artifacts/phase5-agent-task-webview.json`. Exp fechada, fixture e manifesto
+removidos, SHA verificado em `Extensions\4hgcddl3.sps`.

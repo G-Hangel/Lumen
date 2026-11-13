@@ -562,6 +562,50 @@ SHA em `Extensions\f3dzgvrn.jkl`. Sobreposição temporal do paralelismo é
 provada pelos testes C# (MaxActive), não pelo verificador. Ainda faltam
 ContextBuilder integral e o AC de tarefa real multi-passos (fatia 5d).
 
+### Andamento — fatia 5d: ContextBuilder + tarefa real multi-passos (2026-11-13)
+
+**5d-1 — ContextBuilder integral.** O compositor parseia `@arquivo` e
+`@solução`/`@solution` (`parseMentions`: deduplica por caminho normalizado,
+nunca casa e-mail inline). Antes de criar o turno, cada menção é resolvida via
+`byok.context.capture` — buffer aberto preferido sobre disco, path
+canonicalizado e confinado ao workspace. Menção já anexada pelo painel não
+captura duas vezes; os limites de contexto (8 itens / tamanho total) bloqueiam
+o envio localmente. Falha de captura bloqueia o envio, preserva o rascunho e
+nomeia o token com motivo localizado (`byokMentionFailed`); traversal `../`
+é rejeitado pelo guard (controle negativo na Exp). O contexto capturado entra
+na mesma mensagem User como segundo TextPart `[Context: label]`. System prompt
+por modo, seleção do editor e estrutura da solução já existiam (fases 3c/5a);
+**skills ativas ficam para a Fase 6** (dependem do sistema de Skills, ainda não
+implementado). Teste C# novo prova create→edit→build realimentando cada
+resultado antes da próxima rodada, com aprovação de terminal e cards
+Completed no histórico. Build Release **0 erros/avisos**; **1.550 C# / 217 JS**
+verdes, com 5 testes JS novos de menção (positivo, bloqueado sem POST,
+duplicata, `@solution`, limite de contexto).
+
+**5d-2 — AC de tarefa real multi-passos.** Estágio `agent-task` do verificador
+na Exp real com provedor loopback roteirizado (sem API paga): menção positiva
+injeta contexto do buffer aberto; menção traversal é bloqueada sem POST; o
+modelo cria `Calculator.cs`, `CalculatorTests.cs` e um `Calculator.csproj`
+próprio e executa `run_build` aprovado — exit 0 prova que **ambos** os fontes
+compilaram juntos (o teste referencia `Calculator.Add(2, 3)`, então CS0103
+derrubaria o build se qualquer fonte faltasse); undo em lote restaura os 3
+arquivos; colisão mid-task (`file_exists`) recupera sem duplicar escrita.
+**8 requests loopback, 0 pagos, 0 exceções JS**. O orçamento precisa ser
+8/32768/16: são 4 rodadas de tool + resposta = 5 rodadas, e o padrão 4 aborta
+a rodada do build com `tool_budget_exceeded` (o orçamento configurável
+funcionando como projetado). Evidência:
+`artifacts/phase5-agent-task-webview.json`; instalação SHA em
+`Extensions\4hgcddl3.sps`.
+
+**Achado documentado (não é bug do produto):** o `.csproj` legado da fixture é
+mantido pelo project system do VS em um buffer RDT somente-leitura cujo
+snapshot muda continuamente; `edit_file` corretamente recusa com
+`edit_conflict` — inclusive em solução recém-carregada. O verificador contorna
+criando um projeto dedicado em vez de editar o csproj aberto. Curingas
+`<Compile Include="*.cs" />` ou SDK-style foram rejeitados como alternativa:
+puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
+`BuildFixtureError` (que builda a solução inteira).
+
 ### Tarefas
 
 - [x] `AgentLoop`: monta contexto → chama provider → executa tools → realimenta
@@ -572,8 +616,11 @@ ContextBuilder integral e o AC de tarefa real multi-passos (fatia 5d).
       (`ToolBudget` 1–8 rodadas / 1024–32768 tokens / 1–32 invocações; painel
       por envio; host rejeita fora da faixa antes de captura/POST; verificado
       na Exp com loopback em 2026-11-12.)
-- [ ] `ContextBuilder`: system prompt por modo, seleção do editor, @arquivos,
-      skills ativas, estrutura da solução.
+- [x] `ContextBuilder`: system prompt por modo, seleção do editor, @arquivos,
+      skills ativas, estrutura da solução. (@arquivos + contexto unificado
+      verificados na Exp em 2026-11-13; system prompt/seleção/estrutura já
+      existiam desde 3c/5a. **Skills ativas → Fase 6**, dependem do sistema de
+      Skills ainda não implementado.)
 - [x] **Context window management**: contagem de token, truncamento/compactação
       de histórico antigo preservando tool calls pendentes. (`Compact` por
       turnos inteiros + `ValidateInput` pré-credencial; Notice
@@ -599,7 +646,10 @@ ContextBuilder integral e o AC de tarefa real multi-passos (fatia 5d).
 ### AC
 
 - Tarefa real de múltiplos passos (ex.: "crie uma classe X com teste e faça
-      build") conclui no modo Agent com verificação.
+      build") conclui no modo Agent com verificação. (**Verificado** no estágio
+      `agent-task` da Exp com loopback em 2026-11-13: create→create→create
+      project→build aprovado, exit 0 com os dois fontes compilados, undo em
+      lote e colisão mid-task recuperada; 8 requests locais, 0 pagos.)
 - Modo Plan produz plano e **não escreve nada**.
 - Modo Ask responde e **não escreve nada**.
 - Estourar o orçamento para com mensagem clara.

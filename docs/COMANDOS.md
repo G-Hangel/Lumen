@@ -746,3 +746,39 @@ fixture com escritas no journal; não repetir `Prepare` sobre manifesto
 existente. Resultado: **1.527 C# / 210 JS**, 4 requests locais, 0 pagos e
 0 exceções JS; `artifacts/phase5-plan-budget-webview.json`. Exp fechada,
 fixture e manifesto removidos, SHA verificado em `Extensions\vhheq1gz.wvu`.
+
+## Fase 5c — compactação, retry e paralelismo gated (2026-11-13)
+
+Mesma sequência da fatia 5b, com Exp fechada, sem fixture existente e
+**UI recém-aberta** (o estágio exige modo inicial Ask):
+
+```bash
+dotnet build Lumen.sln -c Release --nologo -v:minimal
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --nologo
+npm run check:ui
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-agent-tools-webview.mjs loop-resilience
+node scripts/verify-agent-tools-webview.mjs cleanup
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`loop-resilience` verifica: 20 turnos Ask no modelo `fixture/small` (janela
+8192) compactam o histórico com Notice `history_compacted` e replay encolhido
+(primeiro POST com 2 mensagens, último entre 3 e 40); turno com 429 +
+`Retry-After: 1` após uma tool executada retenta com Notice `retrying`,
+3 requests e **exatamente 1** execução de tool, com id do resultado pareado
+com a chamada original; modelo `fixture/parallel` (com `parallel_tool_calls`)
+executa 2 leituras em paralelo e `fixture/auto` (sem a capacidade) executa em
+sequência. Usa credencial sintética e servidor loopback próprios. Não comprova
+a sobreposição temporal do paralelismo (provada pelos testes C# MaxActive),
+o ContextBuilder integral, o AC multi-passos, a regressão geral nem o layout
+203 px. Mesmas regras de interrupção das fatias anteriores: não apagar a
+fixture com escritas no journal; não repetir `Prepare` sobre manifesto
+existente. Resultado: **1.549 C# / 212 JS**, 27 requests locais, 0 pagos e
+0 exceções JS; `artifacts/phase5-loop-resilience-webview.json`. Exp fechada,
+fixture e manifesto removidos, SHA verificado em `Extensions\f3dzgvrn.jkl`.

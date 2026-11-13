@@ -1,6 +1,6 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-12**.
+Atualizado em **2026-11-13**.
 
 ## Estado atual
 
@@ -13,8 +13,10 @@ exige aprovação por operação; terminal exige aprovação, com opção de
 consentimento por sessão revogada ao fechar/reabrir a solução. `apply_diff` e
 snapshot para buffer/disco, diagnósticos e descoberta de shells estão no commit
 `dd826ea`. A Fase 5 tem seleção de modos, políticas de chat, botão aplicar
-plano e orçamento configurável verificados (fatia 5b, abaixo); compactação,
-retry, ParallelTools e ContextBuilder integral continuam pendentes.
+plano e orçamento configurável (fatia 5b), compactação de histórico, retry
+transitório sem reexecutar tools e paralelismo gated por `ParallelTools`
+verificados (fatia 5c, abaixo); ContextBuilder integral e o AC de tarefa real
+multi-passos continuam pendentes.
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
@@ -28,9 +30,57 @@ houve chamadas pagas.
 | Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
-| Fase 5 — Loop e modos | **em andamento — modos, aplicar plano e orçamento verificados; compactação, retry e ParallelTools pendentes** |
+| Fase 5 — Loop e modos | **em andamento — modos, orçamento, compactação, retry e ParallelTools verificados; ContextBuilder integral e AC multi-passos pendentes** |
 | Fases 6–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 5c — compactação, retry e paralelismo gated (2026-11-13)
+
+- `ToolChatLoop.Compact`: estimativa de tamanho por caracteres (1 char ≈ 1
+  token, inclui instrução do modo e specs das tools); limite
+  `min(262144, ContextWindowTokens − outputTokens − 2048)`. Descarta turnos
+  inteiros mais antigos (fronteira = mensagem User), preservando o prefixo
+  system e o turno mais novo — nunca divide um par tool_call/tool_result.
+  Roda pré-chat e no início de cada rodada. `ValidateInput` rejeita input
+  atual oversized com `context_too_large` antes de capturar workspace, ler
+  credenciais ou chamar o provedor.
+- Host emite Notice `history_compacted` quando o pré-chat compacta (uma vez
+  por turno); o loop emite durante o turno. Bridge aceita somente os códigos
+  `history_compacted`/`retrying`; UI renderiza linha secundária localizada
+  (pt-BR/EN) com anúncio `aria-live`; Notices não são persistidos no histórico.
+- Retry: até 2 retentativas por rodada (3 tentativas), somente
+  `rate_limited`/`provider_error` sem saída visível já emitida; respeita
+  `Retry-After`, senão backoff 500 ms × 2^tentativa + jitter; Notice
+  `retrying`. Ids de tool da tentativa falha são descartados do pareamento;
+  tools já executadas não reexecutam. `network_error` e 401 não retentam.
+- Paralelismo: `Task.WhenAll` somente com múltiplas chamadas + capacidade
+  `ParallelTools` no modelo + todas as tools `ParallelSafe` (create_file,
+  edit_file, apply_diff, run_command, run_build e run_tests excluídas).
+  OpenRouter deriva a capacidade de `supported_parameters`. Resultados
+  devolvidos na ordem das chamadas.
+- Build Release **0 erros/avisos**; **1.549 C# / 212 JS** verdes, sem
+  ignorados. Negativos: imagem atual de 300 mil chars rejeitada
+  pré-credencial sem POST; 401 após tool não retenta nem reexecuta;
+  compactação asserta a invariante de pares (nunca órfã); escritas/terminal
+  nunca paralelizam; códigos de Notice desconhecidos rejeitados pelo bridge.
+- Exp real (`verify-agent-tools-webview.mjs loop-resilience`, UI nova):
+  20 turnos Ask em modelo de janela 8192 compactam com Notice e replay
+  encolhido (primeiro POST com 2 mensagens, último entre 3 e 40); 429 com
+  Retry-After 1 após tool → 3 requests, exatamente 1 execução de tool e id
+  do resultado pareado com a chamada; `fixture/parallel` (com
+  `parallel_tool_calls`) executa 2 leituras em paralelo e `fixture/auto`
+  executa em sequência. **27 requests loopback, 0 pagos, 0 exceções JS**.
+  Evidência: `artifacts/phase5-loop-resilience-webview.json`.
+- Fixture/credenciais/conversas próprias removidas, solução fechada sem
+  salvar, Exp fechada e SHA-256 de todos os arquivos verificado em
+  `Extensions\f3dzgvrn.jkl`. Nenhum perfil principal alterado; sem API paga.
+- Lacunas: estimativa de tokens é por caracteres, não tokenizer real; a
+  sobreposição temporal do paralelismo é provada pelos testes C# (MaxActive),
+  não pelo verificador; o estágio não reroda a regressão geral nem o layout
+  203 px. ContextBuilder integral (@arquivos, skills, seleção) e o AC de
+  tarefa real multi-passos seguem na fatia 5d.
+- Checkpoint commitado em `629036c` e enviado ao remoto; evidências de teste
+  e do verificador ficam locais em `artifacts/` (ignorado pelo git).
 
 ## Fase 5b — aplicar plano e orçamento configurável (2026-11-12)
 
@@ -141,8 +191,9 @@ O registro e o controle negativo estão no commit `8ab46d3`, já enviado ao remo
   desabilitado em Ask, declaração global duplicada no CDP e diário da fixture
   anterior ainda ativo; fixture própria foi limpa e a validação foi reduzida
   aos modos, sem reivindicar aprovação da regressão geral nessa execução.
-- Aplicar plano e orçamento configurável foram concluídos na fatia 5b (acima);
-  compactação, retry e demais critérios integrais da Fase 5 seguem pendentes.
+- Aplicar plano e orçamento configurável foram concluídos na fatia 5b;
+  compactação, retry e paralelismo gated na fatia 5c (acima). ContextBuilder
+  integral e o AC de tarefa real multi-passos seguem pendentes.
   B9 foi encerrado posteriormente com regressão readonly completa; as
   alterações desta fatia de modos foram commitadas em `91e4ba5`.
 
@@ -859,11 +910,12 @@ principal do VS permanece intocado.
 ## Próximo passo exato
 
 **Fases 3/4 fechadas pela aceitação consolidada de 2026-11-12; Fase 5 aberta.**
-Próxima etapa: aplicar plano com transição explícita para Agent e orçamento
-configurável (fatia 5b), depois compactação segura e retry sem reexecutar
-ferramentas (5c). O remoto `origin` foi configurado pelo usuário, que autorizou
-commits e pushes. Atenção ao worktree paralelo `g-hangel-completar-fase-3`
-(ver nota acima) antes de qualquer merge.
+Compactação, retry e ParallelTools foram concluídos na fatia 5c (acima).
+Próxima etapa: ContextBuilder integral (seleção do editor, @arquivos, skills
+ativas, estrutura da solução) e o AC de tarefa real multi-passos no modo Agent
+com verificação (fatia 5d). O remoto `origin` foi configurado pelo usuário, que
+autorizou commits e pushes. Atenção ao worktree paralelo
+`g-hangel-completar-fase-3` (ver nota acima) antes de qualquer merge.
 
 **Limite de gasto:** nenhuma chamada real a APIs pagas sem chave de teste
 fornecida pelo usuário **e** autorização por escrito. Probing ativo continua

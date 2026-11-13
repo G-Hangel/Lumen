@@ -531,6 +531,37 @@ Evidência: `artifacts/phase5-plan-budget-webview.json`; instalação SHA em
 `Extensions\vhheq1gz.wvu`. Ainda faltam ContextBuilder integral, compactação,
 ParallelTools e retry (fatia 5c), além do AC de tarefa real multi-passos.
 
+### Andamento — fatia 5c: compactação + retry + paralelismo (2026-11-13)
+
+`ToolChatLoop.Compact` descarta turnos inteiros mais antigos (fronteira =
+mensagem User), preservando o prefixo system e o turno mais novo; estimativa
+de tokens por tamanho (1 char ≈ 1 token) e limite
+`min(262144, ContextWindowTokens − outputTokens − 2048)`. `ValidateInput`
+rejeita input atual oversized com `context_too_large` **antes** de capturar
+workspace, ler credenciais ou POST; compactação roda pré-chat e no início de
+cada rodada e emite Notice `history_compacted` (uma vez por turno). Retry:
+até 2 retentativas por rodada (3 tentativas), somente `rate_limited` /
+`provider_error` sem saída visível já emitida; respeita `Retry-After`, senão
+backoff exponencial com jitter; Notice `retrying`; ids de tool da tentativa
+falha são descartados e tools já executadas **não** reexecutam. Paralelismo
+só com `calls.Length > 1 && ParallelTools && todas ParallelSafe` — escritas,
+terminal, build e tests nunca paralelizam; OpenRouter deriva `ParallelTools`
+de `supported_parameters`. UI: Notices localizados (pt-BR/EN) como linha
+secundária + anúncio aria-live; bridge só aceita os dois códigos. Build
+Release **0 erros/avisos**; **1.549 C# / 212 JS** verdes, com controles
+negativos: 401 após tool não retenta, input atual oversized rejeitado
+pré-credencial, compactação nunca órfã par tool_call/tool_result (assert de
+invariante), escritas nunca paralelas. Exp com loopback (`loop-resilience`):
+20 turnos Ask em modelo de janela 8192 compactam com Notice e replay
+encolhido; 429 (Retry-After 1) após tool retenta com 3 requests e **exatamente
+1 execução** de tool, id do resultado pareado com a chamada; modelo com
+`parallel_tool_calls` executa 2 leituras em paralelo e modelo sem a
+capacidade executa em sequência; **27 requests locais, 0 pagos, 0 exceções
+JS**. Evidência: `artifacts/phase5-loop-resilience-webview.json`; instalação
+SHA em `Extensions\f3dzgvrn.jkl`. Sobreposição temporal do paralelismo é
+provada pelos testes C# (MaxActive), não pelo verificador. Ainda faltam
+ContextBuilder integral e o AC de tarefa real multi-passos (fatia 5d).
+
 ### Tarefas
 
 - [x] `AgentLoop`: monta contexto → chama provider → executa tools → realimenta
@@ -543,9 +574,15 @@ ParallelTools e retry (fatia 5c), além do AC de tarefa real multi-passos.
       na Exp com loopback em 2026-11-12.)
 - [ ] `ContextBuilder`: system prompt por modo, seleção do editor, @arquivos,
       skills ativas, estrutura da solução.
-- [ ] **Context window management**: contagem de token, truncamento/compactação
-      de histórico antigo preservando tool calls pendentes.
-- [ ] Paralelismo de tools só se o modelo tem `ParallelTools`.
+- [x] **Context window management**: contagem de token, truncamento/compactação
+      de histórico antigo preservando tool calls pendentes. (`Compact` por
+      turnos inteiros + `ValidateInput` pré-credencial; Notice
+      `history_compacted`; invariante de pares assertada em teste e na Exp;
+      verificado com loopback em 2026-11-13.)
+- [x] Paralelismo de tools só se o modelo tem `ParallelTools`. (Gate triplo:
+      múltiplas chamadas + capacidade + todas ParallelSafe; escritas/terminal
+      nunca paralelizam; sobreposição provada por teste C# MaxActive e
+      sequência/paralelo na Exp em 2026-11-13.)
 - [x] Modo **Plan**: produz plano em fases com critérios de aceite;
       oferece "aplicar plano" que muda para Agent. (Prompt de plano verificado;
       botão só aparece em Plan, troca para Agent sem POST e preserva histórico;
@@ -554,7 +591,10 @@ ParallelTools e retry (fatia 5c), além do AC de tarefa real multi-passos.
       (política e prompt verificados; qualidade da citação depende do modelo).
 - [x] Troca de modo no meio da conversa preservando histórico (verificado na
       Exp: mesma conversa após Agent → Plan → Ask).
-- [ ] Retry com backoff em falha transitória, sem duplicar tool já executada.
+- [x] Retry com backoff em falha transitória, sem duplicar tool já executada.
+      (Até 2 retentativas só para `rate_limited`/`provider_error` sem saída
+      visível; `Retry-After` ou exponencial+jitter; Notice `retrying`; teste
+      e Exp provam 1 execução de tool após 429; 401 não retenta.)
 
 ### AC
 

@@ -79,8 +79,9 @@ houve chamadas pagas.
 - Lacunas: skills ativas dependem da Fase 6; a qualidade do plano/contexto
   depende do modelo; o estágio não reroda a regressão geral nem o layout
   203 px. Pendências do usuário: teste de symlink exige Developer
-  Mode/elevação; passada manual de leitor de tela (NVDA/Narrator); decisão de
-  merge do worktree paralelo `g-hangel-completar-fase-3`.
+  Mode/elevação; passada manual de leitor de tela (NVDA/Narrator) feita pelo
+  usuário e aprovada; decisão de merge do worktree paralelo
+  `g-hangel-completar-fase-3`.
 - Checkpoint commitado em `1acf6ac` e enviado ao remoto; evidências de teste
   e do verificador ficam locais em `artifacts/` (ignorado pelo git).
 
@@ -196,7 +197,7 @@ houve chamadas pagas.
 - **Limitações registradas:** symlink de arquivo exige elevação/Developer Mode
   (`NewItemSymbolicLinkElevationRequired` confirmado hoje); o controle real não
   foi exercitado — junction real e reparse points nos ancestrais passam.
-  Passada manual de leitor de tela (NVDA/Narrator) pendente do usuário.
+  Passada manual de leitor de tela (NVDA/Narrator) feita pelo usuário e aprovada.
 - **Nota de worktree paralelo:** o worktree Copilot
   (`~/.copilot/repos/copilot-worktrees/Extensão/g-hangel-effective-parakeet`)
   tem commits próprios (`af96a74`, `7349de1`, `6d2f418`) que implementam modos

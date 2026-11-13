@@ -195,8 +195,10 @@ houve chamadas pagas.
   ficou em Agent; com Exp nova passou — o critério "Ask inicial" exige UI nova.
 - Build Release **0 erros/avisos**; **1.505 C# / 207 JS** verdes.
 - **Limitações registradas:** symlink de arquivo exige elevação/Developer Mode
-  (`NewItemSymbolicLinkElevationRequired` confirmado hoje); o controle real não
-  foi exercitado — junction real e reparse points nos ancestrais passam.
+  (`NewItemSymbolicLinkElevationRequired` reconfirmado em 2026-11-13 no
+  shell não elevado: `New-Item -ItemType SymbolicLink` falha com
+  `UnauthorizedAccessException`); o controle real não foi exercido —
+  junction real e reparse points nos ancestrais passam.
   Passada manual de leitor de tela (NVDA/Narrator) feita pelo usuário e aprovada.
 - **Nota de worktree paralelo:** o worktree Copilot
   (`~/.copilot/repos/copilot-worktrees/Extensão/g-hangel-effective-parakeet`)

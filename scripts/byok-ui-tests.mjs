@@ -1283,6 +1283,13 @@ test('negative event validators reject unknown kinds, malformed tool JSON and in
   for (const reason of ['Stop', 'MaxTokens', 'ToolUse', 'ContentFiltered', 'Cancelled', 'Other']) assert.equal(isByokEvent({ kind: 'Done', reason }), true);
 });
 
+test('notice events accept only the two host codes and reject unknown codes or extra fields', () => {
+  for (const code of ['history_compacted', 'retrying']) assert.equal(isByokEvent({ kind: 'Notice', code }), true);
+  for (const event of [{ kind: 'Notice', code: 'unknown' }, { kind: 'Notice', code: 'history_compacted', detail: 'x' },
+    { kind: 'Notice' }, { kind: 'Notice', code: 1 }, { kind: 'Notice', code: 'History_Compacted' },
+    { kind: 'Notice', code: 'retrying', retryAfter: 3 }]) assert.equal(isByokEvent(event), false);
+});
+
 test('no native host / no real handshake: no request leaves the bridge', async t => {
   for (const transport of [undefined, {}, { postMessage() {} }]) {
     const bridge = new ByokBridge(transport, { connected: () => true });
@@ -1924,6 +1931,25 @@ test('UI streams plain text/reasoning/tools without execution, safe Markdown is 
   assert.deepEqual(rendered, ['<script>not HTML</script>']); assert.match(f.node('status').textContent, /cancelled/);
   assert.equal(f.node('message').value, 'Hello'); assert.equal(f.transport.messages.filter(message => message.type === 'byok.chat').length, 1);
   f.ui.dispose(); assert.equal(f.transport.listeners.size, 0); assert.equal(f.node('send').disabled, true);
+});
+
+test('UI renders compaction and retry notices as localized lines with live announcement', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('message').value = 'Hello'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', { kind: 'Notice', code: 'history_compacted' }, chat.id));
+  assert.ok(f.node('output').textContent.includes(en.byokNoticeCompacted));
+  assert.equal(f.document.getElementById('announcement').textContent, en.byokNoticeCompacted);
+  f.transport.emit(envelope('byok.event', { kind: 'Notice', code: 'retrying' }, chat.id));
+  assert.ok(f.node('output').textContent.includes(en.byokNoticeRetrying));
+  assert.equal(f.document.getElementById('announcement').textContent, en.byokNoticeRetrying);
+  f.locale();
+  assert.ok(f.node('output').textContent.includes(pt.byokNoticeCompacted));
+  assert.ok(f.node('output').textContent.includes(pt.byokNoticeRetrying));
+  f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Stop' }, chat.id));
+  f.transport.reply({ completed: true, conversation: summary }); await send;
+  f.ui.dispose();
 });
 
 test('UI code blocks get an accessible copy button; clipboard failure is reported, never silent', async t => {

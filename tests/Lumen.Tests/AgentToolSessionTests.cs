@@ -27,13 +27,16 @@ public sealed class AgentToolSessionTests
     private sealed class Handler : HttpMessageHandler
     {
         public readonly List<string> Bodies = new();
+        public readonly Queue<Func<HttpResponseMessage>> PostResponses = new();
         public bool RequestTool = true;
         public string ToolName = "run_command";
         public string Arguments = "{\"command\":\"cmd\",\"args\":[\"/c\",\"echo\",\"fixture\"]}";
+        public string ModelsJson = "{\"data\":[{\"id\":\"fixture\"}]}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
-            if (request.Method == HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"data\":[{\"id\":\"fixture\"}]}") };
+            if (request.Method == HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ModelsJson) };
             Bodies.Add(await request.Content!.ReadAsStringAsync(token));
+            if (PostResponses.Count > 0) return PostResponses.Dequeue()();
             var data = RequestTool && Bodies.Count % 2 == 1
                 ? JsonSerializer.Serialize(new { choices = new[] { new { delta = new { tool_calls = new[] { new { index = 0, id = "call" + Bodies.Count, function = new { name = ToolName, arguments = Arguments } } } }, finish_reason = "tool_calls" } } })
                 : "{\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}";
@@ -43,9 +46,10 @@ public sealed class AgentToolSessionTests
     private sealed class ReadExecutor : IReadToolExecutor
     {
         public int Captures;
+        public int Calls;
         public IReadOnlyList<ToolSpec> Specs => ReadToolCatalog.Specs;
         public Task<IReadToolExecutor> CaptureAsync(CancellationToken token) { Captures++; return Task.FromResult<IReadToolExecutor>(this); }
-        public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) => Task.FromResult(new ToolResult(call.Id, false, "read data"));
+        public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) { Calls++; return Task.FromResult(new ToolResult(call.Id, false, "read data")); }
     }
     private sealed class WriteExecutor : IWriteToolExecutor
     {
@@ -503,5 +507,66 @@ public sealed class AgentToolSessionTests
         Assert.DoesNotContain("run_command", tools);
         Assert.Equal(1, fixture.Writer.Captures);
         Assert.Equal(0, fixture.Shell.Captures);
+    }
+
+    private static HttpResponseMessage Sse(string data) => new(HttpStatusCode.OK) { Content = new StringContent("data: " + data + "\n\ndata: [DONE]\n\n") };
+    private static HttpResponseMessage ToolCallResponse(string id, string name, string arguments) => Sse(JsonSerializer.Serialize(new { choices = new[] { new { delta = new { tool_calls = new[] { new { index = 0, id, function = new { name, arguments } } } }, finish_reason = "tool_calls" } } }));
+    private static bool IsNotice(JsonElement reply, string code) => reply.GetProperty("type").GetString() == "byok.event"
+        && reply.GetProperty("payload").GetProperty("kind").GetString() == "Notice"
+        && reply.GetProperty("payload").GetProperty("code").GetString() == code;
+
+    [Fact]
+    public async Task CompactionShrinksReplayedHistoryBeforePost()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":6144}]}";
+        fixture.Handler.RequestTool = false;
+        await fixture.Send("byok.configure", new { id = fixture.Id, providerId = "fixture", kind = "OpenRouter", baseUrl = "https://provider.test/v1/", key = "synthetic-agent-key" });
+        await fixture.Send("byok.select", new { configurationId = fixture.Id, modelId = "fixture" });
+        await fixture.Send("byok.override", new { configurationId = fixture.Id, modelId = "fixture", vision = false, tools = true, reasoning = false });
+        for (var index = 0; index < 20; index++) await fixture.Chat(new { text = new string('a', 200) });
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(20, fixture.Handler.Bodies.Count);
+        using var first = JsonDocument.Parse(fixture.Handler.Bodies[0]);
+        using var last = JsonDocument.Parse(fixture.Handler.Bodies[19]);
+        Assert.Equal(2, first.RootElement.GetProperty("messages").GetArrayLength());
+        // 20 turns of 200 chars plus the new message overflow the 6144-token window; the oldest turns are dropped.
+        Assert.InRange(last.RootElement.GetProperty("messages").GetArrayLength(), 3, 40);
+        Assert.Contains(fixture.Replies, reply => IsNotice(reply, "history_compacted"));
+    }
+
+    [Fact]
+    public async Task Transient429AfterToolRetriesWithoutReexecuting()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.PostResponses.Enqueue(() => ToolCallResponse("call-retry", "read_file", "{\"path\":\"Sample.cs\"}"));
+        fixture.Handler.PostResponses.Enqueue(() => { var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("{}") }; response.Headers.Add("Retry-After", "0"); return response; });
+        fixture.Handler.PostResponses.Enqueue(() => Sse("{\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}"));
+        await fixture.Chat(new { readTools = true });
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(3, fixture.Handler.Bodies.Count);
+        Assert.Equal(1, fixture.Reader.Calls);
+        Assert.Contains("read data", fixture.Handler.Bodies[2]);
+        Assert.Contains(fixture.Replies, reply => IsNotice(reply, "retrying"));
+    }
+
+    [Fact]
+    public async Task NonTransient401AfterToolDoesNotRetry()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.PostResponses.Enqueue(() => ToolCallResponse("call-once", "read_file", "{\"path\":\"Sample.cs\"}"));
+        fixture.Handler.PostResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("{}") });
+        await fixture.Chat(new { readTools = true });
+        Assert.False(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(2, fixture.Handler.Bodies.Count);
+        Assert.Equal(1, fixture.Reader.Calls);
+        Assert.Contains(fixture.Replies, reply => reply.GetProperty("type").GetString() == "byok.event"
+            && reply.GetProperty("payload").GetProperty("kind").GetString() == "Error"
+            && reply.GetProperty("payload").GetProperty("code").GetString() == "invalid_key");
+        Assert.DoesNotContain(fixture.Replies, reply => reply.GetProperty("type").GetString() == "byok.event"
+            && reply.GetProperty("payload").GetProperty("kind").GetString() == "Notice");
     }
 }

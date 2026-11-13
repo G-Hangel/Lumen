@@ -62,10 +62,28 @@ public sealed class ReadToolChatLoopTests
         public ProviderConfiguration Configuration { get; set; } = new(Guid.NewGuid().ToString("D"), "fixture", ProviderKind.OpenAI, "https://provider.test/v1/");
         public ModelInfo Model { get; set; } = new("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools);
         public ChatMode Mode { get; set; } = ChatMode.Ask;
-        public Task<bool> Run(IReadToolExecutor? executor, CancellationToken token = default, ReasoningIntent effort = ReasoningIntent.Off, ToolBudget? budget = null) => Loop.RunAsync(Provider, Configuration, Model,
-            new[] { new Message(MessageRole.User, new ContentPart[] { new TextPart("explain Sample.cs") }) }, effort, Mode, executor,
+        public Task<bool> Run(IReadToolExecutor? executor, CancellationToken token = default, ReasoningIntent effort = ReasoningIntent.Off, ToolBudget? budget = null,
+            Func<TimeSpan, CancellationToken, Task>? delay = null, IReadOnlyList<Message>? input = null) => Loop.RunAsync(Provider, Configuration, Model,
+            input ?? new[] { new Message(MessageRole.User, new ContentPart[] { new TextPart("explain Sample.cs") }) }, effort, Mode, executor,
             executor is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(Mode, executor), Secret,
-            value => { Events.Add(value); return Task.CompletedTask; }, value => { Executions.Add(JsonSerializer.SerializeToElement(value)); return Task.CompletedTask; }, token, budget);
+            value => { Events.Add(value); return Task.CompletedTask; }, value => { Executions.Add(JsonSerializer.SerializeToElement(value)); return Task.CompletedTask; }, token, budget, delay);
+    }
+    private sealed class ConcurrentExecutor : IReadToolExecutor
+    {
+        private int active;
+        public int MaxActive;
+        public int Calls;
+        public IReadOnlyList<ToolSpec> Specs { get; set; } = ReadToolCatalog.Specs;
+        public Func<ToolInvocation, CancellationToken, Task<ToolResult>> Run = (call, _) => Task.FromResult(new ToolResult(call.Id, false, "workspace data"));
+        public Task<IReadToolExecutor> CaptureAsync(CancellationToken token) => Task.FromResult<IReadToolExecutor>(this);
+        public async Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token)
+        {
+            Calls++;
+            var current = Interlocked.Increment(ref active);
+            lock (this) { if (current > MaxActive) MaxActive = current; }
+            try { return await Run(call, token); }
+            finally { Interlocked.Decrement(ref active); }
+        }
     }
     private static async Task Call(Func<StreamEvent, Task> emit, string id = "call1", string name = "read_file", string args = "{\"path\":\"Sample.cs\"}", string? state = null)
     {
@@ -268,6 +286,292 @@ public sealed class ReadToolChatLoopTests
         Assert.Equal(2, executor.Calls);
     }
 
+    private static void AssertToolPairsIntact(IReadOnlyList<Message> messages)
+    {
+        var pending = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var message in messages)
+        {
+            if (message.Role == MessageRole.User) { Assert.Empty(pending); continue; }
+            foreach (var part in message.Parts)
+            {
+                if (part is ToolCallPart call) Assert.True(pending.Add(call.Id), "duplicate call " + call.Id);
+                else if (part is ToolResultPart result) Assert.True(pending.Remove(result.InvocationId), "orphan result " + result.InvocationId);
+            }
+            if (message.Role == MessageRole.Tool) Assert.Empty(pending);
+        }
+        Assert.Empty(pending);
+    }
+
+    private static Message[] ToolTurn(int index, int padding)
+    {
+        var id = "call-" + index;
+        using var args = JsonDocument.Parse("{\"path\":\"Sample.cs\"}");
+        return new[]
+        {
+            new Message(MessageRole.User, new ContentPart[] { new TextPart("turn " + index + " " + new string('u', padding)) }),
+            new Message(MessageRole.Assistant, new ContentPart[] { new ToolCallPart(id, "read_file", args.RootElement.Clone()) }, "model"),
+            new Message(MessageRole.Tool, new ContentPart[] { new ToolResultPart(id, false, "result " + index + " " + new string('r', padding)) }),
+            new Message(MessageRole.Assistant, new ContentPart[] { new TextPart("answer " + index) }, "model")
+        };
+    }
+
+    [Fact]
+    public void CompactDropsOldestWholeTurnsAndPreservesToolPairs()
+    {
+        var model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, null, null, 8192);
+        var messages = Enumerable.Range(0, 6).SelectMany(index => ToolTurn(index, 600)).ToArray();
+        var compacted = ToolChatLoop.Compact(messages, Array.Empty<ToolSpec>(), model, 1024);
+        Assert.Equal(12, compacted.Count);
+        Assert.Equal(MessageRole.User, compacted[0].Role);
+        Assert.StartsWith("turn 3", Assert.IsType<TextPart>(compacted[0].Parts[0]).Text);
+        Assert.Equal(messages.Skip(12).ToArray(), compacted.ToArray());
+        AssertToolPairsIntact(compacted);
+        ToolChatLoop.ValidateInput(compacted, Array.Empty<ToolSpec>(), model, 1024);
+        AssertToolPairsIntact(messages);
+    }
+
+    [Fact]
+    public void CompactKeepsSystemPrefixAndReturnsSameInstanceWhenInputFits()
+    {
+        var model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, null, null, 8192);
+        var system = new Message(MessageRole.System, new ContentPart[] { new TextPart("system instruction") });
+        var messages = new[] { system }.Concat(Enumerable.Range(0, 6).SelectMany(index => ToolTurn(index, 600))).ToArray();
+        var compacted = ToolChatLoop.Compact(messages, Array.Empty<ToolSpec>(), model, 1024);
+        Assert.Equal(MessageRole.System, compacted[0].Role);
+        Assert.Equal(13, compacted.Count);
+        AssertToolPairsIntact(compacted);
+        var small = ToolTurn(0, 10);
+        Assert.Same(small, ToolChatLoop.Compact(small, Array.Empty<ToolSpec>(), model, 1024));
+    }
+
+    [Fact]
+    public void CompactNeverSplitsMultiCallTurnOrDropsTheOnlyTurn()
+    {
+        var model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, null, null, 8192);
+        using var args = JsonDocument.Parse("{\"path\":\"Sample.cs\"}");
+        Message[] MultiCallTurn(int index) => new[]
+        {
+            new Message(MessageRole.User, new ContentPart[] { new TextPart("multi " + index + " " + new string('u', 600)) }),
+            new Message(MessageRole.Assistant, new ContentPart[]
+            {
+                new ToolCallPart("call-" + index + "-a", "read_file", args.RootElement.Clone()),
+                new ToolCallPart("call-" + index + "-b", "read_file", args.RootElement.Clone())
+            }, "model"),
+            new Message(MessageRole.Tool, new ContentPart[]
+            {
+                new ToolResultPart("call-" + index + "-a", false, new string('r', 600)),
+                new ToolResultPart("call-" + index + "-b", false, new string('r', 600))
+            }),
+            new Message(MessageRole.Assistant, new ContentPart[] { new TextPart("answer " + index) }, "model")
+        };
+        var messages = Enumerable.Range(0, 5).SelectMany(MultiCallTurn).ToArray();
+        var compacted = ToolChatLoop.Compact(messages, Array.Empty<ToolSpec>(), model, 1024);
+        AssertToolPairsIntact(compacted);
+        Assert.All(compacted.Where(message => message.Parts.OfType<ToolCallPart>().Any()),
+            message => Assert.Equal(2, message.Parts.OfType<ToolCallPart>().Count()));
+        var oversized = new[] { new Message(MessageRole.User, new ContentPart[] { new TextPart(new string('x', 6000)) }) };
+        Assert.Same(oversized, ToolChatLoop.Compact(oversized, Array.Empty<ToolSpec>(), model, 1024));
+        Assert.Equal("context_too_large", Assert.Throws<ProviderException>(() => ToolChatLoop.ValidateInput(oversized, Array.Empty<ToolSpec>(), model, 1024)).Code);
+    }
+
+    [Fact]
+    public async Task LoopCompactsOldHistoryMidTurnAndNotifiesOnce()
+    {
+        var executor = new Executor
+        {
+            Specs = ReadToolCatalog.Specs.Where(spec => spec.Name == "read_file").ToArray(),
+            Run = (call, _) => Task.FromResult(new ToolResult(call.Id, false, new string('d', 3000)))
+        };
+        var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, null, null, 8192) };
+        var history = Enumerable.Range(0, 3).SelectMany(index => new[]
+        {
+            new Message(MessageRole.User, new ContentPart[] { new TextPart("history " + index + " " + new string('h', 450)) }),
+            new Message(MessageRole.Assistant, new ContentPart[] { new TextPart("reply " + index + " " + new string('a', 450)) }, "model")
+        }).ToList();
+        history.Add(new Message(MessageRole.User, new ContentPart[] { new TextPart("explain Sample.cs") }));
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor, input: history));
+        Assert.Equal(2, fixture.Provider.Requests.Count);
+        var second = fixture.Provider.Requests[1];
+        Assert.True(second.Messages.Count < fixture.Provider.Requests[0].Messages.Count);
+        AssertToolPairsIntact(second.Messages);
+        Assert.DoesNotContain(second.Messages, message => message.Parts.OfType<TextPart>().Any(part => part.Text.StartsWith("history")));
+        Assert.Contains(second.Messages.Last().Parts.OfType<ToolResultPart>(), result => result.Content.Length == 3000);
+        Assert.Equal(1, fixture.Executions.Count(item => item.GetProperty("kind").GetString() == "Notice" && item.GetProperty("code").GetString() == "history_compacted"));
+    }
+
+    [Fact]
+    public async Task TransientFailureAfterExecutedToolRetriesWithoutReexecuting()
+    {
+        var executor = new Executor();
+        var fixture = new Fixture();
+        var delays = new List<TimeSpan>();
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit); await emit(new Done(FinishReason.ToolUse)); }
+            else if (round == 2) await emit(new StreamError("rate_limited", "rate_limited", 3));
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor, delay: (wait, _) => { delays.Add(wait); return Task.CompletedTask; }));
+        Assert.Equal(1, executor.Calls);
+        Assert.Equal(3, fixture.Provider.Requests.Count);
+        Assert.Equal(TimeSpan.FromSeconds(3), Assert.Single(delays));
+        Assert.Contains(fixture.Executions, item => item.GetProperty("kind").GetString() == "Notice" && item.GetProperty("code").GetString() == "retrying");
+        var retry = fixture.Provider.Requests[2];
+        Assert.Equal(fixture.Provider.Requests[1].Messages.Count, retry.Messages.Count);
+        Assert.Contains(retry.Messages.Last().Parts.OfType<ToolResultPart>(), result => result.Content == "workspace data");
+    }
+
+    [Theory]
+    [InlineData("invalid_key")]
+    [InlineData("network_error")]
+    [InlineData("insufficient_credit")]
+    [InlineData("invalid_url")]
+    [InlineData("invalid_stream")]
+    public async Task NonTransientErrorsNeverRetry(string code)
+    {
+        var fixture = new Fixture();
+        var delays = new List<TimeSpan>();
+        fixture.Provider.Run = async (_, emit, _) => await emit(new StreamError(code, code));
+        Assert.False(await fixture.Run(new Executor(), delay: (wait, _) => { delays.Add(wait); return Task.CompletedTask; }));
+        Assert.Single(fixture.Provider.Requests);
+        Assert.Empty(delays);
+        Assert.DoesNotContain(fixture.Executions, item => item.GetProperty("kind").GetString() == "Notice");
+    }
+
+    [Fact]
+    public async Task PartialVisibleOutputBlocksRetryAndIsArchived()
+    {
+        var fixture = new Fixture();
+        var delays = new List<TimeSpan>();
+        fixture.Provider.Run = async (_, emit, _) => { await emit(new TextDelta("partial")); await emit(new StreamError("rate_limited", "rate_limited", 1)); };
+        Assert.False(await fixture.Run(new Executor(), delay: (wait, _) => { delays.Add(wait); return Task.CompletedTask; }));
+        Assert.Single(fixture.Provider.Requests);
+        Assert.Empty(delays);
+        Assert.Contains(fixture.Loop.Parts.OfType<TextPart>(), part => part.Text == "partial");
+    }
+
+    [Fact]
+    public async Task RetryExhaustionFailsAfterThreeAttemptsWithBackoff()
+    {
+        var fixture = new Fixture();
+        var delays = new List<TimeSpan>();
+        fixture.Provider.Run = async (_, emit, _) => await emit(new StreamError("rate_limited", "rate_limited"));
+        Assert.False(await fixture.Run(new Executor(), delay: (wait, _) => { delays.Add(wait); return Task.CompletedTask; }));
+        Assert.Equal(3, fixture.Provider.Requests.Count);
+        Assert.Equal(2, delays.Count);
+        Assert.InRange(delays[0].TotalMilliseconds, 600, 799);
+        Assert.InRange(delays[1].TotalMilliseconds, 1100, 1299);
+    }
+
+    [Fact]
+    public async Task RetriedAttemptReusesToolCallIdsWithoutInvalidStream()
+    {
+        var executor = new Executor();
+        var fixture = new Fixture();
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit, "call1"); await emit(new StreamError("provider_error", "provider_error")); }
+            else if (round == 2) { await Call(emit, "call1"); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor, delay: (_, _) => Task.CompletedTask));
+        Assert.Equal(1, executor.Calls);
+        Assert.Equal(3, fixture.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ParallelToolsCapabilityOverlapsReadonlyCallsInCallOrder()
+    {
+        var executor = new ConcurrentExecutor { Run = async (call, token) => { await Task.Delay(60, token); return new ToolResult(call.Id, false, "data-" + call.Id); } };
+        var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.ParallelTools) };
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit, "call1"); await Call(emit, "call2"); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor));
+        Assert.Equal(2, executor.Calls);
+        Assert.Equal(2, executor.MaxActive);
+        Assert.Equal(new[] { "call1", "call2" }, fixture.Provider.Requests[1].Messages.Last().Parts.OfType<ToolResultPart>().Select(part => part.InvocationId));
+        Assert.Equal(new[] { "call1", "call2" }, fixture.Loop.Parts.OfType<ToolResultPart>().Select(part => part.InvocationId));
+    }
+
+    [Fact]
+    public async Task WithoutParallelToolsCapabilityCallsRunSequentially()
+    {
+        var executor = new ConcurrentExecutor { Run = async (call, token) => { await Task.Delay(30, token); return new ToolResult(call.Id, false, "data-" + call.Id); } };
+        var fixture = new Fixture();
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit, "call1"); await Call(emit, "call2"); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor));
+        Assert.Equal(2, executor.Calls);
+        Assert.Equal(1, executor.MaxActive);
+    }
+
+    [Fact]
+    public async Task WritesNeverRunInParallelEvenWithCapability()
+    {
+        var executor = new ConcurrentExecutor
+        {
+            Specs = ReadToolCatalog.Specs.Concat(WriteToolCatalog.Specs).ToArray(),
+            Run = async (call, token) => { await Task.Delay(30, token); return new ToolResult(call.Id, false, "data-" + call.Id); }
+        };
+        var fixture = new Fixture { Mode = ChatMode.Agent, Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.ParallelTools) };
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1)
+            {
+                await Call(emit, "call1");
+                await Call(emit, "call2", "create_file", "{\"path\":\"Created.txt\",\"content\":\"data\"}");
+                await emit(new Done(FinishReason.ToolUse));
+            }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor));
+        Assert.Equal(2, executor.Calls);
+        Assert.Equal(1, executor.MaxActive);
+    }
+
+    [Fact]
+    public async Task ParallelResultsKeepCallOrderWhenLaterCallFinishesFirst()
+    {
+        var executor = new ConcurrentExecutor
+        {
+            Run = async (call, token) => { await Task.Delay(call.Id == "call1" ? 80 : 10, token); return new ToolResult(call.Id, false, "data-" + call.Id); }
+        };
+        var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.ParallelTools) };
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1) { await Call(emit, "call1"); await Call(emit, "call2"); await emit(new Done(FinishReason.ToolUse)); }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor));
+        Assert.Equal(new[] { "call1", "call2" }, fixture.Provider.Requests[1].Messages.Last().Parts.OfType<ToolResultPart>().Select(part => part.InvocationId));
+    }
+
+    [Fact]
+    public async Task ParallelBatchStillRespectsInvocationBudgetBeforeExecuting()
+    {
+        var executor = new ConcurrentExecutor();
+        var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.ParallelTools) };
+        fixture.Provider.Run = async (_, emit, _) =>
+        {
+            await Call(emit, "call1"); await Call(emit, "call2"); await Call(emit, "call3");
+            await emit(new Done(FinishReason.ToolUse));
+        };
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)))).Code);
+        Assert.Equal(0, executor.Calls);
+        Assert.Single(fixture.Provider.Requests);
+    }
+
     [Fact]
     public async Task OptoutNeverDeclaresOrInvokesToolsEvenWhenModelRequestsThem()
     {
@@ -334,9 +638,10 @@ public sealed class ReadToolChatLoopTests
             else if (bad != "eof") await emit(new Done(bad == "max_tokens" ? FinishReason.MaxTokens : FinishReason.ToolUse));
         };
         if (bad is "duplicate" or "malformed" or "duplicate_json") Assert.Equal("invalid_stream", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor))).Code);
-        else Assert.False(await fixture.Run(executor));
+        else Assert.False(await fixture.Run(executor, delay: (_, _) => Task.CompletedTask));
         Assert.Equal(0, executor.Calls);
-        Assert.Single(fixture.Provider.Requests);
+        // A transient provider_error now retries the same round twice before failing; nothing is executed.
+        Assert.Equal(bad == "error" ? 3 : 1, fixture.Provider.Requests.Count);
     }
 
     [Theory]

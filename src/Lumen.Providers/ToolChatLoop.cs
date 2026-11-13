@@ -36,7 +36,7 @@ public sealed class ToolChatLoop
         }).ToArray();
     }
 
-    public static void ValidateInput(IReadOnlyList<Message> messages, IReadOnlyList<ToolSpec> specs, ModelInfo model, int outputTokens)
+    internal static long EstimateSize(IReadOnlyList<Message> messages, IReadOnlyList<ToolSpec> specs)
     {
         long size = AgentInstruction.Length;
         foreach (var message in messages)
@@ -52,9 +52,38 @@ public sealed class ToolChatLoop
                     _ => 0
                 };
         size += specs.Sum(spec => (long)spec.Description.Length + spec.ParametersSchema.GetRawText().Length);
-        // One character per token is deliberately conservative without a provider tokenizer.
-        var maximum = Math.Min(262144L, model.ContextWindowTokens.HasValue ? Math.Max(0L, model.ContextWindowTokens.Value - (long)outputTokens - 2048) : 262144L);
-        if (size > maximum || messages.Count > 2048) throw new ProviderException("context_too_large");
+        return size;
+    }
+
+    // One character per token is deliberately conservative without a provider tokenizer.
+    internal static long ContextLimit(ModelInfo model, int outputTokens) =>
+        Math.Min(262144L, model.ContextWindowTokens.HasValue ? Math.Max(0L, model.ContextWindowTokens.Value - (long)outputTokens - 2048) : 262144L);
+
+    public static void ValidateInput(IReadOnlyList<Message> messages, IReadOnlyList<ToolSpec> specs, ModelInfo model, int outputTokens)
+    {
+        if (EstimateSize(messages, specs) > ContextLimit(model, outputTokens) || messages.Count > 2048) throw new ProviderException("context_too_large");
+    }
+
+    // Drops whole oldest turns (user message + its assistant/tool exchange) so a tool_call is never
+    // separated from its tool_result; the leading system message and the newest turn always survive.
+    public static IReadOnlyList<Message> Compact(IReadOnlyList<Message> messages, IReadOnlyList<ToolSpec> specs, ModelInfo model, int outputTokens)
+    {
+        var limit = ContextLimit(model, outputTokens);
+        if (EstimateSize(messages, specs) <= limit && messages.Count <= 2048) return messages;
+        var starts = new List<int>();
+        for (var index = 0; index < messages.Count; index++)
+            if (messages[index].Role == MessageRole.User) starts.Add(index);
+        if (starts.Count <= 1) return messages;
+        var prefix = messages.Take(starts[0]).ToArray();
+        var offset = starts[0];
+        while (starts.Count > 1)
+        {
+            offset = starts[1];
+            starts.RemoveAt(0);
+            var candidate = prefix.Concat(messages.Skip(offset)).ToArray();
+            if (EstimateSize(candidate, specs) <= limit && candidate.Length <= 2048) return candidate;
+        }
+        return prefix.Concat(messages.Skip(offset)).ToArray();
     }
 
     public static IReadOnlyList<Message> Replay(StoredConversation stored)
@@ -113,7 +142,8 @@ public sealed class ToolChatLoop
 
     public async Task<bool> RunAsync(IChatProvider provider, ProviderConfiguration configuration, ModelInfo model,
         IReadOnlyList<Message> input, ReasoningIntent effort, ChatMode mode, IReadToolExecutor? executor, IReadOnlyList<ToolSpec> specs,
-        string? secret, Func<StreamEvent, Task> emit, Func<object, Task> execution, CancellationToken token, ToolBudget? budget = null)
+        string? secret, Func<StreamEvent, Task> emit, Func<object, Task> execution, CancellationToken token, ToolBudget? budget = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         budget ??= ToolBudget.Default;
         var allowed = AllowedFor(mode);
@@ -135,11 +165,22 @@ public sealed class ToolChatLoop
         var reasoningSent = 0;
         var cap = model.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024;
         cap = Math.Min(cap, model.MaxOutputTokens ?? cap);
+        var compactionNotified = false;
         try
         {
             for (var round = 0; round < budget.MaxRounds; round++)
             {
                 token.ThrowIfCancellationRequested();
+                var compacted = Compact(messages, specs, model, cap);
+                if (!ReferenceEquals(compacted, messages))
+                {
+                    messages = compacted.ToList();
+                    if (!compactionNotified)
+                    {
+                        compactionNotified = true;
+                        await execution(Notice("history_compacted")).ConfigureAwait(false);
+                    }
+                }
                 if (allocated + cap > budget.MaxOutputTokens) throw new ProviderException("tool_budget_exceeded");
                 ValidateInput(messages, specs, model, cap);
                 RejectSecret(JsonSerializer.SerializeToElement(messages, ConversationSerializer.Options), secret);
@@ -151,11 +192,13 @@ public sealed class ToolChatLoop
                 var oversized = new HashSet<string>(StringComparer.Ordinal);
                 var events = new List<StreamEvent>();
                 Done? done = null;
-                var failed = false;
+                StreamError? streamError = null;
                 string? callbackFailure = null;
                 var archived = false;
                 try
                 {
+                    for (var attempt = 0; ; attempt++)
+                    {
                     await provider.StreamAsync(new ChatRequest(configuration, model, messages.ToArray(), effort, specs, cap), secret, async value =>
                     {
                         if (callbackFailure is not null) return;
@@ -174,7 +217,7 @@ public sealed class ToolChatLoop
                             _ => 0
                         };
                         if (streamSize > 8 * 1024 * 1024 || ++eventCount > 32768) throw new ProviderException("stream_too_large");
-                        if (done is not null || failed) throw new ProviderException("invalid_stream");
+                        if (done is not null || streamError is not null) throw new ProviderException("invalid_stream");
                         CheckEventSecret(value, secret);
                         switch (value)
                         {
@@ -217,7 +260,7 @@ public sealed class ToolChatLoop
                                 chunks.Remove(call.Id);
                                 break;
                             case Done terminal: done = terminal; break;
-                            case StreamError _: failed = true; break;
+                            case StreamError error: streamError = error; break;
                         }
                         if (value is TextDelta textDelta)
                         {
@@ -246,6 +289,22 @@ public sealed class ToolChatLoop
                     }, token).ConfigureAwait(false);
                     if (callbackFailure is not null) throw new ProviderException(callbackFailure);
                     token.ThrowIfCancellationRequested();
+                    // Retry only explicit provider error responses before any visible output; a network
+                    // failure could have been processed already, and re-POSTing it could spend twice.
+                    if (streamError is not null && attempt < 2 && textSent == 0 && reasoningSent == 0 && Transient(streamError.Code))
+                    {
+                        foreach (var call in batch.OfType<ToolCallPart>()) ids.Remove(call.Id);
+                        foreach (var id in names.Keys) ids.Remove(id);
+                        var wait = streamError.RetryAfterSeconds is long seconds ? TimeSpan.FromSeconds(seconds)
+                            : TimeSpan.FromMilliseconds(500 * (1 << attempt) + new Random().Next(100, 300));
+                        await execution(Notice("retrying")).ConfigureAwait(false);
+                        await (delay ?? Task.Delay)(wait, token).ConfigureAwait(false);
+                        batch.Clear(); names.Clear(); chunks.Clear(); oversized.Clear(); events.Clear();
+                        done = null; streamError = null; visibleText = string.Empty; visibleReasoning = string.Empty;
+                        continue;
+                    }
+                    break;
+                    }
                     RejectSecret(JsonSerializer.SerializeToElement(batch, ConversationSerializer.Options), secret);
                     RejectText(string.Concat(batch.OfType<TextPart>().Select(part => part.Text)), secret);
                     RejectText(string.Concat(batch.OfType<ReasoningPart>().Select(part => part.Text)), secret);
@@ -263,10 +322,10 @@ public sealed class ToolChatLoop
                     }
                     parts.AddRange(batch);
                     archived = true;
-                    if (failed || done is null || names.Count > 0)
+                    if (streamError is not null || done is null || names.Count > 0)
                     {
                         pendingUi.Clear();
-                        if (!failed) await emit(new StreamError("invalid_stream", "invalid_stream")).ConfigureAwait(false);
+                        if (streamError is null) await emit(new StreamError("invalid_stream", "invalid_stream")).ConfigureAwait(false);
                         return false;
                     }
                     var calls = batch.OfType<ToolCallPart>().ToArray();
@@ -277,6 +336,46 @@ public sealed class ToolChatLoop
                     messages.Add(new Message(MessageRole.Assistant, batch.ToArray(), model.ModelId));
                     ValidateInput(messages, specs, model, cap);
                     var results = new List<ContentPart>();
+                    var parallel = calls.Length > 1 && model.Has(ModelCapabilities.ParallelTools) && calls.All(call => ParallelSafe(call.Name));
+                    if (parallel)
+                    {
+                        var errors = calls.Select(call => !specs.Any(spec => spec.Name == call.Name) || !allowed.Contains(call.Name) ? "unknown_tool"
+                            : oversized.Contains(call.Id) || !ValidArguments(call) ? "invalid_arguments" : null).ToArray();
+                        foreach (var call in calls) await execution(Execution(call.Id, "Running", false, string.Empty)).ConfigureAwait(false);
+                        token.ThrowIfCancellationRequested();
+                        var outcomes = await Task.WhenAll(calls.Select(async (call, index) =>
+                        {
+                            if (errors[index] is not null) return (Result: (ToolResult?)new ToolResult(call.Id, true, JsonWire.Serialize(new { code = errors[index] })), Failure: (Exception?)null);
+                            token.ThrowIfCancellationRequested();
+                            try { return (Result: (ToolResult?)await executor.ExecuteAsync(new ToolInvocation(call.Id, call.Name, call.Arguments), token).ConfigureAwait(false), Failure: (Exception?)null); }
+                            catch (Exception exception) { return (Result: (ToolResult?)null, Failure: (Exception?)exception); }
+                        })).ConfigureAwait(false);
+                        invocations += calls.Length;
+                        for (var index = 0; index < calls.Length; index++)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var call = calls[index];
+                            if (outcomes[index].Failure is OperationCanceledException) throw outcomes[index].Failure!;
+                            if (outcomes[index].Failure is ProviderException) throw new ProviderException("context_stale");
+                            if (outcomes[index].Failure is not null) throw new ProviderException("invalid_response");
+                            var result = outcomes[index].Result!;
+                            if (result.InvocationId != call.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                            ValidateUnicode(result.Content);
+                            RejectText(result.Content, secret);
+                            CheckJsonText(result.Content, secret);
+                            if (result.IsError && Stale(result.Content)) throw new ProviderException("context_stale");
+                            if (resultSize + result.Content.Length > 131072) throw new ProviderException("tool_budget_exceeded");
+                            resultSize += result.Content.Length;
+                            var part = result.ToContentPart();
+                            results.Add(part);
+                            parts.Add(part);
+                            await execution(Execution(call.Id, result.IsError ? "Failed" : "Completed", result.IsError, result.Content)).ConfigureAwait(false);
+                            pendingUi.Remove(call.Id);
+                        }
+                        ValidateInput(messages.Concat(new[] { new Message(MessageRole.Tool, results.ToArray()) }).ToArray(), specs, model, cap);
+                    }
+                    else
+                    {
                     foreach (var call in calls)
                     {
                         token.ThrowIfCancellationRequested();
@@ -314,6 +413,7 @@ public sealed class ToolChatLoop
                         await execution(Execution(call.Id, result.IsError ? "Failed" : "Completed", result.IsError, result.Content)).ConfigureAwait(false);
                         pendingUi.Remove(call.Id);
                         token.ThrowIfCancellationRequested();
+                    }
                     }
                     messages.Add(new Message(MessageRole.Tool, results.ToArray()));
                 }
@@ -371,6 +471,9 @@ public sealed class ToolChatLoop
     }
 
     private static object Execution(string id, string status, bool isError, string content) => new { kind = "ToolExecution", id, status, isError, content };
+    private static object Notice(string code) => new { kind = "Notice", code };
+    private static bool Transient(string code) => code == "rate_limited" || code == "provider_error";
+    private static bool ParallelSafe(string name) => name != "create_file" && name != "edit_file" && name != "apply_diff" && name != "run_command" && name != "run_build" && name != "run_tests";
     private static bool ValidIdentifier(string value, int maximum) => value.Length <= maximum && Regex.IsMatch(value, "^[a-zA-Z0-9_-]+$", RegexOptions.CultureInvariant);
     private static bool ValidArguments(ToolCallPart call)
     {

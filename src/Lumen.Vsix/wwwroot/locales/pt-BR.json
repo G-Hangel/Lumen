@@ -182,6 +182,8 @@
   "commandErrorTimeout": "O comando excedeu o tempo limite e foi interrompido.",
   "commandErrorFailed": "Falha ao iniciar ou executar o comando.",
   "byokUsage": "Uso de tokens · entrada / saída",
+  "byokNoticeCompacted": "Histórico antigo compactado para caber na janela de contexto; turnos antigos não são mais enviados ao modelo.",
+  "byokNoticeRetrying": "Falha transitória do provedor; tentando novamente sem reexecutar ferramentas.",
   "byokErrorInvalidKey": "401 · Chave de API inválida. Informe uma chave válida e teste a listagem novamente.",
   "byokErrorPermission": "403 · Permissão negada. Confira o acesso ao provedor / modelo; não significa necessariamente chave inválida.",
   "byokErrorUrl": "404 / URL inválida · Confira a URL base e os deployments, não apenas a chave.",

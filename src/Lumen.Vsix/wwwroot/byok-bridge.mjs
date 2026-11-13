@@ -121,6 +121,7 @@ export function isByokEvent(value) {
     case 'Done': return fields(value, ['kind', 'reason']) && ['Stop', 'MaxTokens', 'ToolUse', 'ContentFiltered', 'Cancelled', 'Other'].includes(value.reason);
     case 'Error': return fields(value, ['kind', 'code'], ['retryAfter']) && errorCode(value.code)
       && (!Object.hasOwn(value, 'retryAfter') || value.retryAfter === null || (Number.isSafeInteger(value.retryAfter) && value.retryAfter >= 0));
+    case 'Notice': return fields(value, ['kind', 'code']) && ['history_compacted', 'retrying'].includes(value.code);
     default: return false;
   }
 }

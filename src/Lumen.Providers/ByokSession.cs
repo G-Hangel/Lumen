@@ -428,8 +428,9 @@ public sealed class ByokSession : IDisposable
                         new Conversation(Guid.NewGuid().ToString("D"), mode, Array.Empty<Message>(), titleText.Substring(0, titleLength), chatModel.ModelId, effort), Array.Empty<string>());
                     if (currentConversation.TurnStates.Count >= 10000) throw new ProviderException("history_too_large");
                     var replay = ToolChatLoop.Replay(currentConversation);
-                    var input = replay.Concat(new[] { userMessage }).ToArray();
                     var outputTokens = Math.Min(chatModel.MaxOutputTokens ?? int.MaxValue, chatModel.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024);
+                    var pending = replay.Concat(new[] { userMessage }).ToArray();
+                    var input = ToolChatLoop.Compact(pending, toolSpecs, chatModel, outputTokens);
                     ToolChatLoop.ValidateInput(input, toolSpecs, chatModel, outputTokens);
                     var chatSecret = await credentials.ReadAsync(chatConfiguration.Id, cancellationToken).ConfigureAwait(false);
                     ToolChatLoop.RejectSecret(JsonSerializer.SerializeToElement(input, ConversationSerializer.Options), chatSecret);
@@ -445,6 +446,7 @@ public sealed class ByokSession : IDisposable
                         finally { eventGate.Release(); }
                     }
                     lock (approvalGate) approvalEmit = EmitChatEvent;
+                    if (!ReferenceEquals(input, pending)) await EmitChatEvent(new { kind = "Notice", code = "history_compacted" }).ConfigureAwait(false);
                     try
                     {
                         if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,

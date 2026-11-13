@@ -182,6 +182,8 @@
   "commandErrorTimeout": "The command exceeded its time limit and was stopped.",
   "commandErrorFailed": "The command failed to start or run.",
   "byokUsage": "Token usage · input / output",
+  "byokNoticeCompacted": "Old history compacted to fit the context window; older turns are no longer sent to the model.",
+  "byokNoticeRetrying": "Transient provider failure; retrying without re-executing tools.",
   "byokErrorInvalidKey": "401 · Invalid API key. Enter a valid key and test the listing again.",
   "byokErrorPermission": "403 · Permission denied. Check provider / model access; this is not necessarily an invalid key.",
   "byokErrorUrl": "404 / invalid URL · Check the base URL and deployment names, not just the key.",

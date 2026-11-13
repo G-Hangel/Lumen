@@ -705,14 +705,15 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const thoughts = document.createElement('p'); thoughts.className = 'byok-plain'; reasoning.append(thoughts);
     const tools = document.createElement('div');
     const usage = document.createElement('p'); usage.className = 'secondary';
+    const notices = document.createElement('div');
     article.append(user, userText);
     if (contextText) {
       const details = document.createElement('details'); details.className = 'context-history';
       const content = document.createElement('pre'); content.className = 'byok-plain'; content.tabIndex = 0; content.textContent = contextText;
       details.append(localized('summary', 'contextHistory'), content); article.append(details);
     }
-    article.append(assistant, response, reasoning, tools, usage);
-    return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, record: { userText: value,
+    article.append(assistant, response, reasoning, tools, usage, notices);
+    return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, notices, record: { userText: value,
       ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], status: 'failed' } };
   }
   function renderEvent(turn, event) {
@@ -791,6 +792,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
       buttons[0].focus({ preventScroll: true });
     } else if (event.kind === 'Usage') {
       turn.usage.replaceChildren(localized('span', 'byokUsage'), document.createTextNode(`: ${event.input} / ${event.output}`));
+    } else if (event.kind === 'Notice') {
+      const line = localized('p', event.code === 'history_compacted' ? 'byokNoticeCompacted' : 'byokNoticeRetrying', 'secondary');
+      turn.notices.append(line);
+      const announcement = document.getElementById('announcement');
+      if (announcement) announcement.textContent = line.textContent;
     } else if (event.kind === 'Error') showError(event.code, event.retryAfter);
     if (pinned) node('output').scrollTop = node('output').scrollHeight;
   }

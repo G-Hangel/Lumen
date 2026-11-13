@@ -166,7 +166,7 @@ public sealed class AutomaticReadToolSessionTests
     }
 
     [Fact]
-    public async Task OversizedCompletedHistoryIsRejectedBeforeCredentialReadOrPaidRequest()
+    public async Task OversizedCompletedHistoryIsCompactedBeforePaidRequest()
     {
         using var fixture = new Fixture();
         await fixture.Prepare();
@@ -175,8 +175,28 @@ public sealed class AutomaticReadToolSessionTests
             new Message(MessageRole.Assistant, new ContentPart[] { new TextPart(new string('x', 262145)) }) }, modelId: "fixture");
         await new ConversationStore(Path.Combine(fixture.Root, "conversations")).SaveAsync(new StoredConversation(fixture.Id, domain, new[] { "completed" }), CancellationToken.None);
         await fixture.Send("byok.history.open", new { conversationId = id, offset = 0, limit = 1 });
-        var reads = fixture.Credentials.Reads;
         await fixture.Chat();
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(2, fixture.Handler.Bodies.Count);
+        using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
+        var messages = body.RootElement.GetProperty("messages");
+        Assert.Equal(2, messages.GetArrayLength());
+        Assert.Equal("read Sample.cs", messages[1].GetProperty("content")[0].GetProperty("text").GetString());
+        Assert.DoesNotContain("xxxx", fixture.Handler.Bodies[0]);
+        Assert.Contains(fixture.Replies, reply => reply.GetProperty("type").GetString() == "byok.event"
+            && reply.GetProperty("payload").GetProperty("kind").GetString() == "Notice"
+            && reply.GetProperty("payload").GetProperty("code").GetString() == "history_compacted");
+    }
+
+    [Fact]
+    public async Task OversizedCurrentInputIsRejectedBeforeCredentialReadOrPaidRequest()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        var reads = fixture.Credentials.Reads;
+        await fixture.Send("byok.chat", new { configurationId = fixture.Id, text = "read Sample.cs", effort = "Off", readTools = true,
+            image = new { mediaType = "image/png", base64Data = new string('A', 300000) } });
         Assert.Equal("context_too_large", fixture.Error);
         Assert.Equal(reads, fixture.Credentials.Reads);
         Assert.Empty(fixture.Handler.Bodies);

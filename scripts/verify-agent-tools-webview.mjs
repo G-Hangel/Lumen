@@ -9,11 +9,12 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const stage = process.argv[2] || 'verify';
-assert.ok(['verify', 'modes', 'plan-budget', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
+assert.ok(['verify', 'modes', 'plan-budget', 'loop-resilience', 'acceptance', 'acceptance-resume', 'resume', 'cleanup'].includes(stage));
 const manifestPath = new URL('../artifacts/context-fixtures.json', import.meta.url);
 const manifest = JSON.parse((await readFile(manifestPath, 'utf8')).replace(/^\uFEFF/, ''));
 const outsidePath = path.join(path.dirname(manifest.root), `${path.basename(manifest.root)}-owned-outside.txt`);
 const requests = [], sockets = new Set();
+let loopRetryFailed = false;
 let streamReached;
 const streamReady = new Promise(resolve => { streamReached = resolve; });
 const textOf = message => typeof message.content === 'string' ? message.content : (message.content ?? []).map(part => part.text ?? '').join('');
@@ -28,13 +29,25 @@ function calls(response, tools, index) {
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/models') {
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ data: [{ id: 'fixture/auto', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'], context_length: 32768 }] })); return;
+    response.end(JSON.stringify({ data: [
+      { id: 'fixture/auto', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'], context_length: 32768 },
+      { id: 'fixture/small', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'], context_length: 8192 },
+      { id: 'fixture/parallel', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools', 'parallel_tool_calls'], context_length: 32768 }
+    ] })); return;
   }
   if (request.method !== 'POST' || request.url !== '/chat/completions') { response.writeHead(404); response.end(); return; }
   let bytes = 0; const chunks = [];
   for await (const chunk of request) { bytes += chunk.length; if (bytes > 8 * 1024 * 1024) { response.writeHead(413); response.end(); return; } chunks.push(chunk); }
   const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   requests.push(payload);
+  const earlyUser = payload.messages.findLastIndex(message => message.role === 'user');
+  const earlyText = textOf(payload.messages[earlyUser]);
+  const earlyResults = payload.messages.slice(earlyUser + 1).filter(message => message.role === 'tool');
+  // Transient 429 after the tool already ran: the loop must retry without re-executing it.
+  if (earlyText === 'fixture-agent-loop-retry' && earlyResults.length === 1 && !loopRetryFailed) {
+    loopRetryFailed = true;
+    response.writeHead(429, { 'Retry-After': '1', 'Content-Type': 'application/json' }); response.end('{}'); return;
+  }
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const userIndex = payload.messages.findLastIndex(message => message.role === 'user');
   const text = textOf(payload.messages[userIndex]);
@@ -55,6 +68,14 @@ const server = createServer(async (request, response) => {
   if (text === 'fixture-plan-budget-plan') { answer(response, 'Plan: phase 1 inspect Sample.cs; acceptance criteria: cite the file.'); return; }
   if (text === 'fixture-plan-budget-loop') { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }], requests.length); return; }
   if (text === 'fixture-plan-budget-done' && !results.length) { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }], requests.length); return; }
+  if (text === 'fixture-agent-loop-retry') {
+    if (!results.length) { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }], requests.length); return; }
+    answer(response, 'retry recovered without re-executing the tool'); return;
+  }
+  if (text === 'fixture-agent-loop-parallel') {
+    if (!results.length) { calls(response, [{ name: 'read_file', args: { path: 'Sample.cs' } }, { name: 'read_file', args: { path: 'ContextFixture.csproj' } }], requests.length); return; }
+    answer(response, `parallel results received: ${results.length}`); return;
+  }
   if (results.length) { answer(response, `Agent tool results received: ${results.length} <script>window.lumenAgentExecuted=true</script><img src=x onerror="window.lumenAgentExecuted=true">`); return; }
   if (text === 'fixture-agent-acceptance-outside') {
     calls(response, [{ name: 'edit_file', args: { path: outsidePath, content: 'outside-after\n' } }], requests.length); return;
@@ -215,7 +236,7 @@ try {
     const originalBuffer = diagnosticPending ? null : await automation('WriteInspect');
     if (originalBuffer) assert.equal(originalBuffer.saved, false);
     for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(await evaluate(`document.querySelector('#byok-${id}').checked`), false);
-    if (stage === 'verify' || stage === 'modes' || stage === 'plan-budget' || stage === 'acceptance') {
+    if (stage === 'verify' || stage === 'modes' || stage === 'plan-budget' || stage === 'loop-resilience' || stage === 'acceptance') {
       assert.equal(manifest.configurationId, null, 'Do not overwrite a fixture provider from an interrupted run.');
       manifest.configurationId = randomUUID(); await saveManifest();
     } else if (stage === 'resume') {
@@ -431,6 +452,73 @@ try {
       report.layoutNegativeDetected = true;
       report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
       await writeFile(new URL('../artifacts/phase5-plan-budget-webview.json', import.meta.url), JSON.stringify(report, null, 2));
+      console.log(JSON.stringify(report));
+    } else if (stage === 'loop-resilience') {
+      const selectModel = async id => {
+        await evaluate("document.querySelector('#byok-panel').open=true");
+        await action('byok.select.result', `const m=document.querySelector('#byok-models');m.value=${JSON.stringify(id)};m.dispatchEvent(new Event('change'));`);
+        await evaluate("document.querySelector('#byok-panel').open=false");
+      };
+      const newHistory = () => action('byok.history.new.result', "document.querySelector('#byok-history-new').click()");
+      // A. Compaction: 20 turns of ~320 chars overflow the 8192-token window of fixture/small.
+      await selectModel('fixture/small');
+      await newHistory();
+      let compacted = null;
+      for (let index = 0; index < 20; index++) {
+        const chat = await agentChat(`fixture-agent-loop-history-${index} ${'h'.repeat(300)}`, [], 'none', 'Ask');
+        assert.equal(chat.type, 'byok.chat.result', JSON.stringify(chat));
+        assert.equal(chat.payload.completed, true);
+        if (chat.events.some(event => event.kind === 'Notice' && event.code === 'history_compacted')) compacted = chat;
+      }
+      assert.ok(compacted, 'expected a history_compacted notice within 20 turns');
+      assert.equal(requests[0].messages.length, 2);
+      const lastCount = requests.at(-1).messages.length;
+      assert.ok(lastCount < 41 && lastCount >= 3, `expected compaction, got ${lastCount} messages`);
+      report.historyCompaction = true;
+      // B. Transient 429 after the tool ran: retry must not re-execute it.
+      await newHistory();
+      const beforeRetry = requests.length;
+      const retry = await agentChat('fixture-agent-loop-retry', ['auto-read-tools'], 'none', 'Ask');
+      assert.equal(retry.type, 'byok.chat.result', JSON.stringify(retry));
+      assert.equal(retry.payload.completed, true);
+      assert.equal(requests.length - beforeRetry, 3, 'tool round + 429 + retried answer');
+      assert.equal(retry.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed').length, 1, 'the tool must execute exactly once');
+      assert.ok(retry.events.some(event => event.kind === 'Notice' && event.code === 'retrying'));
+      const retryResults = currentResults(requests.at(-1));
+      assert.equal(retryResults.length, 1);
+      assert.ok(retryResults[0].content.includes('ContextFixture'), 'the executed tool result must survive the retry');
+      const retryCalls = requests.at(-1).messages.filter(message => message.role === 'assistant' && message.tool_calls);
+      assert.equal(retryCalls.length, 1);
+      assert.equal(retryCalls[0].tool_calls[0].id, retryResults[0].tool_call_id, 'compaction/retry must keep the tool_call paired with its result');
+      report.transientRetryWithoutReexecution = true;
+      // C. Two read-only calls overlap only with the ParallelTools capability; order is preserved.
+      await selectModel('fixture/parallel');
+      await newHistory();
+      const beforeParallel = requests.length;
+      const parallel = await agentChat('fixture-agent-loop-parallel', ['auto-read-tools'], 'none', 'Agent');
+      assert.equal(parallel.type, 'byok.chat.result', JSON.stringify(parallel));
+      assert.equal(parallel.payload.completed, true);
+      assert.equal(requests.length - beforeParallel, 2);
+      const completed = parallel.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed');
+      assert.equal(completed.length, 2);
+      assert.deepEqual(completed.map(event => event.id), parallel.events.filter(event => event.kind === 'ToolCallEnd').map(event => event.id));
+      const parallelResults = currentResults(requests.at(-1));
+      assert.equal(parallelResults.length, 2);
+      assert.ok(parallelResults[0].content.includes('ContextFixture'));
+      assert.ok(parallelResults[1].content.length > 0);
+      assert.notEqual(parallelResults[0].content, parallelResults[1].content);
+      // Without the capability the same batch still completes, sequentially (overlap timing is proven by the C# MaxActive tests).
+      await selectModel('fixture/auto');
+      await newHistory();
+      const sequential = await agentChat('fixture-agent-loop-parallel', ['auto-read-tools'], 'none', 'Agent');
+      assert.equal(sequential.type, 'byok.chat.result', JSON.stringify(sequential));
+      assert.equal(sequential.payload.completed, true);
+      assert.equal(sequential.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed').length, 2);
+      report.parallelToolsGated = true;
+      assert.deepEqual(exceptions, []);
+      await collectOwnedConversations();
+      report.javascriptExceptions = 0; report.providerRequests = requests.length; report.paidRequests = 0;
+      await writeFile(new URL('../artifacts/phase5-loop-resilience-webview.json', import.meta.url), JSON.stringify(report, null, 2));
       console.log(JSON.stringify(report));
     } else {
     let writeConversationId = manifest.conversationIds[0];

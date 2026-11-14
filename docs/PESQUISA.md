@@ -520,9 +520,17 @@ versão reiterada, texto e invalidação por transação externa.
   Fonte: <https://learn.microsoft.com/en-us/visualstudio/ide/mcp-servers?view=visualstudio>
 - **Agent Skills nativo desde 18.5**: `SKILL.md` no padrão **agentskills.io**,
   lido de `.github/skills/`, `.claude/skills/`, `.agents/skills/`,
-  `~/.copilot/skills/`.
+  `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/` (diretórios
+  de usuário reconfirmados em 2026-11-14).
   → **O Lumen adota o mesmo formato e diretórios** (`ARQUITETURA.md` §2.10).
   Fonte: <https://learn.microsoft.com/en-us/visualstudio/ide/copilot-agent-skills?view=visualstudio>
+- **Especificação agentskills.io** (verificada 2026-11-14): `name` 1–64 chars
+  `[a-z0-9-]`, sem hífen nas pontas nem `--`, igual ao nome da pasta;
+  `description` 1–1024; opcionais `license`, `compatibility` (≤500),
+  `metadata` (mapa string→string), `allowed-tools` (lista separada por espaço,
+  experimental). Corpo recomendado <5000 tokens; recursos em
+  `scripts/`, `references/`, `assets/`.
+  Fonte: <https://agentskills.io/specification>
 
 ## 2.5 Build, debug, install
 

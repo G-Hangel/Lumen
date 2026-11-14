@@ -1,10 +1,11 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-13**.
+Atualizado em **2026-11-14**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 não iniciada.** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 em andamento (fatia 6a concluída; 6b e 6c
+pendentes).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -32,8 +33,39 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fases 6–8 | não iniciadas |
+| Fase 6 — Skills | **em andamento (6a concluída; 6b UI/persistência e 6c exemplos/Exp pendentes)** |
+| Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 6a — núcleo de Skills (2026-11-14)
+
+- `SkillParser` (Lumen.Tools): frontmatter agentskills.io com subconjunto YAML
+  (escalares simples/aspas/blocos `|` `>`, listas, mapa `metadata` de um
+  nível); erros acionáveis com código e linha (`missing_frontmatter`,
+  `duplicate_field`, `invalid_name`, `name_mismatch`, `description_too_long`,
+  `invalid_modes`…). Restrição de modo via `metadata.lumen-modes`;
+  `allowed-tools` é só informativo e **nunca** concede ferramenta/aprovação.
+- `SkillDiscovery`: projeto `.lumen` > `.github` > `.claude` > `.agents`
+  (`/skills`), depois usuário `~/.lumen`, `~/.copilot`, `~/.claude`,
+  `~/.agents`. Primeira definição vence; cópias geram `duplicate_name`.
+  Leitura via `WorkspaceGuard` da raiz de skills: junction para fora →
+  `outside_allowed`.
+- `SkillCatalog`: só nome+descrição no system prompt, limitado a
+  `MaxPromptChars` (8192) com aviso de omissão; ferramenta readonly
+  `load_skill {name, path?}` confinada à pasta da skill (`outside_skill`).
+  Ativação explícita `/nome` (só se a skill existir) e manual pelo campo
+  `skills` do payload `byok.chat` (≤8; `skill_unavailable` fora do modo).
+  Descoberta refeita a cada envio — skill nova vale sem reiniciar o VS.
+- VSIX: `VisualStudioSkillSource` (raiz da solução + perfil do usuário).
+- Testes: `SkillTests` (41) cobre os CN do plano — sem frontmatter/nome
+  duplicado → erro claro; 256 descrições máximas não passam de 8192 chars;
+  skill `lumen-modes: plan` com `allowed-tools: create_file run_command` não
+  anuncia escrita em Plan e `create_file` do modelo vira `unknown_tool`;
+  junction de pasta e de raiz para fora rejeitadas; `../` em `load_skill`
+  rejeitado. Controle negativo: remover o filtro de modo e o limite do prompt
+  em `SkillCatalog` derruba 3 testes. Suíte completa: 1591/1591 verdes.
+- Não verificado na Exp nesta fatia (UI de Skills é 6b; verificação Exp em 6c).
+  Sem chamadas pagas.
 
 ## Fase 5d — ContextBuilder integral + AC multi-passos (2026-11-13)
 

@@ -44,7 +44,7 @@ internal sealed class LumenControl : UserControl, IDisposable
             var resolver = new CapabilityResolver(File.Exists(registryPath) ? File.ReadAllText(registryPath) : null);
             var transport = new HttpTransport(http);
             return new ByokSession(new ProviderFactory(transport, resolver), new WindowsCredentialStore(),
-                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools);
+                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools, new VisualStudioSkillSource(taskFactory));
         });
         browser = new WebView2
         {

@@ -21,6 +21,7 @@ public sealed class ByokSession : IDisposable
     private readonly IReadToolExecutor? readTools;
     private readonly IWriteToolExecutor? writeTools;
     private readonly IShellToolExecutor? shellTools;
+    private readonly ISkillSource? skills;
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -33,9 +34,9 @@ public sealed class ByokSession : IDisposable
     private readonly object approvalGate = new object();
     private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
     private Func<object, Task>? approvalEmit;
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null)
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -353,7 +354,7 @@ public sealed class ByokSession : IDisposable
                     break;
                 case "byok.chat":
                 {
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode", "budget" });
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode", "budget", "skills" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
                     var readToolsValue = JsonWire.Get(payload, "readTools");
@@ -400,6 +401,15 @@ public sealed class ByokSession : IDisposable
                     var capturedShell = enableTerminal ? await shellTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
                     cancellationToken.ThrowIfCancellationRequested();
                     IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Agent ? new CompositeExecutor(capturedRead, capturedWrite, capturedShell) : capturedRead;
+                    var skillSnapshot = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var availableSkills = SkillCatalog.Available(skillSnapshot, mode, Array.Empty<string>());
+                    var skillCatalog = string.Empty;
+                    if (capturedTools is not null && availableSkills.Count > 0)
+                    {
+                        capturedTools = new SkillToolExecutor(capturedTools, availableSkills);
+                        skillCatalog = SkillCatalog.PromptSection(availableSkills);
+                    }
                     var toolSpecs = capturedTools is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(mode, capturedTools);
                     if (!Enum.TryParse<ReasoningIntent>(RequiredString(payload, "effort", 16), out var effort) || !Enum.IsDefined(typeof(ReasoningIntent), effort)) throw new ProviderException("invalid_message");
                     var text = RequiredString(payload, "text", 4096);
@@ -413,6 +423,7 @@ public sealed class ByokSession : IDisposable
                         attachedContexts.Add(captured);
                     }
                     if (attachedContexts.Count > 0) parts.Add(new TextPart(string.Join("\n\n", attachedContexts.Select(value => "[Context: " + value.Label + "]\n" + value.Text))));
+                    foreach (var skill in ActivatedSkills(payload, text, skillSnapshot, availableSkills)) parts.Add(new TextPart(SkillCatalog.Activation(skill)));
                     var image = JsonWire.Get(payload, "image");
                     if (image.ValueKind != JsonValueKind.Undefined)
                     {
@@ -451,7 +462,7 @@ public sealed class ByokSession : IDisposable
                     {
                         if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
                             streamEvent => EmitChatEvent(EventView(streamEvent)),
-                            EmitChatEvent, cancellationToken, budget).ConfigureAwait(false)) turnState = "completed";
+                            EmitChatEvent, cancellationToken, budget, skillCatalog: skillCatalog).ConfigureAwait(false)) turnState = "completed";
                     }
                     catch (OperationCanceledException) { turnState = "cancelled"; throw; }
                     finally
@@ -557,6 +568,26 @@ public sealed class ByokSession : IDisposable
                 return shell is null ? throw new ProviderException("workspace_unavailable") : shell.ExecuteAsync(invocation, cancellationToken);
             return read.ExecuteAsync(invocation, cancellationToken);
         }
+    }
+
+    // Explicit activation only names discovered skills, so ordinary text such as "/usr" stays plain text.
+    private static IReadOnlyList<SkillDefinition> ActivatedSkills(JsonElement payload, string text, SkillSnapshot snapshot, IReadOnlyList<SkillDefinition> available)
+    {
+        var names = new List<string>();
+        var typed = SkillCatalog.ExplicitName(text);
+        if (typed is not null && snapshot.Skills.Any(skill => skill.Name == typed)) names.Add(typed);
+        var selected = JsonWire.Get(payload, "skills");
+        if (selected.ValueKind != JsonValueKind.Undefined)
+        {
+            if (selected.ValueKind != JsonValueKind.Array || selected.GetArrayLength() > 8) throw new ProviderException("invalid_message");
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in selected.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || item.GetString()!.Length > SkillParser.MaxNameLength || !seen.Add(item.GetString()!)) throw new ProviderException("invalid_message");
+                if (!names.Contains(item.GetString()!)) names.Add(item.GetString()!);
+            }
+        }
+        return names.Select(name => available.FirstOrDefault(skill => skill.Name == name) ?? throw new ProviderException("skill_unavailable")).ToArray();
     }
 
     private static bool ContainsSecret(JsonElement value, string secret) => value.ValueKind switch

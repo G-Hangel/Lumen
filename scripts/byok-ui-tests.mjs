@@ -1471,6 +1471,7 @@ class Element {
   get scrollHeight() { return Math.max(this.clientHeight, parseFloat(this.document.getElementById('byok-history-spacer')?.style.height) || 0) + (this.document.getElementById('byok-live')?.children.length || 0) * 112; }
   remove() { if (this.parent) { this.parent.children = this.parent.children.filter(child => child !== this); this.parent = null; } }
   getAttribute(key) { return Object.hasOwn(this.attributes, key) ? this.attributes[key] : null; }
+  removeAttribute(key) { delete this.attributes[key]; }
   setAttribute(key, value) {
     this.attributes[key] = String(value);
     if (key === 'class') this.className = String(value);
@@ -1621,6 +1622,39 @@ async function attachContext(f, kind = 'file', value = snapshot(kind), path = ''
   f.transport.reply({ context: value }, sent); await pending; await tick(); return sent;
 }
 const attachedRows = f => f.node('context-list').children;
+
+test('skills bridge validates requests, rejects forged results and accepts bounded metadata', async t => {
+  const f = fixture(t);
+  for (const payload of [{ name: '../escape', enabled: true }, { name: 'valid', enabled: 'true' }, { name: 'valid', enabled: true, path: 'x' }])
+    await rejects(f.bridge.request('byok.skills.set', payload), 'invalid_message');
+  await rejects(f.bridge.request('byok.chat', { configurationId, text: 'hi', effort: 'Off', skills: ['review', 'review'] }), 'invalid_message');
+  assert.equal(f.transport.messages.length, 0);
+  const request = f.bridge.request('byok.skills.set', { name: 'review', enabled: false });
+  f.transport.reply({ name: 'review', enabled: true }); await rejects(request, 'invalid_response');
+  const listing = f.bridge.request('byok.skills.list');
+  f.transport.reply({ skills: [{ name: 'review', description: 'Review code', source: '.lumen/skills', scope: 'Project', modes: ['Ask', 'Plan'], enabled: true }], diagnostics: [] });
+  assert.equal((await listing).skills[0].name, 'review');
+});
+
+test('skills UI reloads, offers slash completion and sends the manual selection', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('skills').open = true; await f.node('skills').emit('toggle');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.skills.list');
+  f.transport.reply({ skills: [{ name: 'review', description: 'Review code', source: '.lumen/skills', scope: 'Project', modes: ['Ask', 'Plan'], enabled: true }], diagnostics: [] });
+  await tick();
+  const inputs = f.node('skills-list').querySelectorAll('input');
+  assert.equal(inputs.length, 2); assert.equal(inputs[0].checked, true);
+  inputs[1].checked = true; await inputs[1].emit('change');
+  f.node('message').value = '/re'; await f.node('message').emit('input');
+  assert.equal(f.node('skill-suggestions').hidden, false);
+  await f.node('message').emit('keydown', { key: 'Enter', ctrlKey: false });
+  assert.equal(f.node('message').value, '/review ');
+  f.node('message').value = 'Review this'; await f.node('message').emit('input');
+  const sending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  assert.deepEqual(sent.payload.skills, ['review']);
+  f.transport.reply({ completed: true, conversation: summary }, sent); await sending;
+  assert.equal(f.node('skills-list').querySelectorAll('input')[1].checked, false);
+});
 
 test('UI context is explicit, works without provider/model, shows inert unsaved snapshots and releases only on Remove', async t => {
   const f = uiFixture(t, { initiallyConnected: true });
@@ -2803,6 +2837,20 @@ test('static probe section follows manual overrides with native labels, unchecke
   assert.match(css, /\.byok-panel \.byok-probe-consent input \{[^}]*flex: none;[^}]*width: 16px;[^}]*accent-color: var\(--vs-accent\)/);
   assert.match(css, /\.byok-probe-consent label \{[^}]*overflow-wrap: anywhere/);
   assert.doesNotMatch(probe + Object.keys(en).filter(key => key.startsWith('byokProbe')).map(key => en[key] + pt[key]).join(''), /\p{Extended_Pictographic}/u);
+});
+
+test('workspace navigation presents one selected tool panel beside a direct topic list', async () => {
+  const nav = html.slice(html.indexOf('<nav class="workspace-nav"'), html.indexOf('</nav>', html.indexOf('<nav class="workspace-nav"')) + '</nav>'.length);
+  assert.equal([...nav.matchAll(/class="workspace-tab"/g)].length, 5);
+  for (const id of ['byok-panel', 'byok-history', 'byok-read-tools', 'byok-write-tools', 'byok-skills']) {
+    assert.match(nav, new RegExp(`data-panel="${id}" aria-controls="${id}" aria-pressed="false"`));
+    assert.match(html, new RegExp(`<details id="${id}"`));
+  }
+  assert.match(css, /\.workspace-body \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(150px, 190px\) minmax\(0, 1fr\)/);
+  assert.match(css, /\.workspace-content > details:not\(\[open\]\) \{ display: none; \}/);
+  assert.match(css, /\.workspace-nav \{[^}]*overflow-y: scroll;[^}]*scrollbar-gutter: stable/);
+  assert.match(css, /\.workspace-content > details\[open\] \{[^}]*overflow-y: scroll;[^}]*scrollbar-gutter: stable/);
+  assert.match(css, /\.byok-output \{[^}]*overflow-y: scroll;[^}]*scrollbar-gutter: stable/);
 });
 
 test('static UI retains unified chat ids/CSP, labels match locales and panel wraps responsively using existing tokens only', async () => {

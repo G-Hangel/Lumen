@@ -196,6 +196,34 @@ public sealed class ByokSession : IDisposable
             }
             switch (type)
             {
+                case "byok.skills.list":
+                {
+                    Require(payload, Array.Empty<string>());
+                    var skillList = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+                    var disabled = new HashSet<string>(await settings.ReadDisabledSkillsAsync(cancellationToken).ConfigureAwait(false), StringComparer.Ordinal);
+                    await Reply(send, id, type + ".result", new
+                    {
+                        skills = skillList.Skills.Select(skill => new { name = skill.Name, description = skill.Description, source = skill.Source, scope = skill.Scope.ToString(), modes = skill.Modes.Select(mode => mode.ToString()).ToArray(), enabled = !disabled.Contains(skill.Name) }).ToArray(),
+                        diagnostics = skillList.Diagnostics.Take(256).Select(diagnostic => new { location = diagnostic.Location, code = diagnostic.Code, detail = diagnostic.Detail }).ToArray()
+                    }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.skills.set":
+                {
+                    Require(payload, new[] { "name", "enabled" });
+                    var name = RequiredString(payload, "name", SkillParser.MaxNameLength);
+                    var enabled = JsonWire.Get(payload, "enabled");
+                    if (enabled.ValueKind != JsonValueKind.True && enabled.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_message");
+                    var currentSkills = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+                    if (!currentSkills.Skills.Any(skill => skill.Name == name)) throw new ProviderException("skill_unavailable");
+                    var disabled = new HashSet<string>(await settings.ReadDisabledSkillsAsync(cancellationToken).ConfigureAwait(false), StringComparer.Ordinal);
+                    if (enabled.ValueKind == JsonValueKind.True) disabled.Remove(name);
+                    else if (!disabled.Contains(name) && disabled.Count >= SkillDiscovery.MaxSkills) throw new ProviderException("invalid_configuration");
+                    else disabled.Add(name);
+                    await settings.WriteDisabledSkillsAsync(disabled, cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { name, enabled = enabled.GetBoolean() }).ConfigureAwait(false);
+                    break;
+                }
                 case "byok.context.capture":
                     Require(payload, new[] { "kind" }, new[] { "path" });
                     var contextKind = RequiredString(payload, "kind", 16);
@@ -403,7 +431,8 @@ public sealed class ByokSession : IDisposable
                     IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Agent ? new CompositeExecutor(capturedRead, capturedWrite, capturedShell) : capturedRead;
                     var skillSnapshot = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
-                    var availableSkills = SkillCatalog.Available(skillSnapshot, mode, Array.Empty<string>());
+                    var disabledSkills = new HashSet<string>(await settings.ReadDisabledSkillsAsync(cancellationToken).ConfigureAwait(false), StringComparer.Ordinal);
+                    var availableSkills = SkillCatalog.Available(skillSnapshot, mode, disabledSkills);
                     var skillCatalog = string.Empty;
                     if (capturedTools is not null && availableSkills.Count > 0)
                     {

@@ -11,182 +11,260 @@
 </head>
 <body>
   <div class="app" aria-busy="true">
+    <div class="aurora" aria-hidden="true"></div>
     <button id="byok-skip-link" type="button" class="skip-link" data-i18n="skipToComposer"></button>
+
     <header class="topbar">
       <div class="brand">
-        <span class="brand-rule" aria-hidden="true"></span>
-        <div><h1 data-i18n="appTitle"></h1><p data-i18n="phaseLabel"></p></div>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false"><path d="M7 5.5v9.2a4.3 4.3 0 0 0 6.6 3.6l3.4-2.1" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><circle cx="16.6" cy="7.4" r="2.1" fill="currentColor"/></svg>
+        </span>
+        <div class="brand-text">
+          <h1 data-i18n="appTitle"></h1>
+          <p data-i18n="phaseLabel"></p>
+        </div>
       </div>
-      <span id="connection-status" class="status-badge" role="status"></span>
+      <div class="rail" data-i18n-label="workspaceTitle">
+        <button id="lumen-nav-providers" type="button" class="rail-button" data-panel="byok-panel" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="navProviders" data-i18n-title="navProviders">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="2.2" y="2.6" width="11.6" height="4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2.2" y="9.4" width="11.6" height="4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="4.6" r=".9" fill="currentColor"/><circle cx="5" cy="11.4" r=".9" fill="currentColor"/></svg>
+          <span class="rail-text" data-i18n="navProviders"></span>
+        </button>
+        <button id="lumen-nav-history" type="button" class="rail-button" data-panel="byok-history" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="navHistory" data-i18n-title="navHistory">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.6 8a5.4 5.4 0 1 0 1.7-3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M2.2 2.6v2.9h2.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 5.2V8l2 1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="rail-text" data-i18n="navHistory"></span>
+        </button>
+        <button id="lumen-nav-read" type="button" class="rail-button" data-panel="byok-read-tools" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="navRead" data-i18n-title="navRead">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.4 2.4h6l3.2 3.2v8H3.4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.2 2.6v3.2h3.2M5.6 8.4h4.8M5.6 10.8h3.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="rail-text" data-i18n="navRead"></span>
+        </button>
+        <button id="lumen-nav-write" type="button" class="rail-button" data-panel="byok-write-tools" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="navWrite" data-i18n-title="navWrite">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M11.1 2.6 13.4 4.9 5.6 12.7l-3 .7.7-3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.6 4.1 11.9 6.4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span class="rail-text" data-i18n="navWrite"></span>
+        </button>
+        <button id="lumen-nav-skills" type="button" class="rail-button" data-panel="byok-skills" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="skillsTitle" data-i18n-title="skillsTitle">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 1.5 9.6 5.8 14 7.5 9.6 9.2 8 13.5 6.4 9.2 2 7.5 6.4 5.8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          <span class="rail-text" data-i18n="skillsTitle"></span>
+        </button>
+      </div>
     </header>
 
-    <details id="byok-panel" class="byok-panel">
-      <summary data-i18n="byokTitle"></summary>
-      <div class="byok-scroll" tabindex="0" data-i18n-label="byokTitle">
-        <p id="byok-status" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
-        <p id="byok-error" class="error" role="alert" hidden></p>
-        <button id="byok-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
-        <form id="byok-configure" autocomplete="off">
-          <fieldset id="byok-config-fields" disabled>
-            <legend data-i18n="byokAddProvider"></legend>
-            <label for="byok-kind" data-i18n="byokKind"></label>
-            <select id="byok-kind"></select>
-            <label for="byok-provider-id" data-i18n="byokProviderId"></label>
-            <input id="byok-provider-id" type="text" maxlength="64" required autocomplete="off" spellcheck="false">
-            <label for="byok-url" data-i18n="byokUrl"></label>
-            <input id="byok-url" type="url" maxlength="2048" required autocomplete="off" spellcheck="false" aria-describedby="byok-url-help">
-            <p id="byok-url-help" class="secondary" data-i18n="byokUrlHelp"></p>
-            <label for="byok-key" id="byok-key-label" data-i18n="byokKey"></label>
-            <input id="byok-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="byok-key-help">
-            <p id="byok-key-help" class="secondary" data-i18n="byokKeyHelp"></p>
-            <div id="byok-deployments-group" class="byok-field" hidden>
-              <label for="byok-deployments" data-i18n="byokDeployments"></label>
-              <textarea id="byok-deployments" rows="2" maxlength="8192" spellcheck="false" aria-describedby="byok-deployments-help"></textarea>
-              <p id="byok-deployments-help" class="secondary" data-i18n="byokDeploymentsHelp"></p>
-            </div>
-            <p class="secondary" data-i18n="byokListingNote"></p>
-            <button id="byok-configure-button" type="submit" class="text-button" data-i18n="byokConfigure" disabled></button>
-          </fieldset>
-        </form>
-        <section class="byok-catalog" aria-labelledby="byok-models-title">
-          <h2 id="byok-models-title" data-i18n="byokModelsTitle"></h2>
-          <label for="byok-providers" data-i18n="byokProviders"></label>
-          <select id="byok-providers" disabled></select>
-          <div class="byok-actions">
-            <button id="byok-list" type="button" class="text-button" data-i18n="byokList" disabled></button>
-            <button id="byok-discover" type="button" class="text-button" data-i18n="byokDiscover" disabled></button>
+    <section id="lumen-workspace" class="workspace" data-i18n-label="workspaceTitle">
+      <div class="workspace-head">
+        <h2 data-i18n="workspaceTitle"></h2>
+        <button id="lumen-workspace-close" type="button" class="icon-button" data-i18n-label="workspaceClose" data-i18n-title="workspaceClose">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="workspace-body">
+        <nav class="workspace-nav" data-i18n-label="workspaceTitle">
+          <button type="button" class="workspace-tab" data-panel="byok-panel" aria-controls="byok-panel" aria-pressed="false" data-i18n="navProviders"></button>
+          <button type="button" class="workspace-tab" data-panel="byok-history" aria-controls="byok-history" aria-pressed="false" data-i18n="navHistory"></button>
+          <button type="button" class="workspace-tab" data-panel="byok-read-tools" aria-controls="byok-read-tools" aria-pressed="false" data-i18n="navRead"></button>
+          <button type="button" class="workspace-tab" data-panel="byok-write-tools" aria-controls="byok-write-tools" aria-pressed="false" data-i18n="navWrite"></button>
+          <button type="button" class="workspace-tab" data-panel="byok-skills" aria-controls="byok-skills" aria-pressed="false" data-i18n="skillsTitle"></button>
+        </nav>
+        <div class="workspace-content">
+        <details id="byok-panel" class="byok-panel">
+          <summary data-i18n="byokTitle"></summary>
+          <div class="byok-scroll" tabindex="0" data-i18n-label="byokTitle">
+            <p id="byok-status" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p id="byok-error" class="error" role="alert" hidden></p>
+            <button id="byok-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
+            <form id="byok-configure" autocomplete="off">
+              <fieldset id="byok-config-fields" disabled>
+                <legend data-i18n="byokAddProvider"></legend>
+                <label for="byok-kind" data-i18n="byokKind"></label>
+                <select id="byok-kind"></select>
+                <label for="byok-provider-id" data-i18n="byokProviderId"></label>
+                <input id="byok-provider-id" type="text" maxlength="64" required autocomplete="off" spellcheck="false">
+                <label for="byok-url" data-i18n="byokUrl"></label>
+                <input id="byok-url" type="url" maxlength="2048" required autocomplete="off" spellcheck="false" aria-describedby="byok-url-help">
+                <p id="byok-url-help" class="secondary" data-i18n="byokUrlHelp"></p>
+                <label for="byok-key" id="byok-key-label" data-i18n="byokKey"></label>
+                <input id="byok-key" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="byok-key-help">
+                <p id="byok-key-help" class="secondary" data-i18n="byokKeyHelp"></p>
+                <div id="byok-deployments-group" class="byok-field" hidden>
+                  <label for="byok-deployments" data-i18n="byokDeployments"></label>
+                  <textarea id="byok-deployments" rows="2" maxlength="8192" spellcheck="false" aria-describedby="byok-deployments-help"></textarea>
+                  <p id="byok-deployments-help" class="secondary" data-i18n="byokDeploymentsHelp"></p>
+                </div>
+                <p class="secondary" data-i18n="byokListingNote"></p>
+                <button id="byok-configure-button" type="submit" class="text-button" data-i18n="byokConfigure" disabled></button>
+              </fieldset>
+            </form>
+            <section class="byok-catalog" aria-labelledby="byok-models-title">
+              <h2 id="byok-models-title" data-i18n="byokModelsTitle"></h2>
+              <label for="byok-providers" data-i18n="byokProviders"></label>
+              <select id="byok-providers" disabled></select>
+              <div class="byok-actions">
+                <button id="byok-list" type="button" class="text-button" data-i18n="byokList" disabled></button>
+                <button id="byok-discover" type="button" class="text-button" data-i18n="byokDiscover" disabled></button>
+              </div>
+              <label for="byok-models" data-i18n="byokModel"></label>
+              <select id="byok-models" disabled></select>
+              <ul id="byok-capabilities" class="byok-capabilities" aria-live="polite"></ul>
+              <details id="byok-override" class="byok-override">
+                <summary data-i18n="byokOverrideTitle"></summary>
+                <p class="secondary" data-i18n="byokOverrideHelp"></p>
+                <label for="byok-vision" data-i18n="byokVision"></label><select id="byok-vision" disabled></select>
+                <label for="byok-tools" data-i18n="byokTools"></label><select id="byok-tools" disabled></select>
+                <label for="byok-reasoning" data-i18n="byokReasoning"></label><select id="byok-reasoning" disabled></select>
+                <button id="byok-apply-override" type="button" class="text-button" data-i18n="byokApplyOverride" disabled></button>
+              </details>
+              <section id="byok-probe" class="byok-probe" aria-labelledby="byok-probe-title" aria-busy="false">
+                <h3 id="byok-probe-title" data-i18n="byokProbeTitle"></h3>
+                <p id="byok-probe-help" class="secondary" data-i18n="byokProbeHelp"></p>
+                <p id="byok-probe-budget" class="secondary" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+                <div class="byok-probe-consent">
+                  <input id="byok-probe-consent" type="checkbox" disabled aria-describedby="byok-probe-help byok-probe-budget">
+                  <label for="byok-probe-consent" data-i18n="byokProbeConsent"></label>
+                </div>
+                <label for="byok-probe-capability" data-i18n="byokProbeCapability"></label>
+                <select id="byok-probe-capability" disabled aria-describedby="byok-probe-help"></select>
+                <button id="byok-verify" type="button" class="text-button" data-i18n="byokVerify" disabled aria-describedby="byok-probe-help byok-probe-budget"></button>
+              </section>
+            </section>
           </div>
-          <label for="byok-models" data-i18n="byokModel"></label>
-          <select id="byok-models" disabled></select>
-          <ul id="byok-capabilities" class="byok-capabilities" aria-live="polite"></ul>
-          <details id="byok-override" class="byok-override">
-            <summary data-i18n="byokOverrideTitle"></summary>
-            <p class="secondary" data-i18n="byokOverrideHelp"></p>
-            <label for="byok-vision" data-i18n="byokVision"></label><select id="byok-vision" disabled></select>
-            <label for="byok-tools" data-i18n="byokTools"></label><select id="byok-tools" disabled></select>
-            <label for="byok-reasoning" data-i18n="byokReasoning"></label><select id="byok-reasoning" disabled></select>
-            <button id="byok-apply-override" type="button" class="text-button" data-i18n="byokApplyOverride" disabled></button>
-          </details>
-          <section id="byok-probe" class="byok-probe" aria-labelledby="byok-probe-title" aria-busy="false">
-            <h3 id="byok-probe-title" data-i18n="byokProbeTitle"></h3>
-            <p id="byok-probe-help" class="secondary" data-i18n="byokProbeHelp"></p>
-            <p id="byok-probe-budget" class="secondary" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
-            <div class="byok-probe-consent">
-              <input id="byok-probe-consent" type="checkbox" disabled aria-describedby="byok-probe-help byok-probe-budget">
-              <label for="byok-probe-consent" data-i18n="byokProbeConsent"></label>
-            </div>
-            <label for="byok-probe-capability" data-i18n="byokProbeCapability"></label>
-            <select id="byok-probe-capability" disabled aria-describedby="byok-probe-help"></select>
-            <button id="byok-verify" type="button" class="text-button" data-i18n="byokVerify" disabled aria-describedby="byok-probe-help byok-probe-budget"></button>
-          </section>
-        </section>
-      </div>
-    </details>
+        </details>
 
-    <details id="byok-history" class="byok-history">
-      <summary data-i18n="historyTitle"></summary>
-      <div class="history-controls">
-        <form id="byok-history-search-form">
-          <label for="byok-history-query" data-i18n="historySearch"></label>
-          <input id="byok-history-query" type="search" maxlength="256" disabled>
-          <button id="byok-history-search" type="submit" class="text-button" data-i18n="historySearch" disabled></button>
-        </form>
-        <label for="byok-history-list" data-i18n="historySaved"></label>
-        <select id="byok-history-list" disabled></select>
-        <form id="byok-history-rename-form">
-          <label for="byok-history-name" data-i18n="historyName"></label>
-          <input id="byok-history-name" type="text" maxlength="160" disabled>
-          <button id="byok-history-rename" type="submit" class="text-button" data-i18n="historyRename" disabled></button>
-        </form>
-        <button id="byok-history-delete" type="button" class="text-button" data-i18n="historyDelete" disabled></button>
-        <div id="byok-history-confirmation" hidden>
-          <p data-i18n="historyDeleteWarning"></p>
-          <button id="byok-history-confirm" type="button" class="text-button" data-i18n="historyConfirmDelete"></button>
-          <button id="byok-history-keep" type="button" class="text-button" data-i18n="historyKeep"></button>
+        <details id="byok-history" class="byok-history">
+          <summary data-i18n="historyTitle"></summary>
+          <div class="history-controls">
+            <form id="byok-history-search-form">
+              <label for="byok-history-query" data-i18n="historySearch"></label>
+              <input id="byok-history-query" type="search" maxlength="256" disabled>
+              <button id="byok-history-search" type="submit" class="text-button" data-i18n="historySearch" disabled></button>
+            </form>
+            <label for="byok-history-list" data-i18n="historySaved"></label>
+            <select id="byok-history-list" disabled></select>
+            <form id="byok-history-rename-form">
+              <label for="byok-history-name" data-i18n="historyName"></label>
+              <input id="byok-history-name" type="text" maxlength="160" disabled>
+              <button id="byok-history-rename" type="submit" class="text-button" data-i18n="historyRename" disabled></button>
+            </form>
+            <button id="byok-history-delete" type="button" class="text-button danger-button" data-i18n="historyDelete" disabled></button>
+            <div id="byok-history-confirmation" class="confirm-card" hidden>
+              <p data-i18n="historyDeleteWarning"></p>
+              <div class="byok-actions">
+                <button id="byok-history-confirm" type="button" class="text-button danger-button" data-i18n="historyConfirmDelete"></button>
+                <button id="byok-history-keep" type="button" class="text-button" data-i18n="historyKeep"></button>
+              </div>
+            </div>
+            <p class="secondary" data-i18n="historyPrivacy"></p>
+          </div>
+        </details>
+
+        <details id="byok-read-tools" class="read-tools" aria-busy="false">
+          <summary data-i18n="readToolsTitle"></summary>
+          <div class="read-tools-controls">
+            <p id="byok-read-help" class="secondary" data-i18n="readToolsHelp"></p>
+            <form id="byok-read-form" autocomplete="off" aria-describedby="byok-read-help byok-read-limits">
+              <fieldset id="byok-read-fields" disabled>
+                <legend data-i18n="readToolsTitle"></legend>
+                <label for="byok-read-name" data-i18n="readToolsName"></label>
+                <select id="byok-read-name"></select>
+                <label for="byok-read-path" data-i18n="readToolsPath"></label>
+                <input id="byok-read-path" type="text" value="." maxlength="4096" required spellcheck="false">
+                <div id="byok-read-lines" class="read-tool-group">
+                  <label for="byok-read-start" data-i18n="readToolsStart"></label>
+                  <input id="byok-read-start" type="number" min="1" max="1000000" step="1">
+                  <label for="byok-read-end" data-i18n="readToolsEnd"></label>
+                  <input id="byok-read-end" type="number" min="1" max="1000000" step="1">
+                </div>
+                <div id="byok-read-search" class="read-tool-group" hidden>
+                  <label for="byok-read-max" data-i18n="readToolsMax"></label>
+                  <input id="byok-read-max" type="number" min="1" max="256" step="1">
+                </div>
+                <div id="byok-read-glob-group" class="read-tool-group" hidden>
+                  <label for="byok-read-glob" data-i18n="readToolsGlob"></label>
+                  <input id="byok-read-glob" type="text" maxlength="256" spellcheck="false">
+                </div>
+                <div id="byok-read-pattern-group" class="read-tool-group" hidden>
+                  <label for="byok-read-pattern" data-i18n="readToolsPattern"></label>
+                  <input id="byok-read-pattern" type="text" maxlength="1024" spellcheck="false">
+                </div>
+                <button id="byok-read-run" type="submit" class="text-button" data-i18n="readToolsRun"></button>
+              </fieldset>
+            </form>
+            <p id="byok-read-limits" class="secondary" data-i18n="readToolsLimits"></p>
+            <button id="byok-read-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
+            <p id="byok-read-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+            <pre id="byok-read-result" class="byok-plain" tabindex="0" data-i18n-label="readToolsResult" hidden></pre>
+          </div>
+        </details>
+
+        <details id="byok-write-tools" class="read-tools write-tools">
+          <summary data-i18n="writeToolsTitle"></summary>
+          <div class="read-tools-controls">
+            <p id="byok-write-help" class="secondary" data-i18n="writeToolsHelp"></p>
+            <form id="byok-write-form" autocomplete="off">
+              <fieldset id="byok-write-fields" disabled aria-describedby="byok-write-help byok-write-limits">
+                <legend data-i18n="writeToolsManual"></legend>
+                <label for="byok-write-name" data-i18n="writeToolsName"></label>
+                <select id="byok-write-name"></select>
+                <label for="byok-write-path" data-i18n="writeToolsPath"></label>
+                <input id="byok-write-path" type="text" maxlength="1024" required spellcheck="false">
+                <label for="byok-write-content" data-i18n="writeToolsContent"></label>
+                <textarea id="byok-write-content" rows="4" maxlength="65536" spellcheck="false"></textarea>
+                <button id="byok-write-apply" type="submit" class="text-button" data-i18n="writeToolsApply" disabled></button>
+              </fieldset>
+            </form>
+            <p id="byok-write-limits" class="secondary" data-i18n="writeToolsLimits"></p>
+            <p class="secondary" data-i18n="writeToolsSession"></p>
+            <div class="byok-actions">
+              <button id="byok-write-undo" type="button" class="text-button" data-i18n="writeToolsUndo" disabled></button>
+              <button id="byok-write-refresh" type="button" class="text-button" data-i18n="writeToolsRefresh" disabled></button>
+              <button id="byok-write-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
+            </div>
+            <p id="byok-write-pending" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p id="byok-write-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+            <p id="byok-write-diff-note" class="secondary" hidden></p>
+            <pre id="byok-write-diff" class="byok-plain" tabindex="0" data-i18n-label="writeToolsDiff" hidden></pre>
+          </div>
+        </details>
+        <details id="byok-skills" class="skills-panel">
+          <summary data-i18n="skillsTitle"></summary>
+          <div class="skills-controls">
+            <p class="secondary" data-i18n="skillsHelp"></p>
+            <button id="byok-skills-reload" type="button" class="text-button" data-i18n="skillsReload"></button>
+            <p id="byok-skills-status" class="secondary" role="status" aria-live="polite"></p>
+            <ul id="byok-skills-list" class="skills-list"></ul>
+            <ul id="byok-skills-diagnostics" class="skills-diagnostics" aria-live="polite"></ul>
+          </div>
+        </details>
         </div>
-        <p class="secondary" data-i18n="historyPrivacy"></p>
       </div>
-    </details>
-
-    <details id="byok-read-tools" class="read-tools" aria-busy="false">
-      <summary data-i18n="readToolsTitle"></summary>
-      <div class="read-tools-controls">
-        <p id="byok-read-help" class="secondary" data-i18n="readToolsHelp"></p>
-        <form id="byok-read-form" autocomplete="off" aria-describedby="byok-read-help byok-read-limits">
-          <fieldset id="byok-read-fields" disabled>
-            <legend data-i18n="readToolsTitle"></legend>
-            <label for="byok-read-name" data-i18n="readToolsName"></label>
-            <select id="byok-read-name"></select>
-            <label for="byok-read-path" data-i18n="readToolsPath"></label>
-            <input id="byok-read-path" type="text" value="." maxlength="4096" required spellcheck="false">
-            <div id="byok-read-lines" class="read-tool-group">
-              <label for="byok-read-start" data-i18n="readToolsStart"></label>
-              <input id="byok-read-start" type="number" min="1" max="1000000" step="1">
-              <label for="byok-read-end" data-i18n="readToolsEnd"></label>
-              <input id="byok-read-end" type="number" min="1" max="1000000" step="1">
-            </div>
-            <div id="byok-read-search" class="read-tool-group" hidden>
-              <label for="byok-read-max" data-i18n="readToolsMax"></label>
-              <input id="byok-read-max" type="number" min="1" max="256" step="1">
-            </div>
-            <div id="byok-read-glob-group" class="read-tool-group" hidden>
-              <label for="byok-read-glob" data-i18n="readToolsGlob"></label>
-              <input id="byok-read-glob" type="text" maxlength="256" spellcheck="false">
-            </div>
-            <div id="byok-read-pattern-group" class="read-tool-group" hidden>
-              <label for="byok-read-pattern" data-i18n="readToolsPattern"></label>
-              <input id="byok-read-pattern" type="text" maxlength="1024" spellcheck="false">
-            </div>
-            <button id="byok-read-run" type="submit" class="text-button" data-i18n="readToolsRun"></button>
-          </fieldset>
-        </form>
-        <p id="byok-read-limits" class="secondary" data-i18n="readToolsLimits"></p>
-        <button id="byok-read-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
-        <p id="byok-read-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
-        <pre id="byok-read-result" class="byok-plain" tabindex="0" data-i18n-label="readToolsResult" hidden></pre>
-      </div>
-    </details>
-
-    <details id="byok-write-tools" class="read-tools write-tools">
-      <summary data-i18n="writeToolsTitle"></summary>
-      <div class="read-tools-controls">
-        <p id="byok-write-help" class="secondary" data-i18n="writeToolsHelp"></p>
-        <form id="byok-write-form" autocomplete="off">
-          <fieldset id="byok-write-fields" disabled aria-describedby="byok-write-help byok-write-limits">
-            <legend data-i18n="writeToolsManual"></legend>
-            <label for="byok-write-name" data-i18n="writeToolsName"></label>
-            <select id="byok-write-name"></select>
-            <label for="byok-write-path" data-i18n="writeToolsPath"></label>
-            <input id="byok-write-path" type="text" maxlength="1024" required spellcheck="false">
-            <label for="byok-write-content" data-i18n="writeToolsContent"></label>
-            <textarea id="byok-write-content" rows="4" maxlength="65536" spellcheck="false"></textarea>
-            <button id="byok-write-apply" type="submit" class="text-button" data-i18n="writeToolsApply" disabled></button>
-          </fieldset>
-        </form>
-        <p id="byok-write-limits" class="secondary" data-i18n="writeToolsLimits"></p>
-        <p class="secondary" data-i18n="writeToolsSession"></p>
-        <div class="byok-actions">
-          <button id="byok-write-undo" type="button" class="text-button" data-i18n="writeToolsUndo" disabled></button>
-          <button id="byok-write-refresh" type="button" class="text-button" data-i18n="writeToolsRefresh" disabled></button>
-          <button id="byok-write-cancel" type="button" class="text-button" data-i18n="readToolsCancel" disabled></button>
-        </div>
-        <p id="byok-write-pending" class="secondary" role="status" aria-live="polite" aria-atomic="true"></p>
-        <p id="byok-write-status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
-        <p id="byok-write-diff-note" class="secondary" hidden></p>
-        <pre id="byok-write-diff" class="byok-plain" tabindex="0" data-i18n-label="writeToolsDiff" hidden></pre>
-      </div>
-    </details>
+    </section>
 
     <main class="chat-main" aria-labelledby="byok-chat-title">
       <h2 id="byok-chat-title" class="sr-only" data-i18n="byokChatTitle"></h2>
-      <p id="byok-empty" class="empty-state" data-i18n="byokEmpty"></p>
-      <div class="history-toolbar">
-        <button id="byok-history-new" type="button" class="text-button" data-i18n="historyNew" disabled></button>
-        <button id="byok-history-first" type="button" class="text-button" data-i18n="historyFirst" disabled></button>
-        <button id="byok-history-last" type="button" class="text-button" data-i18n="historyLast" disabled></button>
+      <div class="transcript-head">
+        <p id="byok-history-status" class="secondary" role="status" aria-live="polite"></p>
+        <div class="history-toolbar">
+          <button id="byok-history-new" type="button" class="icon-button" data-i18n-label="historyNew" data-i18n-title="historyNew" disabled>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 3.4v9.2M3.4 8h9.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <button id="byok-history-first" type="button" class="icon-button" data-i18n-label="historyFirst" data-i18n-title="historyFirst" disabled>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8.6 8 4.6l4 4M4 12.4l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button id="byok-history-last" type="button" class="icon-button" data-i18n-label="historyLast" data-i18n-title="historyLast" disabled>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 7.4 8 11.4l4-4M4 3.6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
       </div>
-      <p id="byok-history-status" class="secondary" role="status" aria-live="polite"></p>
       <button id="byok-history-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
+      <div class="welcome">
+        <span class="welcome-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false"><path d="M7 5.5v9.2a4.3 4.3 0 0 0 6.6 3.6l3.4-2.1" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><circle cx="16.6" cy="7.4" r="2.1" fill="currentColor"/></svg>
+        </span>
+        <h3 data-i18n="emptyTitle"></h3>
+        <p id="byok-empty" class="empty-state" data-i18n="byokEmpty"></p>
+        <ul class="hint-chips">
+          <li data-i18n="hintMention"></li>
+          <li data-i18n="hintSkill"></li>
+          <li data-i18n="hintShortcut"></li>
+        </ul>
+      </div>
       <div id="byok-output" class="byok-output" role="log" aria-live="polite" aria-relevant="additions text" tabindex="0" data-i18n-label="byokChatTitle">
         <div id="byok-history-spacer" class="history-spacer"><div id="byok-history-items" class="history-items" role="list" data-i18n-label="historyTitle"></div></div>
         <div id="byok-live"></div>
@@ -200,87 +278,102 @@
       </div>
       <p id="error" class="error" role="alert" hidden></p>
       <form id="byok-chat-form" autocomplete="off">
-        <div class="composer-heading">
-          <label for="byok-message" data-i18n="byokMessage"></label>
-          <span id="byok-count" class="secondary"></span>
+        <div class="composer-meta">
+          <span id="connection-status" class="status-badge" role="status"></span>
+          <p id="byok-active-model" class="secondary" role="status"></p>
         </div>
-        <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter"></textarea>
-        <p id="byok-active-model" class="secondary" role="status"></p>
-        <label for="byok-mode" data-i18n="byokMode"></label>
-        <select id="byok-mode" aria-describedby="byok-mode-help" disabled>
-          <option value="Ask" data-i18n="byokModeAsk"></option>
-          <option value="Plan" data-i18n="byokModePlan"></option>
-          <option value="Agent" data-i18n="byokModeAgent"></option>
-        </select>
-        <p id="byok-mode-help" class="secondary" data-i18n="byokModeHelp"></p>
-        <div class="byok-auto-consent">
-          <input id="byok-auto-read-tools" type="checkbox" disabled aria-describedby="byok-auto-read-help">
-          <label for="byok-auto-read-tools" data-i18n="byokAutoReadConsent"></label>
+        <div class="attachment-row">
+          <p id="byok-attachment" class="secondary" role="status" hidden></p>
+          <button id="byok-remove-image" type="button" class="text-button" data-i18n="byokRemoveImage" hidden></button>
         </div>
-        <div class="byok-auto-consent">
-          <input id="byok-auto-write-tools" type="checkbox" disabled aria-describedby="byok-auto-write-help">
-          <label for="byok-auto-write-tools" data-i18n="byokAutoWriteConsent"></label>
-        </div>
-        <div class="byok-auto-consent">
-          <input id="byok-auto-terminal" type="checkbox" disabled aria-describedby="byok-auto-terminal-help">
-          <label for="byok-auto-terminal" data-i18n="byokAutoTerminalConsent"></label>
-        </div>
-        <details class="send-options">
-          <summary data-i18n="byokAutoToolsDetails"></summary>
-          <p id="byok-auto-read-help" class="secondary" data-i18n="byokAutoReadHelp"></p>
-          <p id="byok-auto-write-help" class="secondary" data-i18n="byokAutoWriteHelp"></p>
-          <p id="byok-auto-terminal-help" class="secondary" data-i18n="byokAutoTerminalHelp"></p>
-        </details>
-        <details id="byok-context" class="send-options context-panel" aria-busy="false">
-          <summary data-i18n="contextTitle"></summary>
-          <div class="context-controls">
-            <label for="byok-context-path" data-i18n="contextPath"></label>
-            <input id="byok-context-path" type="text" maxlength="1024" autocomplete="off" spellcheck="false" disabled data-i18n-placeholder="contextPathPlaceholder" aria-describedby="byok-context-help">
-            <button id="byok-context-reference" type="button" class="text-button" data-i18n="contextReference" disabled></button>
-            <div class="byok-actions">
-              <button id="byok-context-file" type="button" class="text-button" data-i18n="contextFile" disabled></button>
-              <button id="byok-context-solution" type="button" class="text-button" data-i18n="contextSolution" disabled></button>
-              <button id="byok-context-selection" type="button" class="text-button" data-i18n="contextSelection" disabled></button>
-              <button id="byok-context-output" type="button" class="text-button" data-i18n="contextOutput" disabled></button>
+        <div class="composer-shell">
+          <label for="byok-message" class="sr-only" data-i18n="byokMessage"></label>
+          <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter" aria-controls="byok-skill-suggestions" aria-autocomplete="list"></textarea>
+          <div id="byok-skill-suggestions" class="skill-suggestions" role="listbox" data-i18n-label="skillsSuggestions" hidden></div>
+          <div class="composer-bar" data-i18n-label="composerActions">
+            <div class="mode-field">
+              <label for="byok-mode" class="sr-only" data-i18n="byokMode"></label>
+              <select id="byok-mode" aria-describedby="byok-mode-help" disabled>
+                <option value="Ask" data-i18n="byokModeAsk"></option>
+                <option value="Plan" data-i18n="byokModePlan"></option>
+                <option value="Agent" data-i18n="byokModeAgent"></option>
+              </select>
             </div>
-            <p id="byok-context-help" class="secondary" data-i18n="contextHelp"></p>
-            <p id="byok-context-count" class="secondary" role="status" aria-live="polite"></p>
-            <ul id="byok-context-list" class="context-list"></ul>
+            <div class="consent-row" role="group" data-i18n-label="consentLegend">
+              <div class="byok-auto-consent">
+                <input id="byok-auto-read-tools" type="checkbox" disabled aria-describedby="byok-auto-read-help">
+                <label for="byok-auto-read-tools" data-i18n="consentRead" data-i18n-title="byokAutoReadConsent"></label>
+              </div>
+              <div class="byok-auto-consent">
+                <input id="byok-auto-write-tools" type="checkbox" disabled aria-describedby="byok-auto-write-help">
+                <label for="byok-auto-write-tools" data-i18n="consentWrite" data-i18n-title="byokAutoWriteConsent"></label>
+              </div>
+              <div class="byok-auto-consent">
+                <input id="byok-auto-terminal" type="checkbox" disabled aria-describedby="byok-auto-terminal-help">
+                <label for="byok-auto-terminal" data-i18n="consentTerminal" data-i18n-title="byokAutoTerminalConsent"></label>
+              </div>
+            </div>
+            <span id="byok-count" class="secondary"></span>
+            <button id="byok-apply-plan" type="button" class="text-button" data-i18n="byokApplyPlan" hidden></button>
+            <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancelAction" disabled></button>
+            <button id="byok-send" type="submit" class="primary-button" data-i18n-label="byokSend" disabled aria-keyshortcuts="Control+Enter">
+              <span data-i18n="byokSendAction"></span>
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 12.6V3.8M4.4 7.4 8 3.8l3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
           </div>
-        </details>
-        <details id="byok-send-options" class="send-options">
-          <summary data-i18n="byokSendOptions"></summary>
-          <div class="composer-options">
-            <label for="byok-effort" data-i18n="byokEffort"></label>
-            <select id="byok-effort" disabled></select>
-            <label for="byok-image" data-i18n="byokImage"></label>
-            <input id="byok-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled aria-describedby="byok-image-help">
-          </div>
-          <p id="byok-image-help" class="secondary" data-i18n="byokImageHelp"></p>
-        </details>
-        <details id="byok-budget" class="send-options">
-          <summary data-i18n="byokBudgetTitle"></summary>
-          <div class="composer-options">
-            <label for="byok-budget-rounds" data-i18n="byokBudgetRounds"></label>
-            <input id="byok-budget-rounds" type="number" min="1" max="8" step="1" value="4" disabled aria-describedby="byok-budget-help">
-            <label for="byok-budget-tokens" data-i18n="byokBudgetTokens"></label>
-            <input id="byok-budget-tokens" type="number" min="1024" max="32768" step="1" value="8192" disabled aria-describedby="byok-budget-help">
-            <label for="byok-budget-tools" data-i18n="byokBudgetTools"></label>
-            <input id="byok-budget-tools" type="number" min="1" max="32" step="1" value="8" disabled aria-describedby="byok-budget-help">
-          </div>
-          <p id="byok-budget-help" class="secondary" data-i18n="byokBudgetHelp"></p>
-        </details>
-        <p id="byok-attachment" class="secondary" role="status" hidden></p>
-        <button id="byok-remove-image" type="button" class="text-button" data-i18n="byokRemoveImage" hidden></button>
-        <details id="byok-chat-guidance" class="send-options">
-          <summary data-i18n="byokGuidance"></summary>
-          <p id="byok-chat-hint" class="secondary" data-i18n="byokChatHint"></p>
-          <p id="byok-cost" class="byok-cost" data-i18n="byokCost"></p>
-        </details>
-        <div class="byok-actions">
-          <button id="byok-send" type="submit" class="primary-button" data-i18n="byokSend" disabled aria-keyshortcuts="Control+Enter"></button>
-          <button id="byok-apply-plan" type="button" class="text-button" data-i18n="byokApplyPlan" hidden></button>
-          <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancel" disabled></button>
+        </div>
+        <p id="byok-mode-help" class="secondary mode-help" data-i18n="byokModeHelp"></p>
+        <div class="tuning" data-i18n-label="composerTuning">
+          <details id="byok-context" class="send-options context-panel" aria-busy="false">
+            <summary data-i18n="contextTitle"></summary>
+            <div class="context-controls">
+              <label for="byok-context-path" data-i18n="contextPath"></label>
+              <input id="byok-context-path" type="text" maxlength="1024" autocomplete="off" spellcheck="false" disabled data-i18n-placeholder="contextPathPlaceholder" aria-describedby="byok-context-help">
+              <button id="byok-context-reference" type="button" class="text-button" data-i18n="contextReference" disabled></button>
+              <div class="byok-actions">
+                <button id="byok-context-file" type="button" class="text-button" data-i18n="contextFile" disabled></button>
+                <button id="byok-context-solution" type="button" class="text-button" data-i18n="contextSolution" disabled></button>
+                <button id="byok-context-selection" type="button" class="text-button" data-i18n="contextSelection" disabled></button>
+                <button id="byok-context-output" type="button" class="text-button" data-i18n="contextOutput" disabled></button>
+              </div>
+              <p id="byok-context-help" class="secondary" data-i18n="contextHelp"></p>
+              <p id="byok-context-count" class="secondary" role="status" aria-live="polite"></p>
+              <ul id="byok-context-list" class="context-list"></ul>
+            </div>
+          </details>
+          <details id="byok-send-options" class="send-options">
+            <summary data-i18n="byokSendOptions"></summary>
+            <div class="composer-options">
+              <label for="byok-effort" data-i18n="byokEffort"></label>
+              <select id="byok-effort" disabled></select>
+              <label for="byok-image" data-i18n="byokImage"></label>
+              <input id="byok-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled aria-describedby="byok-image-help">
+            </div>
+            <p id="byok-image-help" class="secondary" data-i18n="byokImageHelp"></p>
+          </details>
+          <details id="byok-budget" class="send-options">
+            <summary data-i18n="byokBudgetTitle"></summary>
+            <div class="composer-options">
+              <label for="byok-budget-rounds" data-i18n="byokBudgetRounds"></label>
+              <input id="byok-budget-rounds" type="number" min="1" max="8" step="1" value="4" disabled aria-describedby="byok-budget-help">
+              <label for="byok-budget-tokens" data-i18n="byokBudgetTokens"></label>
+              <input id="byok-budget-tokens" type="number" min="1024" max="32768" step="1" value="8192" disabled aria-describedby="byok-budget-help">
+              <label for="byok-budget-tools" data-i18n="byokBudgetTools"></label>
+              <input id="byok-budget-tools" type="number" min="1" max="32" step="1" value="8" disabled aria-describedby="byok-budget-help">
+            </div>
+            <p id="byok-budget-help" class="secondary" data-i18n="byokBudgetHelp"></p>
+          </details>
+          <details class="send-options">
+            <summary data-i18n="byokAutoToolsDetails"></summary>
+            <p id="byok-auto-read-help" class="secondary" data-i18n="byokAutoReadHelp"></p>
+            <p id="byok-auto-write-help" class="secondary" data-i18n="byokAutoWriteHelp"></p>
+            <p id="byok-auto-terminal-help" class="secondary" data-i18n="byokAutoTerminalHelp"></p>
+          </details>
+          <details id="byok-chat-guidance" class="send-options">
+            <summary data-i18n="byokGuidance"></summary>
+            <p id="byok-chat-hint" class="secondary" data-i18n="byokChatHint"></p>
+            <p id="byok-cost" class="byok-cost" data-i18n="byokCost"></p>
+          </details>
         </div>
       </form>
     </footer>

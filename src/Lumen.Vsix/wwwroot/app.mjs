@@ -93,6 +93,61 @@ element('byok-skip-link')?.addEventListener('click', () => {
   const target = element('byok-message').disabled ? element('byok-output') : element('byok-message');
   target?.focus({ preventScroll: true });
 });
+
+const workspacePanels = [...document.querySelectorAll('.workspace-content > details')];
+const railButtons = [...document.querySelectorAll('.rail-button')];
+const workspaceTabs = [...document.querySelectorAll('.workspace-tab')];
+const chatMain = document.querySelector('.chat-main');
+const composerPanel = document.querySelector('.composer-panel');
+let workspaceTrigger = null;
+
+// Visibility is driven by CSS :has(details[open]) so byok.mjs can open a panel and focus it in the same task.
+function syncWorkspace() {
+  const activePanel = workspacePanels.find(panel => panel.open);
+  chatMain.inert = Boolean(activePanel);
+  composerPanel.inert = Boolean(activePanel);
+  for (const button of railButtons) button.setAttribute('aria-expanded', String(element(button.dataset.panel).open));
+  for (const tab of workspaceTabs) tab.setAttribute('aria-pressed', String(tab.dataset.panel === activePanel?.id));
+}
+
+function selectWorkspacePanel(panel, trigger) {
+  for (const other of workspacePanels) other.open = other === panel;
+  workspaceTrigger = trigger;
+  syncWorkspace();
+  panel.querySelector('summary').focus({ preventScroll: true });
+}
+
+function closeWorkspace() {
+  for (const panel of workspacePanels) panel.open = false;
+  syncWorkspace();
+  (workspaceTrigger || railButtons[0]).focus({ preventScroll: true });
+  workspaceTrigger = null;
+}
+
+for (const button of railButtons) {
+  button.addEventListener('click', () => {
+    const panel = element(button.dataset.panel);
+    if (panel.open) closeWorkspace();
+    else selectWorkspacePanel(panel, button);
+  });
+}
+for (const tab of workspaceTabs) tab.addEventListener('click', () => {
+  const trigger = railButtons.find(button => button.dataset.panel === tab.dataset.panel);
+  selectWorkspacePanel(element(tab.dataset.panel), trigger);
+});
+for (const panel of workspacePanels) panel.addEventListener('toggle', () => {
+  if (panel.open) for (const other of workspacePanels) if (other !== panel) other.open = false;
+  syncWorkspace();
+});
+element('lumen-workspace-close').addEventListener('click', closeWorkspace);
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !element('byok-history-confirmation').hidden) return;
+  if (!workspacePanels.some(panel => panel.open)) return;
+  event.preventDefault();
+  closeWorkspace();
+});
+syncWorkspace();
+
 for (const eventName of ['click', 'auxclick', 'contextmenu']) document.addEventListener(eventName, handleLink);
 window.addEventListener('pagehide', () => {
   bridge.dispose();

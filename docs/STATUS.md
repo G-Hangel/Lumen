@@ -4,8 +4,8 @@ Atualizado em **2026-11-14**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 em andamento (fatia 6a concluída; 6b e 6c
-pendentes).** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 em andamento (fatia 6a concluída; 6b
+parcial, com criação/edição e abertura da pasta pendentes; 6c pendente).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -33,9 +33,23 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fase 6 — Skills | **em andamento (6a concluída; 6b UI/persistência e 6c exemplos/Exp pendentes)** |
+| Fase 6 — Skills | **em andamento (6a concluída; 6b parcial; 6c exemplos/Exp pendentes)** |
 | Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Redesign da interface (2026-11-14)
+
+- Interface de chat reorganizada com paleta verde, navegação lateral direta para provedores, histórico e ferramentas, e adaptação aos temas claro e escuro.
+- Build sem avisos; 218 testes de interface passaram. A suíte .NET tem 1.591 testes; duas execuções completas nesta sessão falharam intermitentemente em `ShellExitAlsoKillsChildHoldingPipesOpen`, embora uma execução completa e duas isoladas tenham passado. A causa permanece não identificada.
+- Chromium headless com host simulado exercitou navegação entre os quatro tópicos, foco, chat, aprovação, histórico, erro e tamanhos de janela variados, sem chamadas pagas. A rolagem da conversa, dos quatro painéis e da barra lateral foi verificada em 320×240, incluindo controle negativo. A nova interface ainda não foi verificada na instância experimental do Visual Studio.
+
+## Fase 6b — painel e ativação de Skills (2026-11-14)
+
+- A ponte lista Skills e diagnósticos, recarrega a descoberta e persiste nomes desativados em configurações locais; o host continua filtrando por modo e rejeita ativação manual ou por `/nome` de Skill desativada.
+- O painel permite ativar/desativar e selecionar até oito Skills para o próximo envio; o compositor sugere nomes ao digitar `/`. Seleção e descrição não concedem permissões de ferramentas.
+- Build sem avisos; 1.593 testes .NET e 220 testes de interface passaram. Controles negativos incluem Skill desativada, modo proibido e mensagens forjadas; recarga e persistência usam provedores simulados.
+- Chromium headless com host simulado exercitou recarga, ativação/desativação, seleção, autocomplete e viewport estreito, sem chamadas pagas. **A instância experimental do Visual Studio ainda não foi testada para a 6b**; a 6c não foi iniciada.
+- Ainda faltam os comandos da UI para criar/editar Skills e abrir a pasta, com confinamento e undo de escrita verificados; por isso a 6b permanece parcial.
 
 ## Fase 6a — núcleo de Skills (2026-11-14)
 

@@ -19,7 +19,7 @@ const errorLabels = {
   unknown_tool: 'readToolsErrorArguments', invalid_arguments: 'readToolsErrorArguments', invalid_path: 'readToolsErrorPath',
   path_unavailable: 'readToolsErrorPath', outside_workspace: 'readToolsErrorOutside', workspace_unavailable: 'readToolsErrorWorkspace',
   output_too_large: 'readToolsErrorSize', file_too_large: 'readToolsErrorSize', binary_file: 'readToolsErrorBinary',
-  tool_budget_exceeded: 'byokErrorToolBudget',
+  tool_budget_exceeded: 'byokErrorToolBudget', skill_unavailable: 'skillsUnavailable',
   file_exists: 'writeToolsErrorExists', undo_failed: 'writeToolsErrorUndo',
   undo_conflict: 'writeToolsErrorConflict', edit_conflict: 'writeToolsErrorConflict', journal_limit: 'readToolsErrorBudget', mode_denied: 'writeToolsErrorMode',
   approval_denied: 'approvalErrorDenied', command_blocked: 'commandErrorBlocked', command_timeout: 'commandErrorTimeout', command_failed: 'commandErrorFailed'
@@ -78,6 +78,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
   let streaming = false, needsCancel = false, probing = false, remainingBudget = null;
   const listeners = [];
   let contexts = [], contextBusy = false;
+  let skillItems = [], skillDiagnostics = [], skillsLoaded = false, skillsLoading = false, skillRefreshRequested = false, suggestionIndex = 0;
+  const selectedSkills = new Set();
   let readBusy = false, readStatusKey = 'readToolsIdle', readErrorCode = null;
   function renderReadStatus() {
     node('read-status').textContent = readErrorCode
@@ -437,6 +439,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   function updateControls() {
     const enabled = online(), locked = busy || imageLoading || needsCancel || cancelling;
+    node('skills-reload').disabled = !enabled || locked;
+    for (const input of node('skills-list').querySelectorAll('input')) {
+      const skill = skillItems.find(item => item.name === input.dataset.skill);
+      input.disabled = !enabled || locked || (input.dataset.action === 'selected' && (!skill.enabled || !skill.modes.includes(node('mode').value) || (selectedSkills.size >= 8 && !selectedSkills.has(skill.name))));
+    }
     node('config-fields').disabled = !enabled || locked;
     node('configure-button').disabled = !enabled || locked;
     node('list').disabled = !enabled || locked;
@@ -481,6 +488,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('write-cancel').disabled = node('cancel').disabled;
     node('write-tools').setAttribute('aria-busy', String(writeBusy && busy));
     if (writeRefreshRequested && enabled && !locked) queueMicrotask(pumpWriteStatus);
+    if (skillRefreshRequested && enabled && !locked) queueMicrotask(pumpSkills);
     node('probe-consent').disabled = !probeEligible();
     node('probe-capability').disabled = !probeEligible();
     node('verify').disabled = !canProbe();
@@ -552,6 +560,107 @@ export function startByok({ transport, connected = () => false, text, renderMark
         if (panel.open && !cancelling && (focusTarget || !succeeded)) (errorCode ? node('error') : succeeded ? focusTarget : node('status')).focus({ preventScroll: true });
       }
     }
+  }
+
+  function renderSkillSuggestions() {
+    const match = /^\/([a-z0-9-]*)$/.exec(node('message').value);
+    const matches = match ? skillItems.filter(skill => skill.enabled && skill.modes.includes(node('mode').value) && skill.name.startsWith(match[1])).slice(0, 8) : [];
+    suggestionIndex = Math.min(suggestionIndex, Math.max(0, matches.length - 1));
+    const container = node('skill-suggestions');
+    container.replaceChildren();
+    for (const [index, skill] of matches.entries()) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.id = `byok-skill-option-${index}`; button.tabIndex = -1;
+      button.setAttribute('role', 'option'); button.setAttribute('aria-selected', String(index === suggestionIndex));
+      button.textContent = `/${skill.name} · ${skill.description}`;
+      button.addEventListener('click', () => chooseSkillSuggestion(skill.name));
+      container.append(button);
+    }
+    container.hidden = matches.length === 0;
+    if (matches.length) node('message').setAttribute('aria-activedescendant', `byok-skill-option-${suggestionIndex}`);
+    else node('message').removeAttribute('aria-activedescendant');
+    return matches;
+  }
+
+  function chooseSkillSuggestion(name) {
+    node('message').value = `/${name} `;
+    node('skill-suggestions').hidden = true;
+    node('message').removeAttribute('aria-activedescendant');
+    node('message').focus({ preventScroll: true });
+    updateControls();
+  }
+
+  function renderSkills() {
+    node('skills-list').replaceChildren();
+    for (const skill of skillItems) {
+      const item = document.createElement('li');
+      const title = document.createElement('strong'); title.textContent = skill.name;
+      const description = document.createElement('p'); description.className = 'secondary'; description.textContent = skill.description;
+      const source = document.createElement('p'); source.className = 'secondary'; source.textContent = `${skill.source} · ${skill.modes.join(', ')}`;
+      const enabledLabel = document.createElement('label'), enabled = document.createElement('input'), enabledText = document.createElement('span');
+      enabled.type = 'checkbox'; enabled.checked = skill.enabled; enabled.dataset.skill = skill.name; enabled.dataset.action = 'enabled';
+      enabledText.textContent = text('skillsEnabled'); enabledLabel.append(enabled, enabledText);
+      enabled.addEventListener('change', () => { void setSkillEnabled(skill.name, enabled.checked); });
+      const selectedLabel = document.createElement('label'), selected = document.createElement('input'), selectedText = document.createElement('span');
+      selected.type = 'checkbox'; selected.checked = selectedSkills.has(skill.name); selected.dataset.skill = skill.name; selected.dataset.action = 'selected';
+      selectedText.textContent = text('skillsSelected'); selectedLabel.append(selected, selectedText);
+      selected.addEventListener('change', () => {
+        if (selected.checked && selectedSkills.size < 8 && skill.enabled && skill.modes.includes(node('mode').value)) selectedSkills.add(skill.name);
+        else selectedSkills.delete(skill.name);
+        selected.checked = selectedSkills.has(skill.name);
+        updateControls();
+      });
+      item.append(title, description, source, enabledLabel, selectedLabel); node('skills-list').append(item);
+    }
+    node('skills-diagnostics').replaceChildren();
+    for (const diagnostic of skillDiagnostics) {
+      const item = document.createElement('li'); item.textContent = `${diagnostic.location}: ${diagnostic.code} — ${diagnostic.detail}`;
+      node('skills-diagnostics').append(item);
+    }
+    node('skills-status').textContent = text(skillItems.length ? 'skillsLoaded' : 'skillsEmpty');
+    renderSkillSuggestions();
+  }
+
+  function pumpSkills() {
+    if (!skillRefreshRequested || skillsLoading || !online() || busy || imageLoading || needsCancel || cancelling) return;
+    skillRefreshRequested = false; skillsLoading = true;
+    void loadSkills().finally(() => { skillsLoading = false; });
+  }
+
+  function requestSkills() {
+    if (skillsLoading) return;
+    skillRefreshRequested = true;
+    pumpSkills();
+  }
+
+  async function loadSkills() {
+    await operate(async () => {
+      try {
+        const result = await bridge.request('byok.skills.list', {});
+        if (disposed) return;
+        skillItems = result.skills; skillDiagnostics = result.diagnostics; skillsLoaded = true;
+        for (const name of selectedSkills) if (!skillItems.some(skill => skill.name === name && skill.enabled && skill.modes.includes(node('mode').value))) selectedSkills.delete(name);
+        renderSkills();
+      } catch (error) { node('skills-status').textContent = text(errorLabel(error.code)); throw error; }
+    });
+  }
+
+  async function setSkillEnabled(name, enabled) {
+    await operate(async () => {
+      let failure = null;
+      try {
+        const result = await bridge.request('byok.skills.set', { name, enabled });
+        const item = skillItems.find(skill => skill.name === result.name);
+        item.enabled = result.enabled;
+        if (!item.enabled) selectedSkills.delete(name);
+      } catch (error) { failure = error; throw error; }
+      finally {
+        if (!disposed) {
+          renderSkills();
+          if (failure) node('skills-status').textContent = text(errorLabel(failure.code));
+        }
+      }
+    });
   }
 
   function applyCatalog(result) {
@@ -889,6 +998,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
         ...(readTools ? { readTools: true } : {}),
         ...(writeTools ? { writeTools: true } : {}),
         ...(terminal ? { terminal: true } : {}),
+        ...(selectedSkills.size ? { skills: [...selectedSkills] } : {}),
         effort: selectedModel()?.reasoning && selectedModel().efforts.length ? node('effort').value : 'Off',
         ...(attachment ? { image: attachment } : {}),
         ...(contexts.length ? { contextIds: contexts.map(item => item.id) } : {})
@@ -902,7 +1012,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       records.length = result.conversation.turnCount;
       cacheTurns([{ ...turn.record, index: result.conversation.turnCount - 1 }]);
       liveTurn = null; node('live').replaceChildren(); history.items = records; history.invalidate(); history.jump(true);
-      if (result.completed) { node('message').value = ''; setStatus('byokCompleted'); }
+      if (result.completed) { node('message').value = ''; selectedSkills.clear(); renderSkills(); setStatus('byokCompleted'); }
       else if (!errorCode) showError('provider_error');
     } catch (error) {
       if (!disposed) {
@@ -949,7 +1059,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   function refreshLocale() {
     if (disposed) return;
-    for (const root of [panel, node('history'), node('read-tools'), node('write-tools'), node('chat-form'), node('output')]) {
+    for (const root of [panel, node('history'), node('read-tools'), node('write-tools'), node('skills'), node('chat-form'), node('output')]) {
       for (const target of root.querySelectorAll('[data-i18n]')) target.textContent = text(target.dataset.i18n);
       for (const target of root.querySelectorAll('[data-i18n-label]')) target.setAttribute('aria-label', text(target.dataset.i18nLabel));
       for (const target of root.querySelectorAll('[data-i18n-placeholder]')) target.setAttribute('placeholder', text(target.dataset.i18nPlaceholder));
@@ -965,7 +1075,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const el = node(id);
       if (el && el.dataset.i18n) el.textContent = text(el.dataset.i18n);
     }
-    renderSaved(); renderHistoryStatus(); renderContexts(); renderReadStatus(); renderWriteStatus();
+    renderSaved(); renderHistoryStatus(); renderContexts(); renderReadStatus(); renderWriteStatus(); renderSkills();
     for (const name of WRITE_TOOL_NAMES) {
       const target = [...node('write-name').children].find(item => item.value === name);
       if (target) target.textContent = text(name === 'create_file' ? 'writeToolsCreate' : 'writeToolsEdit');
@@ -979,10 +1089,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (!connectedState) {
       bridge.disconnect(); node('key').value = ''; loaded = false; configurationId = ''; configurations = []; resetSelection(); renderProviders();
       needsCancel = false; remainingBudget = null; renderProbeBudget(); setStatus('byokDisconnected');
+      skillItems = []; skillDiagnostics = []; skillsLoaded = false; skillRefreshRequested = false; selectedSkills.clear(); renderSkills();
       writePending = null; writeRefreshRequested = false; clearWriteDiff(); renderWriteStatus();
     } else {
       setStatus('byokReady'); if (panel.open && !loaded && !busy) void listProviders();
       if (!wasConnected && node('write-tools').open) requestWriteStatus();
+      if (!wasConnected && node('skills').open && !skillsLoaded) requestSkills();
     }
     updateControls();
   }
@@ -990,6 +1102,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
   const history = new VirtualHistory(node('output'), node('history-spacer'), node('history-items'), renderArchived, range => {
     visible = range; queueMicrotask(pumpHistory);
   });
+  listen(node('skills'), 'toggle', () => { if (node('skills').open && online() && !skillsLoaded) requestSkills(); });
+  listen(node('skills-reload'), 'click', requestSkills);
   listen(node('history'), 'toggle', () => { if (node('history').open && !historyLoaded) void listHistory(); });
   listen(node('history-search-form'), 'submit', event => { event.preventDefault(); void listHistory(); });
   listen(node('history-list'), 'change', () => { deleteTarget = ''; node('history-confirmation').hidden = true; void openHistory(); });
@@ -1013,7 +1127,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('configure'), 'submit', configure);
   for (const id of ['provider-id', 'url', 'key', 'deployments']) listen(node(id), 'input', clearToolConsent);
   for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
-  const modeChanged = () => { clearToolConsent(); updateControls(); };
+  const modeChanged = () => {
+    clearToolConsent();
+    for (const name of selectedSkills) if (!skillItems.some(skill => skill.name === name && skill.enabled && skill.modes.includes(node('mode').value))) selectedSkills.delete(name);
+    renderSkills(); updateControls();
+  };
   listen(node('mode'), 'change', modeChanged);
   listen(node('apply-plan'), 'click', () => {
     if (node('apply-plan').hidden || node('apply-plan').disabled) return;
@@ -1036,9 +1154,21 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('probe-capability'), 'change', updateControls);
   listen(node('verify'), 'click', probe);
   for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', updateControls);
-  listen(node('message'), 'input', updateControls);
+  listen(node('message'), 'input', () => {
+    suggestionIndex = 0; renderSkillSuggestions(); updateControls();
+    if (/^\/[a-z0-9-]*$/.test(node('message').value) && !skillsLoaded && online()) requestSkills();
+  });
   listen(node('message'), 'keydown', event => {
-    if (event.ctrlKey && event.key === 'Enter' && !event.isComposing) { event.preventDefault(); if (!node('send').disabled) node('chat-form').requestSubmit(); }
+    if (event.isComposing) return;
+    if (!node('skill-suggestions').hidden) {
+      const matches = renderSkillSuggestions();
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault(); suggestionIndex = (suggestionIndex + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length; renderSkillSuggestions(); return;
+      }
+      if (event.key === 'Enter' && !event.ctrlKey) { event.preventDefault(); chooseSkillSuggestion(matches[suggestionIndex].name); return; }
+      if (event.key === 'Escape') { event.preventDefault(); node('skill-suggestions').hidden = true; node('message').removeAttribute('aria-activedescendant'); return; }
+    }
+    if (event.ctrlKey && event.key === 'Enter') { event.preventDefault(); if (!node('send').disabled) node('chat-form').requestSubmit(); }
   });
   function openSettingsForError() {
     panel.open = true;

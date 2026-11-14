@@ -26,6 +26,13 @@ const fields = (value, required, optional = []) => record(value)
 const string = (value, limit, empty = false) => typeof value === 'string' && value.length <= limit && (empty || Boolean(value.trim()));
 const list = (value, maximum, predicate) => Array.isArray(value) && value.length <= maximum && value.every(predicate);
 const unique = (value, select = item => item) => new Set(value.map(select)).size === value.length;
+const skillName = value => string(value, 64) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+const skill = value => fields(value, ['name', 'description', 'source', 'scope', 'modes', 'enabled'])
+  && skillName(value.name) && string(value.description, 1024) && string(value.source, 256)
+  && ['Project', 'User'].includes(value.scope) && list(value.modes, 3, mode => ['Ask', 'Plan', 'Agent'].includes(mode))
+  && unique(value.modes) && typeof value.enabled === 'boolean';
+const skillDiagnostic = value => fields(value, ['location', 'code', 'detail']) && string(value.location, 2048)
+  && string(value.code, 64) && string(value.detail, 4096);
 const contextKinds = ['file', 'solution', 'selection', 'output'];
 const contextIds = value => list(value, MAX_CONTEXTS, guid) && unique(value, id => id.toLowerCase());
 const context = value => fields(value, ['id', 'kind', 'label', 'text']) && guid(value.id)
@@ -41,7 +48,7 @@ const codes = new Set(['invalid_message', 'invalid_response', 'bridge_unavailabl
   'unknown_tool', 'invalid_arguments', 'invalid_path', 'path_unavailable', 'outside_workspace',
   'output_too_large', 'file_too_large', 'binary_file', 'workspace_unavailable', 'tool_budget_exceeded',
   'file_exists', 'undo_failed', 'undo_conflict', 'edit_conflict', 'journal_limit', 'mode_denied',
-  'approval_denied', 'command_blocked', 'command_timeout', 'command_failed']);
+  'approval_denied', 'command_blocked', 'command_timeout', 'command_failed', 'skill_unavailable', 'invalid_configuration']);
 const execution = value => ['Running', 'Completed', 'Failed', 'Cancelled'].includes(value.status)
   && typeof value.isError === 'boolean' && string(value.content, MAX_READ_TOOL_CONTENT, true)
   && (!['Running', 'Cancelled'].includes(value.status) || value.content === '');
@@ -202,6 +209,9 @@ export function isByokEnvelope(value) {
   const p = value.payload;
   switch (value.type) {
     case 'error': return fields(p, ['code']) && errorCode(p.code);
+    case 'byok.skills.list.result': return fields(p, ['skills', 'diagnostics']) && list(p.skills, 256, skill)
+      && unique(p.skills, item => item.name) && list(p.diagnostics, 256, skillDiagnostic);
+    case 'byok.skills.set.result': return fields(p, ['name', 'enabled']) && skillName(p.name) && typeof p.enabled === 'boolean';
     case 'byok.list.result': return fields(p, ['configurations', 'remainingBudget']) && probeBudget(p.remainingBudget)
       && list(p.configurations, 256, configuration) && unique(p.configurations, item => item.id);
     case 'byok.configure.result': case 'byok.discover.result':
@@ -237,7 +247,8 @@ export function isByokEnvelope(value) {
 
 function validRequest(type, p) {
   switch (type) {
-    case 'byok.list': case 'byok.cancel': case 'byok.history.new': return fields(p, []);
+    case 'byok.list': case 'byok.cancel': case 'byok.history.new': case 'byok.skills.list': return fields(p, []);
+    case 'byok.skills.set': return fields(p, ['name', 'enabled']) && skillName(p.name) && typeof p.enabled === 'boolean';
     case 'byok.context.capture': return fields(p, ['kind'], ['path']) && contextKinds.includes(p.kind)
       && (!Object.hasOwn(p, 'path') || (p.kind === 'file' && string(p.path, 1024, true)));
     case 'byok.context.release': return fields(p, ['ids']) && contextIds(p.ids);
@@ -258,7 +269,8 @@ function validRequest(type, p) {
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
-    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'budget']) && guid(p.configurationId)
+    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'budget', 'skills']) && guid(p.configurationId)
+      && (!Object.hasOwn(p, 'skills') || (list(p.skills, 8, skillName) && unique(p.skills)))
       && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))
       && (p.mode === 'Agent' || (p.writeTools !== true && p.terminal !== true))
       && (!Object.hasOwn(p, 'readTools') || typeof p.readTools === 'boolean')
@@ -296,6 +308,7 @@ export class ByokBridge {
     if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel',
       'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
+      'byok.skills.list', 'byok.skills.set',
       'byok.approval.respond'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size) {
@@ -316,7 +329,7 @@ export class ByokBridge {
     this.usedIds.add(id);
     const expected = type === 'byok.configure' ? { configurationId: payload.id, providerId: payload.providerId, kind: payload.kind }
       : { configurationId: payload.configurationId, modelId: type === 'byok.probe' ? expectedModelId : payload.modelId,
-        conversationId: payload.conversationId, offset: payload.offset, limit: payload.limit, kind: payload.kind, name: payload.name };
+        conversationId: payload.conversationId, offset: payload.offset, limit: payload.limit, kind: payload.kind, name: payload.name, enabled: payload.enabled };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.finish(id, new ByokError('timeout')), this.timeoutMs);
       const writeTools = payload.writeTools === true;
@@ -389,6 +402,7 @@ export class ByokBridge {
       || (pending.type === 'byok.select' && p.configuration.selectedModelId !== expected.modelId)
       || (pending.type === 'byok.context.capture' && p.context.kind !== expected.kind)
       || (['byok.tool.read', 'byok.tool.write'].includes(pending.type) && p.name !== expected.name)
+      || (pending.type === 'byok.skills.set' && (p.name !== expected.name || p.enabled !== expected.enabled))
       || (pending.type === 'byok.override' && p.model.id !== expected.modelId)
       || (pending.type === 'byok.probe' && expected.modelId !== undefined && p.model.id !== expected.modelId)
       || (p.conversation && expected.conversationId && p.conversation.id !== expected.conversationId)

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Lumen.Tools;
 
 namespace Lumen.Providers;
 
@@ -53,6 +54,28 @@ public sealed class SettingsStore
 
     public Task WriteProbeCacheAsync(CapabilityProbeStore store, CancellationToken cancellationToken) =>
         WriteJsonAsync(Path.ChangeExtension(path, "probes.json"), store.ExportJson(), cancellationToken);
+
+    public async Task<IReadOnlyCollection<string>> ReadDisabledSkillsAsync(CancellationToken cancellationToken)
+    {
+        var skillsPath = Path.ChangeExtension(path, "skills.json");
+        if (!File.Exists(skillsPath)) return Array.Empty<string>();
+        using var file = File.OpenRead(skillsPath);
+        if (file.Length > 32768) throw new ProviderException("invalid_configuration");
+        using var json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (json.RootElement.ValueKind != JsonValueKind.Array || json.RootElement.GetArrayLength() > SkillDiscovery.MaxSkills)
+            throw new ProviderException("invalid_configuration");
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in json.RootElement.EnumerateArray())
+        {
+            var name = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+            if (name is null || name.Length > SkillParser.MaxNameLength || SkillCatalog.ExplicitName("/" + name) != name || !names.Add(name))
+                throw new ProviderException("invalid_configuration");
+        }
+        return names.ToArray();
+    }
+
+    public Task WriteDisabledSkillsAsync(IReadOnlyCollection<string> names, CancellationToken cancellationToken) =>
+        WriteJsonAsync(Path.ChangeExtension(path, "skills.json"), JsonWire.Serialize(names.OrderBy(name => name, StringComparer.Ordinal)), cancellationToken);
 
     private static async Task WriteJsonAsync(string path, string json, CancellationToken cancellationToken)
     {

@@ -380,6 +380,57 @@ public sealed class SkillTests : IDisposable
         public void Dispose() { Byok.Dispose(); client.Dispose(); }
     }
 
+    [Fact]
+    public async Task DisabledSkillsPersistAndCannotBeActivatedOrAdvertised()
+    {
+        Write(Project, ".lumen", "review", Skill("review", "Review changes.", "REVIEW-BODY"));
+        using (var session = new Session(root, new Source(Discover)))
+        {
+            await session.Send("byok.skills.list", new { });
+            var listed = session.Last.GetProperty("payload").GetProperty("skills").EnumerateArray().Single();
+            Assert.Equal("review", listed.GetProperty("name").GetString());
+            Assert.True(listed.GetProperty("enabled").GetBoolean());
+            Assert.DoesNotContain("REVIEW-BODY", session.Last.GetRawText());
+            await session.Send("byok.skills.set", new { name = "review", enabled = false });
+            Assert.False(session.Last.GetProperty("payload").GetProperty("enabled").GetBoolean());
+            await session.Send("byok.skills.set", new { name = "not-found", enabled = true });
+            Assert.Equal("skill_unavailable", session.Last.GetProperty("payload").GetProperty("code").GetString());
+        }
+        using (var session = new Session(root, new Source(Discover)))
+        {
+            await session.Send("byok.skills.list", new { });
+            Assert.False(session.Last.GetProperty("payload").GetProperty("skills")[0].GetProperty("enabled").GetBoolean());
+            await session.Prepare();
+            await session.Chat("hello", "Ask", true);
+            Assert.DoesNotContain("review", session.System(0));
+            await session.Chat("/review file.cs", "Ask", false);
+            Assert.Equal("skill_unavailable", session.Last.GetProperty("payload").GetProperty("code").GetString());
+            await session.Chat("review this", "Ask", false, skills: new[] { "review" });
+            Assert.Equal("skill_unavailable", session.Last.GetProperty("payload").GetProperty("code").GetString());
+            Assert.Single(session.Handler.Bodies);
+            await session.Send("byok.skills.set", new { name = "review", enabled = true });
+            await session.Chat("/review file.cs", "Ask", false);
+            Assert.Contains("REVIEW-BODY", session.User(1));
+        }
+    }
+
+    [Fact]
+    public async Task SkillListReloadsAndReturnsDiagnosticsWithoutProviderCalls()
+    {
+        using var session = new Session(root, new Source(Discover));
+        await session.Send("byok.skills.list", new { });
+        Assert.Empty(session.Last.GetProperty("payload").GetProperty("skills").EnumerateArray());
+        Write(Project, ".lumen", "review", Skill("review", "New skill."));
+        Write(Project, ".lumen", "broken", "Missing frontmatter");
+        await session.Send("byok.skills.list", new { });
+        var payload = session.Last.GetProperty("payload");
+        Assert.Equal("review", payload.GetProperty("skills")[0].GetProperty("name").GetString());
+        Assert.Contains(payload.GetProperty("diagnostics").EnumerateArray(), item => item.GetProperty("code").GetString() == "missing_frontmatter");
+        Assert.Empty(session.Handler.Bodies);
+        await session.Send("byok.skills.set", new { name = "review", enabled = "false" });
+        Assert.Equal("invalid_message", session.Last.GetProperty("payload").GetProperty("code").GetString());
+    }
+
     private static string ToolCall(string name, string arguments) =>
         JsonSerializer.Serialize(new { choices = new[] { new { delta = new { tool_calls = new[] { new { index = 0, id = "call-skill", function = new { name, arguments } } } }, finish_reason = "tool_calls" } } });
 

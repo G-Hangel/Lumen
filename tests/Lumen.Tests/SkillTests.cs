@@ -570,6 +570,28 @@ public sealed class SkillTests : IDisposable
         return false;
     }
 
+    [Fact]
+    public void BundledExampleSkillsAreValidAndMatchTheDocumentedSet()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Lumen.sln"))) directory = directory.Parent;
+        Assert.NotNull(directory);
+        var bundled = Path.Combine(directory!.FullName, "src", "Lumen.Vsix", "skills");
+        Assert.True(Directory.Exists(bundled), "The VSIX must ship its example skills.");
+        var folders = Directory.GetDirectories(bundled).Select(path => Path.GetFileName(path)!).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "code-review", "explain-selection", "write-tests" }, folders);
+        foreach (var folder in folders)
+        {
+            var skill = SkillParser.Parse(File.ReadAllText(Path.Combine(bundled, folder, "SKILL.md")), folder,
+                Path.Combine(bundled, folder), "bundled/skills", SkillScope.User);
+            Assert.Equal(folder, skill.Name);
+            Assert.False(string.IsNullOrWhiteSpace(skill.Description));
+            Assert.False(string.IsNullOrWhiteSpace(skill.Body));
+            Assert.Empty(skill.Warnings);
+            Assert.Equal(new[] { ChatMode.Ask, ChatMode.Plan, ChatMode.Agent }, skill.Modes);
+        }
+    }
+
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]

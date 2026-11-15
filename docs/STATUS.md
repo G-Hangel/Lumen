@@ -1,11 +1,11 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-14**.
+Atualizado em **2026-11-15**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 em andamento (fatia 6a concluída; 6b
-parcial, com criação/edição e abertura da pasta pendentes; 6c pendente).** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a e 6c concluídas; 6b
+parcial, com criação/edição e abertura da pasta na UI pendentes).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -33,9 +33,17 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fase 6 — Skills | **em andamento (6a concluída; 6b parcial; 6c exemplos/Exp pendentes)** |
+| Fase 6 — Skills | **em andamento (6a concluída; 6b parcial; 6c concluída)** |
 | Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 6c — exemplos embarcados e verificação na Exp (2026-11-15)
+
+- Três Skills de exemplo embarcadas no VSIX em `src/Lumen.Vsix/skills/` (`code-review`, `write-tests`, `explain-selection`), empacotadas via `<Content Include="skills/**/*">` e descobertas por `VisualStudioSkillSource` a partir da pasta `skills/` ao lado da assembly com `SkillScope.User` e source `"bundled/skills"`.
+- Teste C# `SkillTests.BundledExampleSkillsAreValidAndMatchTheDocumentedSet` verifica que os 3 `SKILL.md` existem e passam no parser; controle negativo provado renomeando `name: code-review` para `wrong-name` (`SkillValidationException: name 'wrong-name' must match its folder name 'code-review'`).
+- Build Release (`Lumen.sln`): **0 erros, 0 avisos** (`artifacts/phase6c.binlog`). Suíte `.NET`: **1.593 aprovados, 1 falha ambiental pré-existente** em `WorkspaceShellToolsTests.DetectedShellsExecuteOnlyAfterApproval` (`Win32Exception: Acesso negado` ao spawnar `pwsh.exe` via AppExecutionAlias da Microsoft Store a partir de `CreateProcessW`/`dotnet`). Os 44 testes de Skills e os 220 testes JS (`npm run check:ui`) passaram.
+- Verificação na instância experimental real (`25e762c6`) via `scripts/verify-skills-webview.mjs` (WebView2 CDP + provedor loopback, sem chamadas pagas): confirmou as 3 skills bundled, recarga sem reiniciar o VS, criação de skill em `.lumen/skills/` sem reiniciar, controles negativos (`name_mismatch`, `missing_frontmatter` em `diagnostics`), injeção de `[Skill: code-review]` apenas com `/code-review`, rejeição `skill_unavailable` com 0 chamadas ao provedor após desativar, reativação persistida e remoção após recarga.
+- Limitações: a UI da 6b (comandos para criar/editar Skills e abrir a pasta) segue pendente.
 
 ## Redesign da interface (2026-11-14)
 

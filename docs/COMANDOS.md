@@ -830,3 +830,27 @@ inspecionar os cards de tool via CDP antes de suspeitar de corrida de eventos.
 Resultado: **1.550 C# / 217 JS**, 8 requests locais, 0 pagos e 0 exceções JS;
 `artifacts/phase5-agent-task-webview.json`. Exp fechada, fixture e manifesto
 removidos, SHA verificado em `Extensions\4hgcddl3.sps`.
+
+## Fase 6c — Skills embarcadas e verificação na Exp (2026-11-15)
+
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release -bl:artifacts/phase6c.binlog --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --logger 'trx;LogFileName=phase6c.trx' --results-directory artifacts/tests --nologo
+npm run check:ui
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+node scripts/verify-skills-webview.mjs verify
+node scripts/verify-skills-webview.mjs cleanup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+Resultado: build **0 erros/0 avisos**, **44/44** testes C# de Skills e **220/220**
+testes JS verdes; na suíte C# completa, **1.593 aprovados** e 1 falha ambiental
+pré-existente em `DetectedShellsExecuteOnlyAfterApproval` (`Win32Exception: Acesso
+negado` ao spawnar `pwsh.exe` via AppExecutionAlias). Na Exp (`25e762c6`),
+`verify-skills-webview.mjs` passou com 0 exceções JS, 2 requests locais e 0
+chamadas pagas.

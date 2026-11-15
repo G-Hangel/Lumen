@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Lumen.Providers;
@@ -20,6 +22,9 @@ internal sealed class VisualStudioSkillSource : ISkillSource
         try { projectRoot = VisualStudioContextSource.GetWorkspaceRoot(out _); }
         catch (ProviderException) { projectRoot = null; }
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return await Task.Run(() => SkillDiscovery.Discover(SkillDiscovery.Locations(projectRoot, string.IsNullOrEmpty(home) ? null : home), cancellationToken), cancellationToken).ConfigureAwait(false);
+        var locations = new List<SkillLocation>(SkillDiscovery.Locations(projectRoot, string.IsNullOrEmpty(home) ? null : home));
+        var bundled = Path.Combine(Path.GetDirectoryName(typeof(VisualStudioSkillSource).Assembly.Location) ?? string.Empty, "skills");
+        if (Directory.Exists(bundled)) locations.Add(new SkillLocation(bundled, "bundled/skills", SkillScope.User));
+        return await Task.Run(() => SkillDiscovery.Discover(locations, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 }

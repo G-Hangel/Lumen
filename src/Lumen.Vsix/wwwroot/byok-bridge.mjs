@@ -212,6 +212,9 @@ export function isByokEnvelope(value) {
     case 'byok.skills.list.result': return fields(p, ['skills', 'diagnostics']) && list(p.skills, 256, skill)
       && unique(p.skills, item => item.name) && list(p.diagnostics, 256, skillDiagnostic);
     case 'byok.skills.set.result': return fields(p, ['name', 'enabled']) && skillName(p.name) && typeof p.enabled === 'boolean';
+    case 'byok.skills.write.result': return fields(p, ['path']) && string(p.path, 4096);
+    case 'byok.skills.undo.result': return fields(p, ['undone']) && p.undone === true;
+    case 'byok.skills.open.result': return fields(p, ['path']) && string(p.path, 4096);
     case 'byok.list.result': return fields(p, ['configurations', 'remainingBudget']) && probeBudget(p.remainingBudget)
       && list(p.configurations, 256, configuration) && unique(p.configurations, item => item.id);
     case 'byok.configure.result': case 'byok.discover.result':
@@ -249,6 +252,8 @@ function validRequest(type, p) {
   switch (type) {
     case 'byok.list': case 'byok.cancel': case 'byok.history.new': case 'byok.skills.list': return fields(p, []);
     case 'byok.skills.set': return fields(p, ['name', 'enabled']) && skillName(p.name) && typeof p.enabled === 'boolean';
+    case 'byok.skills.write': return fields(p, ['name', 'description', 'body', 'edit']) && skillName(p.name) && string(p.description, 1024) && string(p.body, 131072, true) && typeof p.edit === 'boolean';
+    case 'byok.skills.undo': case 'byok.skills.open': return fields(p, []);
     case 'byok.context.capture': return fields(p, ['kind'], ['path']) && contextKinds.includes(p.kind)
       && (!Object.hasOwn(p, 'path') || (p.kind === 'file' && string(p.path, 1024, true)));
     case 'byok.context.release': return fields(p, ['ids']) && contextIds(p.ids);
@@ -308,7 +313,7 @@ export class ByokBridge {
     if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel',
       'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
-      'byok.skills.list', 'byok.skills.set',
+      'byok.skills.list', 'byok.skills.set', 'byok.skills.write', 'byok.skills.undo', 'byok.skills.open',
       'byok.approval.respond'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size) {

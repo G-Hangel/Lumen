@@ -4,8 +4,7 @@ Atualizado em **2026-11-15**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a e 6c concluídas; 6b
-parcial, com criação/edição e abertura da pasta na UI pendentes).** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a, 6b e 6c concluídas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -33,7 +32,7 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fase 6 — Skills | **em andamento (6a concluída; 6b parcial; 6c concluída)** |
+| Fase 6 — Skills | **em andamento (6a, 6b e 6c concluídas)** |
 | Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
 
@@ -56,8 +55,8 @@ houve chamadas pagas.
 - A ponte lista Skills e diagnósticos, recarrega a descoberta e persiste nomes desativados em configurações locais; o host continua filtrando por modo e rejeita ativação manual ou por `/nome` de Skill desativada.
 - O painel permite ativar/desativar e selecionar até oito Skills para o próximo envio; o compositor sugere nomes ao digitar `/`. Seleção e descrição não concedem permissões de ferramentas.
 - Build sem avisos; 1.593 testes .NET e 220 testes de interface passaram. Controles negativos incluem Skill desativada, modo proibido e mensagens forjadas; recarga e persistência usam provedores simulados.
-- Chromium headless com host simulado exercitou recarga, ativação/desativação, seleção, autocomplete e viewport estreito, sem chamadas pagas. **A instância experimental do Visual Studio ainda não foi testada para a 6b**; a 6c não foi iniciada.
-- Ainda faltam os comandos da UI para criar/editar Skills e abrir a pasta, com confinamento e undo de escrita verificados; por isso a 6b permanece parcial.
+- Chromium headless com host simulado exercitou recarga, ativação/desativação, seleção, autocomplete e viewport estreito, sem chamadas pagas. A instância experimental foi verificada na continuação da 6c.
+- Os comandos da UI para criar/editar Skills, abrir a pasta e desfazer alterações estão implementados; as operações são confinadas a `.lumen/skills/`, validam o nome e mantêm pilha de undo. Verificados na Exp com criação, edição, abertura e dois undos (edição e criação).
 
 ## Fase 6a — núcleo de Skills (2026-11-14)
 

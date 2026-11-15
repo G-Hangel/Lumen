@@ -53,6 +53,7 @@ public static class SkillParser
     public const int MaxCompatibilityLength = 500;
     public const string ModesKey = "lumen-modes";
     private static readonly Regex NamePattern = new Regex("^[a-z0-9]+(-[a-z0-9]+)*$", RegexOptions.CultureInvariant);
+    public static bool IsValidName(string value) => !string.IsNullOrEmpty(value) && value.Length <= MaxNameLength && NamePattern.IsMatch(value);
     private static readonly Regex KeyPattern = new Regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$", RegexOptions.CultureInvariant);
     private static readonly string[] KnownFields = { "name", "description", "license", "compatibility", "metadata", "allowed-tools" };
     private static readonly string[] KnownTools =

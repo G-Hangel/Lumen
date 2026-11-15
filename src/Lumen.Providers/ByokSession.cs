@@ -224,6 +224,33 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { name, enabled = enabled.GetBoolean() }).ConfigureAwait(false);
                     break;
                 }
+                case "byok.skills.write":
+                {
+                    Require(payload, new[] { "name", "description", "body", "edit" });
+                    if (skills is not ISkillEditor editor) throw new ProviderException("unsupported_type");
+                    var name = RequiredString(payload, "name", SkillParser.MaxNameLength);
+                    var description = RequiredString(payload, "description", SkillParser.MaxDescriptionLength);
+                    var body = RequiredString(payload, "body", SkillParser.MaxFileChars);
+                    var path = await editor.WriteAsync(name, description, body, JsonWire.Get(payload, "edit").GetBoolean(), cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.skills.undo":
+                {
+                    Require(payload, Array.Empty<string>());
+                    if (skills is not ISkillEditor editor) throw new ProviderException("unsupported_type");
+                    await editor.UndoAsync(cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { undone = true }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.skills.open":
+                {
+                    Require(payload, Array.Empty<string>());
+                    if (skills is not ISkillEditor editor) throw new ProviderException("unsupported_type");
+                    var path = await editor.OpenFolderAsync(cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
+                    break;
+                }
                 case "byok.context.capture":
                     Require(payload, new[] { "kind" }, new[] { "path" });
                     var contextKind = RequiredString(payload, "kind", 16);

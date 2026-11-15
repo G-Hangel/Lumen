@@ -41,6 +41,13 @@ public interface ISkillSource
     Task<SkillSnapshot> DiscoverAsync(CancellationToken cancellationToken);
 }
 
+public interface ISkillEditor
+{
+    Task<string> WriteAsync(string name, string description, string body, bool edit, CancellationToken cancellationToken);
+    Task UndoAsync(CancellationToken cancellationToken);
+    Task<string> OpenFolderAsync(CancellationToken cancellationToken);
+}
+
 public static class SkillDiscovery
 {
     public const int MaxSkills = 256;

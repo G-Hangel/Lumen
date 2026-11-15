@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, access } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -12,6 +12,7 @@ const manifestPath = new URL('skills-fixtures.json', artifacts);
 const contextManifest = JSON.parse((await readFile(new URL('context-fixtures.json', artifacts), 'utf8')).replace(/^\uFEFF/, ''));
 const requests = [], sockets = new Set();
 const textOf = message => typeof message.content === 'string' ? message.content : (message.content ?? []).map(part => part.text ?? '').join('');
+const exists = async file => { try { await access(file); return true; } catch { return false; } };
 
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/models') {
@@ -192,6 +193,25 @@ try {
     assert.ok(created, 'The new project skill must appear without restarting Visual Studio.');
     assert.equal(created.source, '.lumen/skills'); assert.equal(created.scope, 'Project'); assert.equal(created.enabled, true);
     report.projectSkillWithoutRestart = { source: created.source, scope: created.scope };
+
+    // 5b. 6b UI commands: create, edit, undo and open the confined skills folder.
+    const managedFolder = path.join(manifest.root, '.lumen', 'skills', 'exp-ui-skill');
+    manifest.createdFolders.push(managedFolder);
+    const written = await rpc('byok.skills.write', { name: 'exp-ui-skill', description: 'Created through the Skills UI contract.', body: 'UI marker body.', edit: false });
+    assert.equal(written.type, 'byok.skills.write.result', JSON.stringify(written));
+    assert.equal(path.normalize(written.payload.path), path.normalize(path.join(managedFolder, 'SKILL.md')));
+    const edited = await rpc('byok.skills.write', { name: 'exp-ui-skill', description: 'Edited through the Skills UI contract.', body: 'Edited marker body.', edit: true });
+    assert.equal(edited.type, 'byok.skills.write.result', JSON.stringify(edited));
+    const opened = await rpc('byok.skills.open', {});
+    assert.equal(opened.type, 'byok.skills.open.result', JSON.stringify(opened));
+    assert.equal(path.normalize(opened.payload.path), path.normalize(path.join(manifest.root, '.lumen', 'skills')));
+    const undone = await rpc('byok.skills.undo', {});
+    assert.equal(undone.type, 'byok.skills.undo.result', JSON.stringify(undone));
+    assert.match(await readFile(path.join(managedFolder, 'SKILL.md'), 'utf8'), /Created through the Skills UI contract/);
+    const undoneCreate = await rpc('byok.skills.undo', {});
+    assert.equal(undoneCreate.type, 'byok.skills.undo.result', JSON.stringify(undoneCreate));
+    assert.equal(await exists(path.join(managedFolder, 'SKILL.md')), false, 'Undo must remove a newly created skill.');
+    report.uiCommands = { created: true, edited: true, opened: true, undone: true, undoneCreate: true };
 
     // 6. CN: invalid skills produce actionable diagnostics and are never loaded.
     const mismatchFolder = path.join(manifest.root, '.lumen', 'skills', 'exp-mismatch');

@@ -618,6 +618,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       node('skills-diagnostics').append(item);
     }
     node('skills-status').textContent = text(skillItems.length ? 'skillsLoaded' : 'skillsEmpty');
+    node('skills-edit').disabled = selectedSkills.size !== 1;
     renderSkillSuggestions();
   }
 
@@ -661,6 +662,27 @@ export function startByok({ transport, connected = () => false, text, renderMark
         }
       }
     });
+  }
+
+  async function writeSkill(edit) {
+    const selected = edit ? [...selectedSkills][0] : null;
+    const item = selected ? skillItems.find(skill => skill.name === selected) : null;
+    const name = edit ? item?.name : window.prompt(text('skillsNamePrompt'), 'new-skill');
+    if (!name) return;
+    const description = window.prompt(text('skillsDescriptionPrompt'), item?.description || 'Describe this skill.');
+    if (description === null) return;
+    const body = window.prompt(text('skillsBodyPrompt'), 'Instructions for the assistant.');
+    if (body === null) return;
+    try { await bridge.request('byok.skills.write', { name, description, body, edit }); node('skills-undo').disabled = false; requestSkills(); }
+    catch (error) { node('skills-status').textContent = text(errorLabel(error.code)); }
+  }
+  async function undoSkill() {
+    try { await bridge.request('byok.skills.undo', {}); node('skills-undo').disabled = true; requestSkills(); }
+    catch (error) { node('skills-status').textContent = text(errorLabel(error.code)); }
+  }
+  async function openSkillsFolder() {
+    try { await bridge.request('byok.skills.open', {}); }
+    catch (error) { node('skills-status').textContent = text(errorLabel(error.code)); }
   }
 
   function applyCatalog(result) {
@@ -1104,6 +1126,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
   });
   listen(node('skills'), 'toggle', () => { if (node('skills').open && online() && !skillsLoaded) requestSkills(); });
   listen(node('skills-reload'), 'click', requestSkills);
+  listen(node('skills-create'), 'click', () => void writeSkill(false));
+  listen(node('skills-edit'), 'click', () => void writeSkill(true));
+  listen(node('skills-open'), 'click', () => void openSkillsFolder());
+  listen(node('skills-undo'), 'click', () => void undoSkill());
   listen(node('history'), 'toggle', () => { if (node('history').open && !historyLoaded) void listHistory(); });
   listen(node('history-search-form'), 'submit', event => { event.preventDefault(); void listHistory(); });
   listen(node('history-list'), 'change', () => { deleteTarget = ''; node('history-confirmation').hidden = true; void openHistory(); });

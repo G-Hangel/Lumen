@@ -691,7 +691,7 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
 - [ ] Acionamento: automático por descrição, explícito por `/nome`, e manual
       pela UI.
 - [ ] Skill pode declarar ferramentas próprias e restringir modos.
-- [ ] UI: listar, ativar/desativar, criar, editar, abrir a pasta, recarregar.
+- [x] UI: listar, ativar/desativar, criar, editar, abrir a pasta, recarregar.
 - [ ] Validação de frontmatter com erro acionável.
 - [ ] Algumas skills de exemplo embarcadas (ex.: revisão de código, escrever
       testes, explicar seleção).

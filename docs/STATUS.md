@@ -1,10 +1,10 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-15**.
+Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a, 6b e 6c concluídas).** A aceitação consolidada de
+**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a, 6b, 6c e 6d concluídas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -32,9 +32,33 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fase 6 — Skills | **em andamento (6a, 6b e 6c concluídas)** |
+| Fase 6 — Skills | **em andamento (6a, 6b, 6c e 6d concluídas)** |
 | Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 6d — acionamento automático por descrição (2026-11-16)
+
+- `SkillCatalog.AutoActivate`: matching determinístico, sem discrição do modelo —
+  a skill auto-ativa quando **duas ou mais palavras distintas da description**
+  (tokens de 4+ caracteres, menos stopwords) aparecem na mensagem do usuário.
+  Menção ao nome puro **não** auto-ativa: `/nome` e `load_skill` seguem sendo
+  os únicos caminhos guiados por nome, preservando o progressive disclosure.
+- `ByokSession.ActivatedSkills`: os automáticos entram depois dos explícitos e
+  manuais, sem duplicar e sem estourar o limite de 8 — excedentes são
+  pulados, nunca rejeitados. Skills desativadas ou fora do modo não estão na
+  lista `available`, então não podem auto-ativar.
+- Build Release: **0 erros, 0 avisos**. Suíte `.NET`: **1.596 aprovados** (47 de
+  Skills, incluindo ordem de descoberta e não-duplicação) e a única falha é a
+  ambiental pré-existente do `pwsh` AppExecutionAlias. `npm run check:ui`: 220 aprovados.
+- Verificação na Exp (`25e762c6`) via `verify-skills-webview.mjs`: mensagem
+  "please review this diff for security issues" injetou `[Skill: code-review]`
+  com o corpo completo, sem `/nome` nem seleção manual; controles negativos —
+  mensagem sem relação não injeta nada (`progressiveDisclosureNegative`),
+  mensagem sem skill, `skill_unavailable` com 0 chamadas ao provedor
+  após desativar. 0 exceções JavaScript, 0 chamadas pagas.
+- Observação ambiental: um diretório de fixture órfão e vazio
+  (`artifacts/context-49fe7fd8-…`) ficou preso por um handle de diretório de
+  outro processo; cosmético, não bloqueia o ciclo (o `Prepare` só exige o manifest).
 
 ## Fase 6c — exemplos embarcados e verificação na Exp (2026-11-15)
 
@@ -42,7 +66,7 @@ houve chamadas pagas.
 - Teste C# `SkillTests.BundledExampleSkillsAreValidAndMatchTheDocumentedSet` verifica que os 3 `SKILL.md` existem e passam no parser; controle negativo provado renomeando `name: code-review` para `wrong-name` (`SkillValidationException: name 'wrong-name' must match its folder name 'code-review'`).
 - Build Release (`Lumen.sln`): **0 erros, 0 avisos** (`artifacts/phase6c.binlog`). Suíte `.NET`: **1.593 aprovados, 1 falha ambiental pré-existente** em `WorkspaceShellToolsTests.DetectedShellsExecuteOnlyAfterApproval` (`Win32Exception: Acesso negado` ao spawnar `pwsh.exe` via AppExecutionAlias da Microsoft Store a partir de `CreateProcessW`/`dotnet`). Os 44 testes de Skills e os 220 testes JS (`npm run check:ui`) passaram.
 - Verificação na instância experimental real (`25e762c6`) via `scripts/verify-skills-webview.mjs` (WebView2 CDP + provedor loopback, sem chamadas pagas): confirmou as 3 skills bundled, recarga sem reiniciar o VS, criação de skill em `.lumen/skills/` sem reiniciar, controles negativos (`name_mismatch`, `missing_frontmatter` em `diagnostics`), injeção de `[Skill: code-review]` apenas com `/code-review`, rejeição `skill_unavailable` com 0 chamadas ao provedor após desativar, reativação persistida e remoção após recarga.
-- Limitações: a UI da 6b (comandos para criar/editar Skills e abrir a pasta) segue pendente.
+- Limitações: nenhuma; a UI da 6b foi verificada na continuação (STATUS 2026-11-15/16).
 
 ## Redesign da interface (2026-11-14)
 

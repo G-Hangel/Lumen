@@ -678,23 +678,24 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
 
 ### Tarefas
 
-- [ ] Formato: pasta com `SKILL.md` + frontmatter YAML (`name`, `description`),
+- [x] Formato: pasta com `SKILL.md` + frontmatter YAML (`name`, `description`),
       arquivos de apoio opcionais. **Adotar o padrão agentskills.io**, que é o
       mesmo do Agent Skills nativo do VS 2026 (desde 18.5) — assim as skills que
-      o usuário já tem funcionam sem conversão (`ARQUITETURA.md` §2.10).
-- [ ] Discovery em `.lumen/skills/`, `.github/skills/`, `.claude/skills/`,
+      o usuário já tem funcionam sem conversão (`ARQUITETURA.md` §2.10). *(6a)*
+- [x] Discovery em `.lumen/skills/`, `.github/skills/`, `.claude/skills/`,
       `.agents/skills/` (projeto) e `~/.lumen/skills/`, `~/.copilot/skills/`
       (usuário). Precedência: projeto > usuário; no projeto,
-      `.lumen/` > `.github/` > `.claude/` > `.agents/`.
-- [ ] **Progressive disclosure**: só `name` + `description` no system prompt;
-      corpo carregado sob demanda quando acionada.
-- [ ] Acionamento: automático por descrição, explícito por `/nome`, e manual
-      pela UI.
-- [ ] Skill pode declarar ferramentas próprias e restringir modos.
-- [x] UI: listar, ativar/desativar, criar, editar, abrir a pasta, recarregar.
-- [ ] Validação de frontmatter com erro acionável.
-- [ ] Algumas skills de exemplo embarcadas (ex.: revisão de código, escrever
-      testes, explicar seleção).
+      `.lumen/` > `.github/` > `.claude/` > `.agents/`. *(6a)*
+- [x] **Progressive disclosure**: só `name` + `description` no system prompt;
+      corpo carregado sob demanda quando acionada. *(6a)*
+- [x] Acionamento: automático por descrição *(6d)*, explícito por `/nome` *(6a)*, e manual
+      pela UI *(6a/6b)*.
+- [x] Skill pode declarar ferramentas próprias e restringir modos. *(6a; `allowed-tools`
+      informativo, `lumen-modes` restritivo — nunca concedem permissões)*
+- [x] UI: listar, ativar/desativar, criar, editar, abrir a pasta, recarregar. *(6b/6c)*
+- [x] Validação de frontmatter com erro acionável. *(6a)*
+- [x] Algumas skills de exemplo embarcadas (ex.: revisão de código, escrever
+      testes, explicar seleção). *(6c)*
 
 ### AC
 

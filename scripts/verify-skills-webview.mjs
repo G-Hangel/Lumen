@@ -237,6 +237,14 @@ try {
     assert.ok(activatedText.includes('# Code Review'), 'The skill body must reach the provider.');
     report.activationInjected = true;
 
+    // 7b. 6d: automatic activation by description — no /name and no manual selection.
+    const automatic = await chat('please review this diff for security issues');
+    assert.equal(automatic.type, 'byok.chat.result', JSON.stringify(automatic));
+    const automaticText = userText(requests.at(-1));
+    assert.ok(automaticText.includes('[Skill: code-review]'), automaticText.slice(0, 400));
+    assert.ok(automaticText.includes('# Code Review'), 'The automatically activated skill body must reach the provider.');
+    report.automaticActivation = true;
+
     // 8. CN: an untouched skill contributes nothing but its catalog line.
     const plain = await chat('plain question without any skill');
     assert.equal(plain.type, 'byok.chat.result', JSON.stringify(plain));

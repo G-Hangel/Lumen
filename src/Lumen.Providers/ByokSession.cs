@@ -643,7 +643,14 @@ public sealed class ByokSession : IDisposable
                 if (!names.Contains(item.GetString()!)) names.Add(item.GetString()!);
             }
         }
-        return names.Select(name => available.FirstOrDefault(skill => skill.Name == name) ?? throw new ProviderException("skill_unavailable")).ToArray();
+        var activated = names.Select(name => available.FirstOrDefault(skill => skill.Name == name) ?? throw new ProviderException("skill_unavailable")).ToList();
+        // Automatic activation never throws and never displaces explicit or manual picks: extras past 8 are skipped.
+        foreach (var skill in SkillCatalog.AutoActivate(text, available.Where(value => !names.Contains(value.Name)).ToArray()))
+        {
+            if (activated.Count >= 8) break;
+            activated.Add(skill);
+        }
+        return activated;
     }
 
     private static bool ContainsSecret(JsonElement value, string secret) => value.ValueKind switch

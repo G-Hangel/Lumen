@@ -854,3 +854,18 @@ pré-existente em `DetectedShellsExecuteOnlyAfterApproval` (`Win32Exception: Ace
 negado` ao spawnar `pwsh.exe` via AppExecutionAlias). Na Exp (`25e762c6`),
 `verify-skills-webview.mjs` passou com 0 exceções JS, 2 requests locais e 0
 chamadas pagas.
+
+### Fatia 6d — acionamento automático por descrição (2026-11-16)
+
+Mesma sequência da 6c (build, testes, deploy, `context-experimental.ps1 -Action
+Prepare`, `verify-skills-webview.mjs verify|cleanup`, `deploy-experimental.ps1
+-Action Verify`). O verificador ganhou a etapa 7b: chat com texto que casa com a
+descrição (`please review this diff for security issues`) sem `/nome` nem
+seleção manual, assegurando `[Skill: code-review]` + corpo no payload; os
+controles negativos de progressive disclosure e skill desativada já cobrem o
+caso ruim. Nota operacional: se `Cleanup` falhar em remover a raiz da fixture
+por handle órfão, feche o `devenv` **antes** do cleanup; um diretório vazio
+órfão não impede o `Prepare` (só o manifest importa). Resultado: **47/47** testes
+C# de Skills, **220/220** JS, suíte completa **1.596 aprovados** + a mesma falha
+ambiental pré-existente; Exp com `automaticActivation: true`, 3 provider
+requests locais, 0 exceções e 0 chamadas pagas.

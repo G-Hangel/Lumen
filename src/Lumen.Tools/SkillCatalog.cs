@@ -187,6 +187,28 @@ public static class SkillCatalog
 
     public static string Activation(SkillDefinition skill) => "[Skill: " + skill.Name + "]\n" + skill.Body;
 
+    private static readonly Regex WordPattern = new Regex("[a-z0-9]{4,}", RegexOptions.CultureInvariant);
+    private static readonly string[] StopWords = { "that", "this", "with", "from", "your", "when", "using", "into", "them", "will", "have", "been", "were", "their", "which", "about", "these", "those", "then", "than", "also", "only", "over", "such", "each", "other", "more", "most", "some", "after", "before", "between", "during", "asked", "used", "uses" };
+
+    // Automatic activation by description: deterministic keyword overlap, no model discretion.
+    // Two or more distinct description keywords in the message count as a match; a bare name
+    // mention does NOT auto-activate so /name and load_skill stay the only name-driven paths.
+    public static IReadOnlyList<SkillDefinition> AutoActivate(string text, IReadOnlyList<SkillDefinition> available)
+    {
+        if (available.Count == 0 || string.IsNullOrWhiteSpace(text)) return Array.Empty<SkillDefinition>();
+        var words = new HashSet<string>();
+        foreach (Match match in WordPattern.Matches(text.ToLowerInvariant())) words.Add(match.Value);
+        var matches = new List<SkillDefinition>();
+        foreach (var skill in available)
+        {
+            var description = new HashSet<string>();
+            foreach (Match match in WordPattern.Matches(skill.Description.ToLowerInvariant()))
+                if (!StopWords.Contains(match.Value)) description.Add(match.Value);
+            if (description.Count(w => words.Contains(w)) >= 2) matches.Add(skill);
+        }
+        return matches;
+    }
+
     public static string PromptSection(IReadOnlyList<SkillDefinition> skills)
     {
         if (skills.Count == 0) return string.Empty;

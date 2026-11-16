@@ -153,6 +153,32 @@ public sealed class SkillTests : IDisposable
     }
 
     [Fact]
+    public void AutoActivateMatchesDescriptionKeywords()
+    {
+        var review = Parse(Skill("code-review", "Review code changes for correctness and security."), "code-review");
+        var tests = Parse(Skill("write-tests", "Write unit tests for selected code."), "write-tests");
+        var available = new[] { review, tests };
+        Assert.Equal(new[] { "code-review" }, SkillCatalog.AutoActivate("please review this diff for security issues", available).Select(skill => skill.Name));
+        Assert.Equal(new[] { "write-tests" }, SkillCatalog.AutoActivate("write-tests for the helper class", available).Select(skill => skill.Name));
+        Assert.Equal(new[] { "code-review" }, SkillCatalog.AutoActivate("Code-Review time", available).Select(skill => skill.Name));
+        // Negative controls: a single keyword or an unrelated message never auto-activates,
+        // and a bare name mention stays explicit (/name or load_skill) instead of auto-injecting.
+        Assert.Empty(SkillCatalog.AutoActivate("hello", available));
+        Assert.Empty(SkillCatalog.AutoActivate("review", available));
+        Assert.Empty(SkillCatalog.AutoActivate("review this", available));
+        Assert.Empty(SkillCatalog.AutoActivate("", available));
+    }
+
+    [Fact]
+    public void AutoActivateKeepsDiscoveryOrderAndNeverDuplicates()
+    {
+        var review = Parse(Skill("review", "Review code."), "review");
+        var tests = Parse(Skill("tests", "Review test code."), "tests");
+        var both = SkillCatalog.AutoActivate("review the test code", new[] { review, tests });
+        Assert.Equal(new[] { "review", "tests" }, both.Select(skill => skill.Name));
+    }
+
+    [Fact]
     public void DiscoveryAppliesPrecedenceAndReportsDuplicatesClearly()
     {
         Write(Project, ".agents", "review", Skill("review", "from agents"));
@@ -472,6 +498,26 @@ public sealed class SkillTests : IDisposable
 
         await session.Chat("/usr/bin is a path", "Ask", false);
         Assert.True(session.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.DoesNotContain("[Skill:", session.User(2));
+    }
+
+    [Fact]
+    public async Task DescriptionMatchActivatesSkillsAutomaticallyWithoutExplicitSelection()
+    {
+        Write(Project, ".lumen", "review", Skill("review", "Review code diffs.", "AUTO-BODY"));
+        using var session = new Session(root, new Source(Discover));
+        await session.Prepare();
+        await session.Chat("please review these diffs", "Ask", false);
+        Assert.True(session.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Contains("[Skill: review]\\nAUTO-BODY", session.User(0));
+
+        // Negative control: an unrelated message must not inject anything.
+        await session.Chat("unrelated small talk", "Ask", false);
+        Assert.DoesNotContain("[Skill:", session.User(1));
+
+        // Disabled skills disappear from the available list, so they cannot auto-activate either.
+        await session.Send("byok.skills.set", new { name = "review", enabled = false });
+        await session.Chat("please review these diffs", "Ask", false);
         Assert.DoesNotContain("[Skill:", session.User(2));
     }
 

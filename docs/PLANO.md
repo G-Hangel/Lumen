@@ -765,7 +765,8 @@ reload na hive experimental; evidências em `docs/STATUS.md`.
 ### Tarefas
 
 - [ ] Revisão de segurança: paths, shell injection, sanitização de markdown,
-      vazamento de chave, permissões do broker.
+      vazamento de chave, permissões do broker. *(8a cobriu pacote e silêncio de
+      rede; os demais vetores seguem em 8b)*
 - [ ] Teste de carga: conversa longa (200+ mensagens), muitos arquivos,
       output de comando grande. Sem leak de memória.
 - [ ] Teste em VS 18 **estável** se disponível, além do Insiders.
@@ -783,14 +784,17 @@ reload na hive experimental; evidências em `docs/STATUS.md`.
 
 - O `.vsix` instala em uma máquina limpa com VS 18 e funciona sem configuração
   além da chave.
-- Nenhuma chamada de rede acontece antes de o usuário configurar um provedor.
+- Nenhuma chamada de rede acontece antes de o usuário configurar um provedor. *(verificado em 8a; verCN abaixo)*
 - Inspeção do pacote: zero segredos, zero `bin/obj`.
 - Todos os testes verdes, todos os CN das fases anteriores ainda passando.
 
 ### CN
 
 - Instalar e abrir **sem nenhuma chave configurada**: a extensão deve abrir,
-  mostrar o onboarding e **não fazer nenhuma requisição de rede**.
+  mostrar o onboarding e **não fazer nenhuma requisição de rede**. *(sessão sem
+  chave verificada em 8a por teste C# com transporte que falha se chamado; na
+  Exp foi medido o startup sem requisições externas, com a configuração atual
+  do usuário preservada)*
 - Procurar a chave de teste em todo o conteúdo do `.vsix` e nos logs gerados →
   **zero** ocorrências.
 - Rodar a suíte inteira de CN de segurança uma última vez → tudo ainda rejeita.

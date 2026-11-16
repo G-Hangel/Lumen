@@ -953,3 +953,25 @@ rejeitado (`invalid_configuration`), avisos de contraste e reset ao tema do
 VS, **0 exceções JS** e 0 chamadas pagas. O preset fica em
 `%LocalAppData%\Lumen\providers.theme.json`; o estágio `cleanup` apaga o
 arquivo.
+
+### Fatia 8a — pacote limpo e silêncio de rede (2026-11-16)
+
+```bash
+dotnet build Lumen.sln -c Release --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo
+npm run check:ui
+npm run check:package
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+node scripts/verify-offline-startup.mjs
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+`check:package` depende do VSIX já compilado. O verificador de startup anexa o
+domínio `Network` do CDP antes de recarregar a página; contabilizei 14
+requisições, todas em `lumen.local`, 0 POST, 0 hosts externos e 0 exceções.
+Ele **não altera provedores nem chaves**. O cenário de sessão verdadeiramente
+vazia é coberto por `Phase8SecurityTests`, cujo transporte lança se chamado.
+Resultado: 1/1 teste de fase, 226/226 UI, 2/2 pacote e 1.619/1.619 .NET (com
+`WindowsApps` fora do PATH do processo). Se `-Action Verify` acusar DLL
+desatualizado após o build final, reinstale o VSIX antes de verificar.

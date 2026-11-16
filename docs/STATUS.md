@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–7 concluídas.** A aceitação consolidada de
+**Fases 0–7 concluídas; Fase 8 em andamento (fatia 8a concluída).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -39,8 +39,34 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
-| Fase 8 — Hardening, empacotamento e entrega | não iniciada |
+| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a concluída)** |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 8a — pacote limpo e silêncio de rede (2026-11-16)
+
+- `Phase8SecurityTests` cria uma sessão `ByokSession` com configurações vazias
+  e um transporte HTTP que **lança se for chamado**. RPCs de onboarding
+  (`byok.list`, `byok.theme.get`, `byok.skills.list`, `byok.history.list`,
+  `byok.tool.write.status`) e pedidos que exigem provedor (`byok.chat`,
+  `byok.discover`, `byok.probe`, `byok.configure` inválido) são respondidos
+  localmente com **0 chamadas HTTP** e nenhum arquivo de configuração criado.
+- `scripts/verify-package.mjs` (`npm run check:package`) extrai o VSIX e
+  rejeita pastas `bin/obj/.git/.vs`, arquivos `.env`, `.pfx`, `.snk`, `.key`,
+  `providers*.json` e padrões de credencial (`sk-`, `ghp_`, `AIza`, Bearer,
+  atribuições de `api_key`/token). Controles negativos com canário, chave e
+  `bin/` provam que o detector rejeita; o pacote atual passa sem achados.
+- Verificação na Exp (`scripts/verify-offline-startup.mjs`): após recarregar o
+  WebView com o domínio `Network` do CDP ativo, **14 requisições** ficaram
+  apenas em `lumen.local`; **0 hosts externos, 0 POST e 0 exceções JS**. A
+  configuração de provedor existente não foi alterada; por isso o cenário de
+  máquina limpa sem chave é provado pelo teste C# isolado, não pela Exp.
+- Build Release 0 erros/0 avisos; suíte UI 226/226; `check:package` 2/2;
+  suíte .NET 1.619/1.619 com `WindowsApps` removido do PATH do processo (a
+  falha ambiental conhecida do `pwsh` permanece com o PATH normal).
+- VSIX final reinstalado e validado por `-Action Verify` (a verificação
+  anterior acusou DLLs desatualizados após o rebuild; a reinstalação resolveu).
+- Fora da 8a: paths, shell injection, markdown, broker e o restante do
+  hardening/entrega seguem nas próximas fatias.
 
 ## Fase 7 — fechamento (2026-11-16)
 

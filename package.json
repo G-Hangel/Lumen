@@ -10,6 +10,7 @@
     "vendor": "node scripts/vendor-ui.mjs",
     "build:ui": "npm run vendor && npm run check:ui",
     "check:ui": "node --disallow-code-generation-from-strings --test scripts/ui-tests.mjs scripts/byok-ui-tests.mjs",
+    "check:package": "node --disallow-code-generation-from-strings --test scripts/verify-package.mjs",
     "serve:ui": "node scripts/serve-ui.mjs"
   },
   "dependencies": {

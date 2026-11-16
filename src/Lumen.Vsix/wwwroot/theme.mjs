@@ -39,6 +39,64 @@ export function ensureContrast(color, background, ratio) {
 const emerald = '#00875a', teal = '#008f80', mint = '#00806b';
 const success = '#3fb950', warning = '#d29922', danger = '#f85149', information = '#58a6ff';
 
+export const MODE_ACCENTS = ['ask', 'plan', 'agent'];
+
+let currentPreset = null;
+let currentBackground = '#131318';
+let currentMode = null;
+
+function targetRoot(root) {
+  return root ?? globalThis.document?.documentElement ?? null;
+}
+
+function setOrRemove(root, property, value) {
+  if (!root) return;
+  if (value) root.style.setProperty(property, value);
+  else root.style.removeProperty(property);
+}
+
+// A custom preset only overrides the colors it fully defines; everything else keeps the VS theme.
+export function presetColors(preset, vsTheme) {
+  return preset?.background && preset?.foreground && preset?.accent
+    ? { background: preset.background, foreground: preset.foreground, accent: preset.accent }
+    : vsTheme;
+}
+
+export function applyPreset(preset, vsTheme, root) {
+  currentPreset = preset ?? null;
+  const colors = presetColors(currentPreset, vsTheme);
+  currentBackground = colors.background;
+  const element = targetRoot(root);
+  if (!element) return colors;
+  element.dataset.themeSource = currentPreset ? 'custom' : 'vs';
+  for (const [property, value] of Object.entries(themeProperties(colors))) element.style.setProperty(property, value);
+  setOrRemove(element, '--chat-font', currentPreset?.chatFont);
+  setOrRemove(element, '--mono', currentPreset?.codeFont);
+  setOrRemove(element, '--font-size', currentPreset?.fontSize ? `${currentPreset.fontSize}px` : null);
+  setOrRemove(element, '--radius', currentPreset?.borderRadius != null ? `${currentPreset.borderRadius}px` : null);
+  if (currentPreset?.density && currentPreset.density !== 'normal') element.setAttribute('data-density', currentPreset.density);
+  else element.removeAttribute('data-density');
+  for (const mode of MODE_ACCENTS) {
+    const color = currentPreset?.modeAccent?.[mode];
+    setOrRemove(element, `--accent-${mode}`, color ? ensureContrast(color, currentBackground, 3) : null);
+  }
+  applyModeAccent(element);
+  return colors;
+}
+
+// The accent of the mode currently selected in the composer.
+export function applyModeAccent(root) {
+  const element = targetRoot(root);
+  if (!element) return;
+  const color = currentPreset?.modeAccent?.[currentMode];
+  setOrRemove(element, '--mode-accent', color ? ensureContrast(color, currentBackground, 3) : null);
+}
+
+export function setMode(mode) {
+  currentMode = typeof mode === 'string' ? mode.toLowerCase() : null;
+  applyModeAccent();
+}
+
 export function themeProperties({ background, foreground, accent }) {
   const dark = luminance(background) < .35;
   const readable = candidate => contrast(candidate, background) >= 4.5 ? candidate : foreground;

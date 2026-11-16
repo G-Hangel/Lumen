@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { ByokBridge, isByokEnvelope, isByokEvent, MAX_IMAGE_BYTES, PROBE_CAPABILITIES, PROBE_PROVIDER_KINDS, MAX_PROBE_BUDGET } from '../src/Lumen.Vsix/wwwroot/byok-bridge.mjs';
 import { startByok, capabilityState, errorLabel, parseMentions, readImageAttachment, DEFAULT_BASE_URLS } from '../src/Lumen.Vsix/wwwroot/byok.mjs';
 import { createMarkdownRenderer, isSafeLink } from '../src/Lumen.Vsix/wwwroot/renderers.mjs';
+import { isThemePreset } from '../src/Lumen.Vsix/wwwroot/byok-bridge.mjs';
+import { applyPreset } from '../src/Lumen.Vsix/wwwroot/theme.mjs';
 
 const root = new URL('../src/Lumen.Vsix/wwwroot/', import.meta.url);
 const html = await readFile(new URL('index.html', root), 'utf8');
@@ -24,6 +26,50 @@ const page = (conversation = summary, offset = 0, limit = 10) => ({ conversation
   turns: Array.from({ length: Math.min(limit, conversation.turnCount - offset) }, (_, index) => archiveTurn(offset + index)) });
 const catalog = (configuration = config, models = [model], extra = {}) => ({ configuration, models, credentialValid: true, code: null, ...extra });
 
+function fakeRoot() {
+  const props = new Map();
+  const attributes = new Map();
+  return {
+    props, attributes,
+    style: { setProperty: (name, value) => props.set(name, value), removeProperty: name => props.delete(name) },
+    setAttribute: (name, value) => attributes.set(name, value),
+    removeAttribute: name => attributes.delete(name)
+  };
+}
+
+test('custom theme presets materialize CSS variables, survive a VS theme change and are removed on reset', () => {
+  const root = fakeRoot();
+  const vs = { background: '#202124', foreground: '#eeeeee', accent: '#75b9ff' };
+  applyPreset({ background: '#101014', foreground: '#f2f2f5', accent: '#42c99a', chatFont: 'Segoe UI', codeFont: 'Cascadia Mono', fontSize: 15, density: 'compact', borderRadius: 4, modeAccent: { ask: '#66d9a6' } }, vs, root);
+  assert.equal(root.props.get('--vs-background'), '#101014');
+  assert.equal(root.props.get('--chat-font'), 'Segoe UI');
+  assert.equal(root.props.get('--mono'), 'Cascadia Mono');
+  assert.equal(root.props.get('--font-size'), '15px');
+  assert.equal(root.props.get('--radius'), '4px');
+  assert.equal(root.attributes.get('data-density'), 'compact');
+  assert.ok(root.props.get('--accent-ask'));
+  // A VS theme change keeps the custom colors in place.
+  applyPreset({ background: '#101014', foreground: '#f2f2f5', accent: '#42c99a' }, { background: '#ffffff', foreground: '#000000', accent: '#0000ff' }, root);
+  assert.equal(root.props.get('--vs-background'), '#101014');
+  assert.equal(root.props.get('--font-size'), undefined);
+  assert.equal(root.attributes.get('data-density'), undefined);
+  // Resetting to the VS theme removes every custom variable.
+  applyPreset(null, vs, root);
+  assert.equal(root.props.get('--vs-background'), '#202124');
+  assert.equal(root.props.has('--chat-font'), false);
+  assert.equal(root.props.has('--accent-ask'), false);
+});
+
+test('theme presets are validated before they reach the host', () => {
+  const valid = { name: 'Night', background: '#101014', foreground: '#f2f2f5', accent: '#42c99a', chatFont: 'Segoe UI', codeFont: 'Cascadia Mono', fontSize: 15, density: 'compact', borderRadius: 4, modeAccent: { ask: '#66d9a6' } };
+  assert.equal(isThemePreset(valid), true);
+  assert.equal(isThemePreset(null), true);
+  for (const bad of [{ ...valid, extra: 1 }, { ...valid, background: 'red' }, { ...valid, background: '#abcde' }, { ...valid, fontSize: 9 },
+    { ...valid, density: 'huge' }, { ...valid, borderRadius: 40 }, { ...valid, chatFont: 'Segoe UI; background:url(https://example.org)' },
+    { ...valid, modeAccent: { unknown: '#111111' } }, { ...valid, modeAccent: { ask: 'not-a-color' } }]) {
+    assert.equal(isThemePreset(bad), false, JSON.stringify(bad));
+  }
+});
 test('UI 429 shows the provider retry-after seconds and falls back to the generic message without one', async t => {
   const f = uiFixture(t); f.connect(); f.node('panel').open = true;
   await f.node('panel').emit('toggle'); f.transport.reply({ remainingBudget: 5, configurations: [] }); await tick();

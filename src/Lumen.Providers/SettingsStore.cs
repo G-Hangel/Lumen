@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Lumen.Core.Domain;
 using Lumen.Tools;
 
 namespace Lumen.Providers;
@@ -76,6 +77,48 @@ public sealed class SettingsStore
 
     public Task WriteDisabledSkillsAsync(IReadOnlyCollection<string> names, CancellationToken cancellationToken) =>
         WriteJsonAsync(Path.ChangeExtension(path, "skills.json"), JsonWire.Serialize(names.OrderBy(name => name, StringComparer.Ordinal)), cancellationToken);
+
+    public async Task<ThemePreset?> ReadThemeAsync(CancellationToken cancellationToken)
+    {
+        var themePath = Path.ChangeExtension(path, "theme.json");
+        if (!File.Exists(themePath)) return null;
+        using var file = File.OpenRead(themePath);
+        if (file.Length > 16384) throw new ProviderException("invalid_configuration");
+        try
+        {
+            using var json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false);
+            return ThemeCatalog.Parse(json.RootElement);
+        }
+        catch (ThemeValidationException exception) { throw new ProviderException(exception.Code); }
+        catch (JsonException) { throw new ProviderException("invalid_configuration"); }
+    }
+
+    public Task WriteThemeAsync(ThemePreset theme, CancellationToken cancellationToken) =>
+        WriteJsonAsync(Path.ChangeExtension(path, "theme.json"), JsonWire.Serialize(new
+        {
+            name = theme.Name,
+            background = theme.Background,
+            foreground = theme.Foreground,
+            accent = theme.Accent,
+            chatFont = theme.ChatFont,
+            codeFont = theme.CodeFont,
+            fontSize = theme.FontSize,
+            density = theme.Density,
+            borderRadius = theme.BorderRadius,
+            modeAccent = theme.ModeAccent
+        }), cancellationToken);
+
+    public ThemePreset ValidateThemeJson(JsonElement json)
+    {
+        try { return ThemeCatalog.Parse(json); }
+        catch (ThemeValidationException exception) { throw new ProviderException(exception.Code); }
+    }
+
+    public Task ClearThemeAsync(CancellationToken cancellationToken)
+    {
+        var themePath = Path.ChangeExtension(path, "theme.json");
+        return Task.Run(() => { if (File.Exists(themePath)) File.Delete(themePath); }, cancellationToken);
+    }
 
     private static async Task WriteJsonAsync(string path, string json, CancellationToken cancellationToken)
     {

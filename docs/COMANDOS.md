@@ -882,3 +882,26 @@ Cleanup` (feche o `devenv` antes, ou a raiz da fixture fica presa por handle) e
 **0 exceções JS, 3 provider requests locais, 0 chamadas pagas**; fixture,
 credencial e conversas removidas. A Fase 6 foi marcada concluída em
 `docs/STATUS.md`.
+
+### Fatia 7a — núcleo de tema custom (2026-11-16)
+
+```bash
+dotnet build Lumen.sln -c Release --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo
+npm run check:ui
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+node scripts/verify-theme-webview.mjs verify
+node scripts/verify-theme-webview.mjs cleanup
+```
+
+O verificador de tema **não precisa de provedor** (os RPCs de tema funcionam
+sem modelo configurado). Ele espera `document.documentElement.dataset.themeSource`
+(`vs` ou `custom`) para saber que o preset foi aplicado — por isso o
+`reload()` do WebView é tolerante à destruction do execution context. Resultado:
+21/21 testes C# de tema, 222/222 JS, suíte completa **1.616 aprovados** + a
+falha ambiental pré-existente do `pwsh`; Exp com preset aplicado, tema inválido
+rejeitado (`invalid_configuration`), avisos de contraste e reset ao tema do
+VS, **0 exceções JS** e 0 chamadas pagas. O preset fica em
+`%LocalAppData%\Lumen\providers.theme.json`; o estágio `cleanup` apaga o
+arquivo.

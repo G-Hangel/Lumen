@@ -251,6 +251,38 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
                     break;
                 }
+                case "byok.theme.get":
+                {
+                    Require(payload, Array.Empty<string>());
+                    var theme = await settings.ReadThemeAsync(cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new
+                    {
+                        theme = theme is null ? null : ThemeView(theme),
+                        warnings = theme is null ? Array.Empty<string>() : ThemeCatalog.Warnings(theme)
+                    }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.theme.set":
+                {
+                    Require(payload, new[] { "theme" });
+                    var themeJson = JsonWire.Get(payload, "theme");
+                    if (themeJson.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
+                    var validated = settings.ValidateThemeJson(themeJson);
+                    await settings.WriteThemeAsync(validated, cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new
+                    {
+                        theme = ThemeView(validated),
+                        warnings = ThemeCatalog.Warnings(validated)
+                    }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.theme.reset":
+                {
+                    Require(payload, Array.Empty<string>());
+                    await settings.ClearThemeAsync(cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { reset = true }).ConfigureAwait(false);
+                    break;
+                }
                 case "byok.context.capture":
                     Require(payload, new[] { "kind" }, new[] { "path" });
                     var contextKind = RequiredString(payload, "kind", 16);
@@ -652,6 +684,20 @@ public sealed class ByokSession : IDisposable
         }
         return activated;
     }
+
+    private static object ThemeView(ThemePreset theme) => new
+    {
+        name = theme.Name,
+        background = theme.Background,
+        foreground = theme.Foreground,
+        accent = theme.Accent,
+        chatFont = theme.ChatFont,
+        codeFont = theme.CodeFont,
+        fontSize = theme.FontSize,
+        density = theme.Density,
+        borderRadius = theme.BorderRadius,
+        modeAccent = theme.ModeAccent
+    };
 
     private static bool ContainsSecret(JsonElement value, string secret) => value.ValueKind switch
     {

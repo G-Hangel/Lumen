@@ -202,6 +202,35 @@ function writeToolResult(value) {
   } catch { return false; }
 }
 
+const themeHex = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+const themeFont = /^[A-Za-z0-9 .,'"/-]+$/;
+const themeModes = ['ask', 'plan', 'agent'];
+
+export function isThemePreset(value) {
+  if (value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const allowed = ['name', 'background', 'foreground', 'accent', 'chatFont', 'codeFont', 'fontSize', 'density', 'borderRadius', 'modeAccent'];
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) return false;
+  if ('name' in value && value.name !== null && (typeof value.name !== 'string' || value.name.length > 64 || /[\u0000-\u001f]/.test(value.name))) return false;
+  for (const key of ['background', 'foreground', 'accent'])
+    if (key in value && value[key] !== null && (typeof value[key] !== 'string' || !themeHex.test(value[key]))) return false;
+  for (const key of ['chatFont', 'codeFont'])
+    if (key in value && value[key] !== null && (typeof value[key] !== 'string' || value[key].length > 256 || !themeFont.test(value[key]))) return false;
+  if ('fontSize' in value && value.fontSize !== null && (!Number.isInteger(value.fontSize) || value.fontSize < 10 || value.fontSize > 24)) return false;
+  if ('density' in value && value.density !== null && !['compact', 'normal', 'spacious'].includes(value.density)) return false;
+  if ('borderRadius' in value && value.borderRadius !== null && (!Number.isInteger(value.borderRadius) || value.borderRadius < 0 || value.borderRadius > 24)) return false;
+  if ('modeAccent' in value && value.modeAccent !== null) {
+    if (typeof value.modeAccent !== 'object' || Array.isArray(value.modeAccent)) return false;
+    for (const [mode, color] of Object.entries(value.modeAccent))
+      if (!themeModes.includes(mode) || typeof color !== 'string' || !themeHex.test(color)) return false;
+  }
+  return true;
+}
+
+function themeWarnings(value) {
+  return Array.isArray(value) && value.every(item => typeof item === 'string' && item.length <= 64);
+}
+
 export function isByokEnvelope(value) {
   const required = value?.type === 'byok.event' ? ['version', 'id', 'type', 'sequence', 'payload'] : ['version', 'id', 'type', 'payload'];
   if (!fields(value, required) || value.version !== 1 || !guid(value.id) || !boundedJson(value)) return false;
@@ -243,6 +272,9 @@ export function isByokEnvelope(value) {
     case 'byok.tool.write.result': return writeToolResult(p);
     case 'byok.tool.write.status.result': return fields(p, ['pending']) && pendingWrites(p.pending);
     case 'byok.tool.write.undo.result': return fields(p, ['undone', 'pending']) && p.undone === true && pendingWrites(p.pending);
+    case 'byok.theme.get.result': return fields(p, ['theme', 'warnings']) && (p.theme === null || isThemePreset(p.theme)) && themeWarnings(p.warnings);
+    case 'byok.theme.set.result': return fields(p, ['theme', 'warnings']) && isThemePreset(p.theme) && themeWarnings(p.warnings);
+    case 'byok.theme.reset.result': return fields(p, ['reset']) && p.reset === true;
     case 'byok.event': return isByokEvent(p);
     default: return false;
   }
@@ -260,6 +292,8 @@ function validRequest(type, p) {
     case 'byok.tool.read': return isReadToolRequest(p);
     case 'byok.tool.write': return isWriteToolRequest(p);
     case 'byok.tool.write.undo': case 'byok.tool.write.status': return fields(p, []);
+    case 'byok.theme.get': case 'byok.theme.reset': return fields(p, []);
+    case 'byok.theme.set': return fields(p, ['theme']) && isThemePreset(p.theme);
     case 'byok.history.list': return fields(p, ['query']) && string(p.query, 256, true);
     case 'byok.history.open': return fields(p, ['conversationId', 'offset', 'limit']) && guid(p.conversationId)
       && Number.isInteger(p.offset) && p.offset >= 0 && p.offset <= 10000 && Number.isInteger(p.limit) && p.limit >= 1 && p.limit <= 10;
@@ -314,6 +348,7 @@ export class ByokBridge {
       'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
       'byok.skills.list', 'byok.skills.set', 'byok.skills.write', 'byok.skills.undo', 'byok.skills.open',
+      'byok.theme.get', 'byok.theme.set', 'byok.theme.reset',
       'byok.approval.respond'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size) {

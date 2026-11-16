@@ -1,4 +1,5 @@
 import { VirtualHistory } from './virtual-history.mjs';
+import { setMode } from './theme.mjs';
 import { ByokBridge, ByokError, PROVIDER_KINDS, PROBE_CAPABILITIES, PROBE_PROVIDER_KINDS, MAX_PROBE_BUDGET, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CONTEXTS, MAX_CONTEXT_TEXT, MAX_CONTEXT_TOTAL, READ_TOOL_NAMES, isReadToolRequest, WRITE_TOOL_NAMES, isWriteToolRequest, normalizeBaseUrl, safeErrorCode } from './byok-bridge.mjs';
 
 export const DEFAULT_BASE_URLS = Object.freeze({
@@ -71,6 +72,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   const node = id => document.getElementById(`byok-${id}`);
   const panel = node('panel');
   node('mode').value = 'Ask';
+  setMode(node('mode').value);
   let connectedState = Boolean(connected()), disposed = false, busy = false, imageLoading = false, cancelling = false;
   let cancelRequested = false, cancelRequest = null;
   let configurations = [], models = [], configurationId = '', selectedModelId = '', loaded = false;
@@ -1155,6 +1157,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
   const modeChanged = () => {
     clearToolConsent();
+    setMode(node('mode').value);
     for (const name of selectedSkills) if (!skillItems.some(skill => skill.name === name && skill.enabled && skill.modes.includes(node('mode').value))) selectedSkills.delete(name);
     renderSkills(); updateControls();
   };
@@ -1285,7 +1288,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('cancel'), 'click', cancel);
   refreshLocale(); setConnected(connectedState);
   return {
-    refreshLocale, setConnected,
+    refreshLocale, setConnected, bridge,
     dispose() {
       if (disposed) return;
       disposed = true; contexts = []; renderContexts(); node('key').value = ''; clearProbeConsent(); removeAttachment(); bridge.dispose();

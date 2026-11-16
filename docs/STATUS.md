@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–6 concluídas.** A aceitação consolidada de
+**Fases 0–6 concluídas; Fase 7 em andamento (fatia 7a concluída).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -36,6 +36,41 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 
+## Fase 7a — núcleo de tema custom (2026-11-16)
+
+- `ThemePreset` (`src/Lumen.Core/Domain/ThemePreset.cs`): modelo do preset —
+  cores, fonte do chat, fonte de código, tamanho, densidade, raio de borda e
+  **cor de destaque por modo** (`modeAccent` ask/plan/agent). Todos os campos
+  são opcionais; `null` herda o tema do VS.
+- `ThemeCatalog` (`src/Lumen.Tools/ThemeCatalog.cs`): validação estrita
+  (campo desconhecido, cor fora de `#rgb`/`#rrggbb`, tamanho 10–24, raio 0–24,
+  densidade `compact|normal|spacious`, fonte restrita a caracteres de font-stack
+  para não injetar CSS) e **contraste WCAG 2.1** com avisos
+  (`low_contrast_text` < 4.5, `low_contrast_accent`/`low_contrast_mode_accent`
+  < 3). As mesmas regras estão espelhadas em `byok-bridge.mjs`, então as duas
+  pontas rejeitam o mesmo tema malformado.
+- Persistência **por usuário**: `%LocalAppData%\Lumen\providers.theme.json`,
+  gravado ao lado das configurações de provedor — nunca dentro da solução.
+- RPCs `byok.theme.get` / `byok.theme.set` / `byok.theme.reset`, funcionando
+  **sem provedor configurado**; `set` devolve o preset validado e a lista de
+  avisos de contraste.
+- Aplicação no WebView (`theme.mjs`): `applyPreset` materializa as CSS
+  variables (`--vs-*`, `--chat-font`, `--mono`, `--font-size`, `--radius`,
+  `--accent-ask|plan|agent`, `--mode-accent`) e o atributo `data-density`. Um
+  preset **parcial** não troca as cores (herda do VS); a troca de tema do VS
+  (`theme.changed`, sem reload) preserva o preset custom.
+- Build Release **0 erros, 0 avisos**; suíte `.NET` **1.616 aprovados** (21
+  de tema) e a única falha é a ambiental pré-existente do `pwsh`; `npm run
+  check:ui` **222/222**.
+- Verificação na Exp (`25e762c6`) via `scripts/verify-theme-webview.mjs`:
+  preset aplicado e persistido por usuário; aplicado após recarregar o WebView
+  sem ação do usuário; tema inválido rejeitado com `invalid_configuration` e o
+  preset anterior intacto; tema de baixo contraste aceito com avisos;
+  `reset` devolve o tema do VS (`#282828`); **0 exceções JS**, 0 chamadas pagas.
+- Fora do escopo da 7a (fica para 7b/7c): painel de edição com preview ao
+  vivo, aviso de contraste na UI, importar/exportar e a conferência de
+  contraste dos temas embarcados.
+
 ## Fase 6 — fechamento (2026-11-16)
 
 Aceitação consolidada na Exp (`25e762c6`) com o VSIX de HEAD (`a09a9ad`),
@@ -66,7 +101,8 @@ provedor loopback próprio e 0 chamadas pagas. Mapeamento para os ACs do plano:
   e 6c, `452045c` 6b, `a09a9ad` 6d).
 
 ## Fase 6d — acionamento automático por descrição (2026-11-16)
-| Fases 7–8 | não iniciadas |
+| Fase 7 — Personalização visual | **em andamento (7a concluída)** |
+| Fase 8 — Hardening, empacotamento e entrega | não iniciada |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
 
 ## Fase 6d — acionamento automático por descrição (2026-11-16)

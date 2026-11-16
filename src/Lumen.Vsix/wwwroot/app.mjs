@@ -2,7 +2,7 @@ import pt from './locales/pt-BR.json' with { type: 'json' };
 import en from './locales/en.json' with { type: 'json' };
 import { HostBridge } from './bridge.mjs';
 import { createMarkdownRenderer } from './renderers.mjs';
-import { themeProperties } from './theme.mjs';
+import { applyPreset } from './theme.mjs';
 import { startByok } from './byok.mjs';
 
 const catalogs = { 'pt-BR': pt, en };
@@ -14,6 +14,8 @@ let state = 'preview';
 let errorCode = null;
 let bridge;
 let byokUI;
+let vsTheme = { background: '#131318', foreground: '#ececf2', accent: '#42c99a' };
+let customTheme = null;
 
 function text(key, values = {}) {
   return catalogs[culture][key].replace(/\{(\w+)\}/g, (match, name) => Object.hasOwn(values, name) ? String(values[name]) : match);
@@ -56,8 +58,19 @@ function applyLocale(nextCulture) {
 }
 
 function applyHostTheme(theme) {
-  for (const [property, value] of Object.entries(themeProperties(theme))) document.documentElement.style.setProperty(property, value);
+  vsTheme = { background: theme.background, foreground: theme.foreground, accent: theme.accent };
+  applyPreset(customTheme, vsTheme);
   if (theme.culture && theme.culture !== culture) applyLocale(theme.culture);
+}
+
+// The custom preset wins over the VS theme; a VS theme change only refreshes the inherited colors.
+async function fetchCustomTheme() {
+  if (!byokUI?.bridge?.available || !byokUI?.bridge?.isConnected?.()) return;
+  try {
+    const result = await byokUI.bridge.request('byok.theme.get', {});
+    customTheme = result?.theme ?? null;
+    applyPreset(customTheme, vsTheme);
+  } catch { }
 }
 
 async function connect() {
@@ -75,6 +88,7 @@ async function connect() {
   }
   updateControls();
   byokUI?.setConnected();
+  if (state === 'connected') void fetchCustomTheme();
 }
 
 function handleLink(event) {

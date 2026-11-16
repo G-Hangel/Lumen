@@ -72,6 +72,15 @@
           <summary data-i18n="themeTitle"></summary>
           <form id="theme-form" class="theme-form" autocomplete="off">
             <p class="secondary" data-i18n="themeHelp"></p>
+            <label for="theme-preset" data-i18n="themePreset"></label>
+            <select id="theme-preset">
+              <option value="" data-i18n="themeChoosePreset"></option>
+              <option value="dark" data-i18n="themePresetDark"></option>
+              <option value="light" data-i18n="themePresetLight"></option>
+            </select>
+            <label for="theme-import" data-i18n="themeImport"></label>
+            <input id="theme-import" type="file" accept=".json,application/json">
+            <button id="theme-export" type="button" class="text-button" data-i18n="themeExport" disabled></button>
             <label for="theme-background" data-i18n="themeBackground"></label>
             <input id="theme-background" type="text" maxlength="7" placeholder="#202124" spellcheck="false">
             <label for="theme-foreground" data-i18n="themeForeground"></label>

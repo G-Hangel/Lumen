@@ -203,7 +203,7 @@ function writeToolResult(value) {
 }
 
 const themeHex = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-const themeFont = /^[A-Za-z0-9 .,'"/-]+$/;
+const themeFont = /^[\p{L}\p{Nd} .,'"/-]*$/u;
 const themeModes = ['ask', 'plan', 'agent'];
 
 export function isThemePreset(value) {
@@ -211,11 +211,11 @@ export function isThemePreset(value) {
   if (typeof value !== 'object' || Array.isArray(value)) return false;
   const allowed = ['name', 'background', 'foreground', 'accent', 'chatFont', 'codeFont', 'fontSize', 'density', 'borderRadius', 'modeAccent'];
   for (const key of Object.keys(value)) if (!allowed.includes(key)) return false;
-  if ('name' in value && value.name !== null && (typeof value.name !== 'string' || value.name.length > 64 || /[\u0000-\u001f]/.test(value.name))) return false;
+  if ('name' in value && value.name !== null && (typeof value.name !== 'string' || value.name.length > 64 || /[\u0000-\u001f\u007f-\u009f]/.test(value.name))) return false;
   for (const key of ['background', 'foreground', 'accent'])
     if (key in value && value[key] !== null && (typeof value[key] !== 'string' || !themeHex.test(value[key]))) return false;
   for (const key of ['chatFont', 'codeFont'])
-    if (key in value && value[key] !== null && (typeof value[key] !== 'string' || value[key].length > 256 || !themeFont.test(value[key]))) return false;
+    if (key in value && value[key] !== null && (typeof value[key] !== 'string' || value[key].length > 256 || /[\ud800-\udfff]/.test(value[key]) || !themeFont.test(value[key]))) return false;
   if ('fontSize' in value && value.fontSize !== null && (!Number.isInteger(value.fontSize) || value.fontSize < 10 || value.fontSize > 24)) return false;
   if ('density' in value && value.density !== null && !['compact', 'normal', 'spacious'].includes(value.density)) return false;
   if ('borderRadius' in value && value.borderRadius !== null && (!Number.isInteger(value.borderRadius) || value.borderRadius < 0 || value.borderRadius > 24)) return false;

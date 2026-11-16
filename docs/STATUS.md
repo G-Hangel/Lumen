@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–6 concluídas; Fase 7 em andamento (fatias 7a e 7b concluídas).** A aceitação consolidada de
+**Fases 0–6 concluídas; Fase 7 em andamento (fatias 7a, 7b e 7c concluídas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -35,9 +35,28 @@ houve chamadas pagas.
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
-| Fase 7 — Personalização visual | **em andamento (7a e 7b concluídas)** |
+| Fase 7 — Personalização visual | **em andamento (7a, 7b e 7c; aceitação consolidada pendente)** |
 | Fase 8 — Hardening, empacotamento e entrega | não iniciada |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 7c — importação, exportação e temas embarcados (2026-11-16)
+
+- Importar JSON de até 16 KB carrega uma prévia sem persistir; arquivo inválido,
+  campos desconhecidos e valores fora dos limites são rejeitados sem substituir
+  a prévia. Exportar baixa a prévia válida em `lumen-theme.json`.
+- Os presets `Lumen Dark` e `Lumen Light` podem ser escolhidos na UI. Testes
+  aferem contraste WCAG AA para texto (4,5:1), foco e destaques (3:1),
+  link/sintaxe e texto do botão (4,5:1), com controle negativo de contraste baixo.
+  A validação JS aceita fontes Unicode e rejeita controles como o host C#.
+- Build Release após clean: 0 erros e 0 avisos. Suíte de UI: 226 aprovados;
+  suíte .NET: 1.618 aprovados com `WindowsApps` removido somente do PATH da
+  execução para evitar o alias problemático de `pwsh`.
+- Na Exp `25e762c6`, o painel selecionou tema embarcado, importou arquivo
+  válido, rejeitou JSON inválido preservando a prévia e exportou um arquivo
+  que foi lido e comparado ao original. A configuração salva foi comparada
+  antes/depois e não mudou; sem exceções JS e sem APIs pagas.
+- A Fase 7 permanece aberta para aceitação consolidada dos ACs, incluindo nova
+  verificação de troca real do tema do VS sem reload na hive atual.
 
 ## Fase 7b — painel de aparência (2026-11-16)
 
@@ -61,7 +80,8 @@ houve chamadas pagas.
   caracteres não geraram overflow horizontal no formulário. O teste só
   gravou depois de confirmar que não havia tema salvo; reset restaurou o
   estado anterior. Verificação de empacotamento concluída.
-- Ainda faltam importação/exportação e conferência dos temas embarcados (7c).
+- Na época faltavam importação/exportação e conferência dos temas embarcados,
+  posteriormente cobertas pela 7c.
 
 ## Fase 7a — núcleo de tema custom (2026-11-16)
 

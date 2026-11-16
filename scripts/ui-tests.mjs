@@ -9,7 +9,9 @@ import { HostBridge, MAX_TEXT_LENGTH, isEnvelope, isTheme } from '../src/Lumen.V
 import { createMarkdownRenderer, isSafeLink, renderDiff } from '../src/Lumen.Vsix/wwwroot/renderers.mjs';
 import { VirtualHistory, visibleRange, ROW_HEIGHT, OVERSCAN } from '../src/Lumen.Vsix/wwwroot/virtual-history.mjs';
 import { contrast, themeProperties, presetColors } from '../src/Lumen.Vsix/wwwroot/theme.mjs';
-import { startThemeEditor } from '../src/Lumen.Vsix/wwwroot/theme-editor.mjs';
+import { startThemeEditor, parseThemeFile, MAX_THEME_FILE_BYTES } from '../src/Lumen.Vsix/wwwroot/theme-editor.mjs';
+import { bundledThemes } from '../src/Lumen.Vsix/wwwroot/theme-presets.mjs';
+import { isThemePreset } from '../src/Lumen.Vsix/wwwroot/byok-bridge.mjs';
 import { createUiServer, resolveStaticPath, webRoot, csp } from './serve-ui.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -56,7 +58,7 @@ test('theme editor previews, rejects invalid inputs, saves, discards and resets 
     emit(type) { return this.listeners[type]?.({ preventDefault() {} }); }
   }
   const ids = ['form', 'panel', 'background', 'foreground', 'accent', 'chatFont', 'codeFont', 'fontSize', 'density', 'borderRadius',
-    'ask', 'plan', 'agent', 'warning', 'status', 'apply', 'cancel', 'reset'];
+    'ask', 'plan', 'agent', 'warning', 'status', 'apply', 'cancel', 'reset', 'preset', 'import', 'export'];
   const nodes = Object.fromEntries(ids.map(id => [id, new Control()]));
   const document = { getElementById: id => nodes[id.slice(6)] };
   let saved = { background: '#000000', foreground: '#ffffff' }, displayed;
@@ -94,6 +96,68 @@ test('theme editor previews, rejects invalid inputs, saves, discards and resets 
   await nodes.reset.emit('click');
   assert.equal(saved, null); assert.equal(displayed, null);
   assert.deepEqual(requests, ['byok.theme.get', 'byok.theme.set', 'byok.theme.reset']);
+});
+
+test('bundled themes meet WCAG AA and malformed theme files are rejected', () => {
+  for (const theme of Object.values(bundledThemes)) {
+    assert.equal(isThemePreset(theme), true);
+    assert.ok(contrast(theme.foreground, theme.background) >= 4.5);
+    assert.ok(contrast(theme.accent, theme.background) >= 3);
+    for (const color of Object.values(theme.modeAccent)) assert.ok(contrast(color, theme.background) >= 3);
+    const tokens = themeProperties(theme);
+    for (const name of ['--link-color', '--syntax-string']) assert.ok(contrast(tokens[name], theme.background) >= 4.5);
+    assert.ok(contrast(tokens['--focus-color'], theme.background) >= 3);
+    assert.ok(contrast(tokens['--button-foreground'], theme.accent) >= 4.5);
+    assert.deepEqual(parseThemeFile(JSON.stringify(theme)), theme);
+  }
+  for (const invalid of ['{', 'null', '[]', '{"background":"#12345"}', '{"fontSize":99}', '{"extra":true}'])
+    assert.throws(() => parseThemeFile(invalid), invalid);
+  assert.equal(parseThemeFile('{"chatFont":"Fonte 中文"}').chatFont, 'Fonte 中文');
+  assert.throws(() => parseThemeFile('{"name":"x\\u007fy"}'));
+  assert.ok(contrast('#bbbbbb', '#ffffff') < 4.5);
+});
+
+test('theme import previews without saving and export round trips; invalid files keep the draft', async () => {
+  class Control {
+    value = ''; textContent = ''; disabled = false; open = true; validity = { valid: true }; listeners = {}; files = [];
+    addEventListener(type, fn) { this.listeners[type] = fn; }
+    emit(type) { return this.listeners[type]?.({ preventDefault() {} }); }
+  }
+  const ids = ['form', 'panel', 'background', 'foreground', 'accent', 'chatFont', 'codeFont', 'fontSize', 'density', 'borderRadius',
+    'ask', 'plan', 'agent', 'warning', 'status', 'apply', 'cancel', 'reset', 'preset', 'import', 'export'];
+  const nodes = Object.fromEntries(ids.map(id => [id, new Control()]));
+  let link;
+  const document = {
+    getElementById: id => nodes[id.slice(6)],
+    createElement: () => (link = { click() {} })
+  };
+  const calls = [], bridge = { isConnected: () => true, async request(type) { calls.push(type); return { theme: null }; } };
+  let displayed;
+  const editor = startThemeEditor({ document, bridge, text: key => key,
+    hostTheme: () => ({ background: '#ffffff', foreground: '#000000', accent: '#000000' }), display: theme => { displayed = theme; } });
+  await editor.load();
+  nodes.preset.value = 'dark'; nodes.preset.emit('change');
+  assert.equal(displayed.name, 'Lumen Dark');
+  assert.deepEqual(calls, ['byok.theme.get']);
+  const incoming = { name: 'Imported', background: '#abc', fontSize: 20 };
+  nodes.import.files = [{ size: 100, text: async () => JSON.stringify(incoming) }];
+  await nodes.import.emit('change');
+  assert.deepEqual(displayed, incoming);
+  nodes.export.emit('click');
+  assert.equal(link.download, 'lumen-theme.json');
+  assert.deepEqual(await (await fetch(link.href)).json(), incoming);
+  for (const file of [{ size: MAX_THEME_FILE_BYTES + 1, text: async () => '{}' }, { size: 3, text: async () => '{' }]) {
+    nodes.import.files = [file]; await nodes.import.emit('change');
+    assert.equal(nodes.status.textContent, 'themeImportFailed');
+    assert.deepEqual(displayed, incoming);
+  }
+  let finishRead;
+  nodes.import.files = [{ size: 10, text: () => new Promise(resolve => { finishRead = resolve; }) }];
+  const reading = nodes.import.emit('change');
+  nodes.panel.open = false; nodes.panel.emit('toggle');
+  finishRead(JSON.stringify(incoming)); await reading;
+  assert.equal(displayed, null, 'Closing the panel must discard an in-flight import');
+  assert.deepEqual(calls, ['byok.theme.get']);
 });
 
 test('partial themes inherit colors and low contrast text is made readable', () => {

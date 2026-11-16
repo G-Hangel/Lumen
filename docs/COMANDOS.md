@@ -902,6 +902,21 @@ antes de qualquer gravação e retornou a esse estado. Layout verificado em
 **Não executar o antigo `verify-theme-webview.mjs` com uma configuração de
 tema existente**: ele apaga o tema compartilhado do usuário.
 
+### Fatia 7c — arquivos de tema e contraste (2026-11-16)
+
+Build Release após `dotnet clean`, `npm run check:ui` (226 aprovados) e
+`dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build
+--nologo` com `WindowsApps` removido apenas do PATH do processo (1.618
+aprovados). `scripts/ui-tests.mjs` verifica contraste dos dois presets e
+rejeição de arquivos inválidos ou acima de 16 KB.
+
+Na Exp `25e762c6`, foi usado
+`%LOCALAPPDATA%\Temp\opencode\verify-theme-7c.mjs`: seleciona preset, importa
+arquivo temporário, rejeita arquivo inválido, baixa o JSON para diretório
+temporário próprio e compara o arquivo exportado. O verificador compara o
+tema salvo antes/depois, sem alterá-lo, e remove apenas seus próprios arquivos.
+Resultado: todos os controles passaram; 0 exceções JS e 0 chamadas pagas.
+
 ### Fatia 7a — núcleo de tema custom (2026-11-16)
 
 ```bash

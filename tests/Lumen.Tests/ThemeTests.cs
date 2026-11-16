@@ -44,6 +44,15 @@ public sealed class ThemeTests : IDisposable
         Assert.Equal("invalid_configuration", error.Code);
     }
 
+    [Fact]
+    public void ThemeFontsAcceptUnicodeAndEmptyValuesButRejectControls()
+    {
+        Assert.Equal("Fonte 中文", Parse("{\"chatFont\":\"Fonte 中文\"}").ChatFont);
+        Assert.Equal("", Parse("{\"chatFont\":\"\"}").ChatFont);
+        Assert.Throws<ThemeValidationException>(() => Parse("{\"name\":\"x\\u007fy\"}"));
+        Assert.Throws<ThemeValidationException>(() => Parse("{\"chatFont\":\"x; background:red\"}"));
+    }
+
     [Theory]
     [InlineData("{\"background\":\"#abcde\"}")]          // five digits is not a color
     [InlineData("{\"background\":\"red\"}")]

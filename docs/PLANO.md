@@ -732,10 +732,10 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
       cor de destaque por modo. *(7a — modelo, validação e materialização;
       painel de edição em 7b)*
 - [x] Preview ao vivo antes de aplicar; reset para o padrão. *(7a/7b)*
-- [ ] Importar/exportar tema. *(7c)*
+- [x] Importar/exportar tema. *(7c — importação em prévia; exportação JSON)*
 - [x] Persistência por usuário, não por solução. *(7a — `%LocalAppData%\Lumen\providers.theme.json`)*
-- [ ] Verificar contraste WCAG AA nos temas embarcados. *(cálculo e avisos em 7a;
-      conferência dos temas embarcados em 7c)*
+- [x] Verificar contraste WCAG AA nos temas embarcados. *(7c — texto 4,5:1,
+      destaques 3:1 e tokens de link, foco, sintaxe e botão)*
 
 ### AC
 

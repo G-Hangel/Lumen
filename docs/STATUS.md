@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–5 concluídas; Fase 6 em andamento (fatias 6a, 6b, 6c e 6d concluídas).** A aceitação consolidada de
+**Fases 0–6 concluídas.** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -17,7 +17,9 @@ plano e orçamento configurável (fatia 5b), compactação de histórico, retry
 transitório sem reexecutar tools e paralelismo gated por `ParallelTools`
 verificados (fatia 5c, abaixo); ContextBuilder integral (@arquivos + contexto
 unificado) e o AC de tarefa real multi-passos verificados na fatia 5d (abaixo).
-Skills ativas ficam para a Fase 6 (dependem do sistema de Skills).
+A Fase 6 (Skills) está concluída: sistema extensível pelo usuário, com
+progressive disclosure, acionamento explícito, manual e automático, UI completa
+e exemplos embarcados — ACs verificados na Exp em 2026-11-16 (abaixo).
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
@@ -32,7 +34,38 @@ houve chamadas pagas.
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
-| Fase 6 — Skills | **em andamento (6a, 6b, 6c e 6d concluídas)** |
+| Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
+
+## Fase 6 — fechamento (2026-11-16)
+
+Aceitação consolidada na Exp (`25e762c6`) com o VSIX de HEAD (`a09a9ad`),
+provedor loopback próprio e 0 chamadas pagas. Mapeamento para os ACs do plano:
+
+- **AC — criar skill em `.lumen/skills/` e vê-la na UI sem reiniciar:**
+  `projectSkillWithoutRestart` (source `.lumen/skills`, scope `Project`) e
+  `removedAfterReload` (sumiu após remoção, sem reiniciar).
+- **AC — skill acionada injeta o corpo; não acionada, não injeta:**
+  `activationInjected` (`/code-review` injeta `[Skill: code-review]` + corpo),
+  `automaticActivation` (casamento por descrição, sem `/nome` nem seleção
+  manual) e `progressiveDisclosureNegative` (mensagem sem relação não injeta
+  nada).
+- **AC — desativar uma skill remove seu efeito imediatamente:**
+  `disabledSkillRejected` — após desativar no painel, `/code-review` vira
+  `skill_unavailable` com **0 chamadas ao provedor** e o autocomplete não
+  sugere mais a skill; `reEnabled` reativa no painel.
+- CNs do plano seguem cobertos pela suíte `SkillTests` (47, incluindo
+  `name_mismatch`/`missing_frontmatter` como erros acionáveis, limite de
+  8.192 chars no prompt e confinamento de `load_skill`) e pelos diagnósticos
+  observados na Exp.
+- Cleanup completo: fixture, credencial, conversas e estados desativados
+  removidos; 0 exceções JS; `deploy-experimental.ps1 -Action Verify` confirma o
+  VSIX empacotado. A fase fecha com todas as 8 tarefas do plano marcadas e a
+  única falha conhecida da suíte sendo a ambiental pré-existente do `pwsh`.
+- Commit único sugerido no plano não foi usado; a Fase 6 foi commitada por
+  fatia (`dcdd97a` núcleo, `5c0e385` UI de Skills, `e720bdb`/`908dc86` exemplos
+  e 6c, `452045c` 6b, `a09a9ad` 6d).
+
+## Fase 6d — acionamento automático por descrição (2026-11-16)
 | Fases 7–8 | não iniciadas |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
 

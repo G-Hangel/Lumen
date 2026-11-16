@@ -869,3 +869,16 @@ por handle órfão, feche o `devenv` **antes** do cleanup; um diretório vazio
 C# de Skills, **220/220** JS, suíte completa **1.596 aprovados** + a mesma falha
 ambiental pré-existente; Exp com `automaticActivation: true`, 3 provider
 requests locais, 0 exceções e 0 chamadas pagas.
+
+### Fechamento da Fase 6 — verificação consolidada dos ACs (2026-11-16)
+
+Mesma sequência da 6c/6d com o VSIX de HEAD (`a09a9ad`): build limpo, deploy,
+`context-experimental.ps1 -Action Prepare`, `verify-skills-webview.mjs verify`
+(todas as etapas, incluindo 7b), `cleanup`, `context-experimental.ps1 -Action
+Cleanup` (feche o `devenv` antes, ou a raiz da fixture fica presa por handle) e
+`deploy-experimental.ps1 -Action Verify`. Resultado: `projectSkillWithoutRestart`,
+`activationInjected`, `automaticActivation`, `progressiveDisclosureNegative`,
+`disabledSkillRejected` (0 requests ao provedor) e `reEnabled` todos verdadeiros;
+**0 exceções JS, 3 provider requests locais, 0 chamadas pagas**; fixture,
+credencial e conversas removidas. A Fase 6 foi marcada concluída em
+`docs/STATUS.md`.

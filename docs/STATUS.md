@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–6 concluídas; Fase 7 em andamento (fatias 7a, 7b e 7c concluídas).** A aceitação consolidada de
+**Fases 0–7 concluídas.** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -20,6 +20,9 @@ unificado) e o AC de tarefa real multi-passos verificados na fatia 5d (abaixo).
 A Fase 6 (Skills) está concluída: sistema extensível pelo usuário, com
 progressive disclosure, acionamento explícito, manual e automático, UI completa
 e exemplos embarcados — ACs verificados na Exp em 2026-11-16 (abaixo).
+A Fase 7 (Personalização visual) foi fechada com as fatias 7a–7c e os ACs
+confirmados na Exp em 2026-11-16, inclusive a troca real de tema do VS sem
+reload (abaixo).
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
 Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
@@ -35,9 +38,39 @@ houve chamadas pagas.
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
-| Fase 7 — Personalização visual | **em andamento (7a, 7b e 7c; aceitação consolidada pendente)** |
+| Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | não iniciada |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 7 — fechamento (2026-11-16)
+
+Aceitação consolidada na instância experimental (`25e762c6`) com o VSIX de
+HEAD (`f6dbd0b`, reinstalado e verificado ao final), sem chamadas pagas.
+Mapeamento para os ACs do plano:
+
+- **AC — trocar o tema do VS muda o chat na hora, sem reiniciar:** automação
+  real do menu **Ferramentas → Tema → Claro/Escuro** no VS; fundo do WebView
+  `#282828` → `#F9F9F9` → `#282828`, com o mesmo `performance.timeOrigin`
+  (`1794859619699.4`), 6 eventos `theme.changed`, ponte sempre conectada e
+  0 exceções JavaScript. Tema custom salvo era `null` antes e depois, então a
+  troca exercitou o tema herdado do VS.
+- **AC — tema custom aplicado e persistido entre sessões:** verificado na 7a
+  (aplicação após recarregar o WebView sem ação do usuário, arquivo
+  `%LocalAppData%\Lumen\providers.theme.json`).
+- **AC — reset volta ao padrão:** verificado na 7a (RPC) e 7b (botão do painel).
+- CNs: tema inválido rejeitado com `invalid_configuration` e preset anterior
+  intacto; aviso de contraste calculado no host e exibido no painel;
+  importação acima de 16 KB ou malformada rejeitada; fonte de 24 px com nome
+  de 256 caracteres em 320×240 sem overflow; temas embarcados com AA aferido
+  na 7c.
+- Limpeza: o VS experimental foi encerrado (o fechamento gracioso expirou após
+  a automação de tema, então o processo foi finalizado); o VSIX final foi
+  reinstalado e `deploy-experimental.ps1 -Action Verify` confirmou todos os
+  arquivos do pacote. Tema do VS restaurado para Escuro e nenhuma configuração
+  de tema do usuário foi alterada.
+- A única falha conhecida da suíte permanece a ambiental do `pwsh`
+  AppExecutionAlias; com `WindowsApps` removido do PATH do processo de teste,
+  a suíte completa passou (1.618/1.618).
 
 ## Fase 7c — importação, exportação e temas embarcados (2026-11-16)
 
@@ -55,8 +88,8 @@ houve chamadas pagas.
   válido, rejeitou JSON inválido preservando a prévia e exportou um arquivo
   que foi lido e comparado ao original. A configuração salva foi comparada
   antes/depois e não mudou; sem exceções JS e sem APIs pagas.
-- A Fase 7 permanece aberta para aceitação consolidada dos ACs, incluindo nova
-  verificação de troca real do tema do VS sem reload na hive atual.
+- A verificação da troca real de tema do VS sem reload foi concluída no
+  fechamento da Fase 7 (acima).
 
 ## Fase 7b — painel de aparência (2026-11-16)
 

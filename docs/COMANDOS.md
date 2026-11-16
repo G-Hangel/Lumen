@@ -917,6 +917,20 @@ temporário próprio e compara o arquivo exportado. O verificador compara o
 tema salvo antes/depois, sem alterá-lo, e remove apenas seus próprios arquivos.
 Resultado: todos os controles passaram; 0 exceções JS e 0 chamadas pagas.
 
+### Fechamento da Fase 7 — troca real de tema do VS (2026-11-16)
+
+Foi usado o menu real do VS experimental (pt-BR), automatizado por
+`%TEMP%\opencode\switch-vs-theme.ps1` (`Ferramentas → Tema → Claro/Escuro`) e
+monitorado via CDP por `%TEMP%\opencode\verify-phase7-final.mjs`. Antes da
+troca foi confirmado que não havia tema custom salvo, para que a cor observada
+viesse do VS. Resultado: `#282828` → `#F9F9F9` → `#282828`, mesmo
+`performance.timeOrigin`, conectividade preservada, 6 eventos `theme.changed`
+e 0 exceções. O tema foi restaurado para Escuro ao final. Se o fechamento
+gracioso do Exp falhar após a automação, encerre o processo `devenv` do
+`/RootSuffix Exp`, reinstale o VSIX final e rode `-Action Verify`: uma verificação
+imediatamente após o encerramento forçado acusou `manifest.json` desatualizado,
+resolvida pela reinstalação.
+
 ### Fatia 7a — núcleo de tema custom (2026-11-16)
 
 ```bash

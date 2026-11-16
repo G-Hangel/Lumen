@@ -749,6 +749,9 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
 - Tema com contraste insuficiente → **aviso** na UI. *(7b)*
 - Combinação fonte/tamanho extrema não pode quebrar o layout. *(verificação 7b em 320×240)*
 
+Fechamento consolidado em 2026-11-16, incluindo troca real de tema do VS sem
+reload na hive experimental; evidências em `docs/STATUS.md`.
+
 ### Commit
 
 `feat: add theming with VS theme sync and custom visual presets`

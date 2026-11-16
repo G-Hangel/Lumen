@@ -731,8 +731,7 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
       fonte do chat, fonte de código, tamanho, densidade, raio de borda,
       cor de destaque por modo. *(7a — modelo, validação e materialização;
       painel de edição em 7b)*
-- [ ] Preview ao vivo antes de aplicar; reset para o padrão. *(reset no host em
-      7a; preview na UI em 7b)*
+- [x] Preview ao vivo antes de aplicar; reset para o padrão. *(7a/7b)*
 - [ ] Importar/exportar tema. *(7c)*
 - [x] Persistência por usuário, não por solução. *(7a — `%LocalAppData%\Lumen\providers.theme.json`)*
 - [ ] Verificar contraste WCAG AA nos temas embarcados. *(cálculo e avisos em 7a;
@@ -742,14 +741,13 @@ puxariam o `AcceptanceTests.cs` do estágio de aceitação e quebrariam o
 
 - Trocar o tema do VS muda o chat na hora, sem reiniciar. *(7a)*
 - Tema custom aplicado e persistido entre sessões. *(7a)*
-- Reset volta ao padrão. *(7a no host; botão na UI em 7b)*
+- Reset volta ao padrão. *(7a/7b)*
 
 ### CN
 
 - Tema JSON inválido → **rejeitado com erro**, não deixa a UI ilegível. *(7a)*
-- Tema com contraste insuficiente → **aviso** na UI. *(aviso calculado em 7a;
-  exibição na UI em 7b)*
-- Combinação fonte/tamanho extrema não pode quebrar o layout. *(7b)*
+- Tema com contraste insuficiente → **aviso** na UI. *(7b)*
+- Combinação fonte/tamanho extrema não pode quebrar o layout. *(verificação 7b em 320×240)*
 
 ### Commit
 

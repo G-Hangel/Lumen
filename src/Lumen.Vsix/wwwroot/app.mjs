@@ -4,6 +4,7 @@ import { HostBridge } from './bridge.mjs';
 import { createMarkdownRenderer } from './renderers.mjs';
 import { applyPreset } from './theme.mjs';
 import { startByok } from './byok.mjs';
+import { startThemeEditor } from './theme-editor.mjs';
 
 const catalogs = { 'pt-BR': pt, en };
 const element = id => document.getElementById(id);
@@ -14,6 +15,7 @@ let state = 'preview';
 let errorCode = null;
 let bridge;
 let byokUI;
+let themeEditor;
 let vsTheme = { background: '#131318', foreground: '#ececf2', accent: '#42c99a' };
 let customTheme = null;
 
@@ -55,22 +57,14 @@ function applyLocale(nextCulture) {
   updateControls();
   if (errorCode) showError(errorCode);
   byokUI?.refreshLocale();
+  themeEditor?.refresh();
 }
 
 function applyHostTheme(theme) {
   vsTheme = { background: theme.background, foreground: theme.foreground, accent: theme.accent };
   applyPreset(customTheme, vsTheme);
+  themeEditor?.refresh();
   if (theme.culture && theme.culture !== culture) applyLocale(theme.culture);
-}
-
-// The custom preset wins over the VS theme; a VS theme change only refreshes the inherited colors.
-async function fetchCustomTheme() {
-  if (!byokUI?.bridge?.available || !byokUI?.bridge?.isConnected?.()) return;
-  try {
-    const result = await byokUI.bridge.request('byok.theme.get', {});
-    customTheme = result?.theme ?? null;
-    applyPreset(customTheme, vsTheme);
-  } catch { }
 }
 
 async function connect() {
@@ -88,7 +82,7 @@ async function connect() {
   }
   updateControls();
   byokUI?.setConnected();
-  if (state === 'connected') void fetchCustomTheme();
+  if (state === 'connected') void themeEditor.load();
 }
 
 function handleLink(event) {
@@ -101,6 +95,8 @@ function handleLink(event) {
 bridge = new HostBridge(window.chrome?.webview, { onTheme: applyHostTheme, onError: showError });
 byokUI = startByok({ transport: window.chrome?.webview, connected: () => state === 'connected', text, renderMarkdown: source => markdown.render(source) });
 applyLocale(culture);
+themeEditor = startThemeEditor({ document, bridge: byokUI.bridge, text, hostTheme: () => vsTheme,
+  display: value => { customTheme = value; applyPreset(value, vsTheme); } });
 document.querySelector('.app').setAttribute('aria-busy', 'false');
 element('retry').addEventListener('click', connect);
 element('byok-skip-link')?.addEventListener('click', () => {

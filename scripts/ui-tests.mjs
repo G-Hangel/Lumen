@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { HostBridge, MAX_TEXT_LENGTH, isEnvelope, isTheme } from '../src/Lumen.Vsix/wwwroot/bridge.mjs';
 import { createMarkdownRenderer, isSafeLink, renderDiff } from '../src/Lumen.Vsix/wwwroot/renderers.mjs';
 import { VirtualHistory, visibleRange, ROW_HEIGHT, OVERSCAN } from '../src/Lumen.Vsix/wwwroot/virtual-history.mjs';
-import { contrast, themeProperties } from '../src/Lumen.Vsix/wwwroot/theme.mjs';
+import { contrast, themeProperties, presetColors } from '../src/Lumen.Vsix/wwwroot/theme.mjs';
+import { startThemeEditor } from '../src/Lumen.Vsix/wwwroot/theme-editor.mjs';
 import { createUiServer, resolveStaticPath, webRoot, csp } from './serve-ui.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -47,6 +48,61 @@ async function connectFake(fixture) {
 }
 
 const rejectsCode = (promise, code) => assert.rejects(promise, error => error.code === code);
+
+test('theme editor previews, rejects invalid inputs, saves, discards and resets without a provider', async () => {
+  class Control {
+    value = ''; textContent = ''; disabled = false; open = false; validity = { valid: true }; listeners = {};
+    addEventListener(type, fn) { this.listeners[type] = fn; }
+    emit(type) { return this.listeners[type]?.({ preventDefault() {} }); }
+  }
+  const ids = ['form', 'panel', 'background', 'foreground', 'accent', 'chatFont', 'codeFont', 'fontSize', 'density', 'borderRadius',
+    'ask', 'plan', 'agent', 'warning', 'status', 'apply', 'cancel', 'reset'];
+  const nodes = Object.fromEntries(ids.map(id => [id, new Control()]));
+  const document = { getElementById: id => nodes[id.slice(6)] };
+  let saved = { background: '#000000', foreground: '#ffffff' }, displayed;
+  const requests = [];
+  const bridge = { isConnected: () => true, async request(type, payload) {
+    requests.push(type);
+    if (type === 'byok.theme.get') return { theme: saved };
+    if (type === 'byok.theme.set') { saved = payload.theme; return { theme: saved }; }
+    if (type === 'byok.theme.reset') { saved = null; return { reset: true }; }
+    throw new Error(type);
+  } };
+  const editor = startThemeEditor({ document, bridge, text: key => key,
+    hostTheme: () => ({ background: '#ffffff', foreground: '#000000', accent: '#000000' }), display: value => { displayed = value; } });
+  await editor.load();
+  nodes.background.value = '#abcdef'; nodes.form.emit('input');
+  assert.equal(displayed.background, '#abcdef');
+  assert.deepEqual(requests, ['byok.theme.get']);
+  nodes.fontSize.value = '99'; nodes.form.emit('input');
+  assert.equal(nodes.apply.disabled, true);
+  assert.equal(nodes.warning.textContent, 'themeInvalid');
+  assert.equal(displayed.background, '#000000');
+  await nodes.form.emit('submit');
+  assert.deepEqual(requests, ['byok.theme.get']);
+  nodes.fontSize.value = '24'; nodes.foreground.value = '#abcdef'; nodes.form.emit('input');
+  assert.equal(nodes.warning.textContent, 'themeLowContrast');
+  assert.equal(nodes.apply.disabled, false);
+  await nodes.form.emit('submit');
+  assert.equal(saved.fontSize, 24);
+  nodes.background.value = '#123456'; nodes.form.emit('input');
+  nodes.cancel.emit('click');
+  assert.equal(displayed.background, '#abcdef');
+  nodes.background.value = '#123456'; nodes.form.emit('input');
+  nodes.panel.emit('toggle');
+  assert.equal(displayed.background, '#abcdef');
+  await nodes.reset.emit('click');
+  assert.equal(saved, null); assert.equal(displayed, null);
+  assert.deepEqual(requests, ['byok.theme.get', 'byok.theme.set', 'byok.theme.reset']);
+});
+
+test('partial themes inherit colors and low contrast text is made readable', () => {
+  const host = { background: '#ffffff', foreground: '#000000', accent: '#0055aa' };
+  assert.equal(presetColors({ background: '#123456' }, host).background, '#123456');
+  const adjusted = presetColors({ background: '#999999', foreground: '#999999' }, host);
+  assert.ok(contrast(adjusted.foreground, adjusted.background) >= 4.5);
+  assert.equal(adjusted.accent, host.accent);
+});
 
 test('responses reject malformed, oversized and unknown envelopes before accepting valid schemas', () => {
   for (const bad of [null, [], '{"version":', {}, envelope('ready.result', {}),

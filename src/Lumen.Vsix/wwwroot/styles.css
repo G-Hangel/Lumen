@@ -113,6 +113,9 @@ svg { width: 16px; height: 16px; flex: none; }
 .workspace-content > details[open] > .read-tools-controls,
 .workspace-content > details[open] > .skills-controls { flex: 1; min-height: 0; max-height: none; min-width: 0; overflow: visible; }
 .workspace-content > details > summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12px; font-weight: 650; }
+.theme-form { display: grid; gap: 6px; min-width: 0; padding: 12px; overflow-wrap: anywhere; }
+.theme-form input, .theme-form select { width: 100%; min-width: 0; max-width: 100%; }
+.theme-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 summary { cursor: pointer; background: transparent; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary::before { content: "›"; flex: none; font-size: 15px; line-height: 1; color: var(--brand-ink); transition: transform 150ms ease; }

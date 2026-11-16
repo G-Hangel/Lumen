@@ -28,7 +28,7 @@ export function mix(a, b, weight) {
 
 export function ensureContrast(color, background, ratio) {
   if (contrast(color, background) >= ratio) return color;
-  const target = luminance(background) < .35 ? '#ffffff' : '#000000';
+  const target = contrast('#ffffff', background) >= contrast('#000000', background) ? '#ffffff' : '#000000';
   for (let step = 1; step <= 40; step++) {
     const candidate = mix(color, target, step / 40);
     if (contrast(candidate, background) >= ratio) return candidate;
@@ -55,11 +55,10 @@ function setOrRemove(root, property, value) {
   else root.style.removeProperty(property);
 }
 
-// A custom preset only overrides the colors it fully defines; everything else keeps the VS theme.
 export function presetColors(preset, vsTheme) {
-  return preset?.background && preset?.foreground && preset?.accent
-    ? { background: preset.background, foreground: preset.foreground, accent: preset.accent }
-    : vsTheme;
+  const background = preset?.background ?? vsTheme.background;
+  const foreground = preset?.foreground ?? vsTheme.foreground;
+  return { background, foreground: ensureContrast(foreground, background, 4.5), accent: preset?.accent ?? vsTheme.accent };
 }
 
 export function applyPreset(preset, vsTheme, root) {

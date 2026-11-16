@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–6 concluídas; Fase 7 em andamento (fatia 7a concluída).** A aceitação consolidada de
+**Fases 0–6 concluídas; Fase 7 em andamento (fatias 7a e 7b concluídas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -35,6 +35,33 @@ houve chamadas pagas.
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
+| Fase 7 — Personalização visual | **em andamento (7a e 7b concluídas)** |
+| Fase 8 — Hardening, empacotamento e entrega | não iniciada |
+| Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 7b — painel de aparência (2026-11-16)
+
+- Painel localizado PT-BR/EN com prévia ao editar cores, fontes, tamanho,
+  densidade, raio e destaques por modo; aplicar persiste, descartar ou fechar
+  reverte a prévia e reset retorna ao tema do VS.
+- Campos inválidos bloqueiam aplicação; contraste insuficiente exibe aviso.
+  Cores parciais herdam individualmente do VS; a cor efetiva de texto é
+  ajustada para contraste mínimo de 4,5:1.
+- Build Release: 0 erros e 0 avisos. UI: 224 testes aprovados, incluindo
+  controles negativos para tamanho inválido e contraste baixo. Suíte .NET:
+  1.617 aprovados com `WindowsApps` removido apenas do `PATH` do processo de
+  teste. Com o `PATH` normal, 1.616 aprovados e a falha ambiental já
+  documentada em `DetectedShellsExecuteOnlyAfterApproval`. Após o clean, uma
+  execução filtrada falhou por acesso concorrente a `child.pid` em
+  `TimeoutAndCancellationKillLiveShellChildWithinDeadline`; a repetição
+  completa passou (1.617/1.617).
+- Exp `25e762c6`, sem APIs pagas: prévia, aviso, rejeição de tamanho 99,
+  persistência de tamanho 24, descarte e reset exercitados no painel real,
+  sem exceções JS. Em 320×240, fonte de 24 px e nome de fonte de 256
+  caracteres não geraram overflow horizontal no formulário. O teste só
+  gravou depois de confirmar que não havia tema salvo; reset restaurou o
+  estado anterior. Verificação de empacotamento concluída.
+- Ainda faltam importação/exportação e conferência dos temas embarcados (7c).
 
 ## Fase 7a — núcleo de tema custom (2026-11-16)
 
@@ -101,9 +128,6 @@ provedor loopback próprio e 0 chamadas pagas. Mapeamento para os ACs do plano:
   e 6c, `452045c` 6b, `a09a9ad` 6d).
 
 ## Fase 6d — acionamento automático por descrição (2026-11-16)
-| Fase 7 — Personalização visual | **em andamento (7a concluída)** |
-| Fase 8 — Hardening, empacotamento e entrega | não iniciada |
-| Fase 9 — Subagentes e delegação | planejada; não iniciada |
 
 ## Fase 6d — acionamento automático por descrição (2026-11-16)
 

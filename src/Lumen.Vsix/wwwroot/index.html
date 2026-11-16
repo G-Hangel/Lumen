@@ -45,6 +45,9 @@
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 1.5 9.6 5.8 14 7.5 9.6 9.2 8 13.5 6.4 9.2 2 7.5 6.4 5.8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
           <span class="rail-text" data-i18n="skillsTitle"></span>
         </button>
+        <button id="lumen-nav-theme" type="button" class="rail-button" data-panel="theme-panel" aria-controls="lumen-workspace" aria-expanded="false" data-i18n-label="themeTitle" data-i18n-title="themeTitle">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg><span class="rail-text" data-i18n="themeTitle"></span>
+        </button>
       </div>
     </header>
 
@@ -62,8 +65,49 @@
           <button type="button" class="workspace-tab" data-panel="byok-read-tools" aria-controls="byok-read-tools" aria-pressed="false" data-i18n="navRead"></button>
           <button type="button" class="workspace-tab" data-panel="byok-write-tools" aria-controls="byok-write-tools" aria-pressed="false" data-i18n="navWrite"></button>
           <button type="button" class="workspace-tab" data-panel="byok-skills" aria-controls="byok-skills" aria-pressed="false" data-i18n="skillsTitle"></button>
+          <button type="button" class="workspace-tab" data-panel="theme-panel" aria-controls="theme-panel" aria-pressed="false" data-i18n="themeTitle"></button>
         </nav>
         <div class="workspace-content">
+        <details id="theme-panel">
+          <summary data-i18n="themeTitle"></summary>
+          <form id="theme-form" class="theme-form" autocomplete="off">
+            <p class="secondary" data-i18n="themeHelp"></p>
+            <label for="theme-background" data-i18n="themeBackground"></label>
+            <input id="theme-background" type="text" maxlength="7" placeholder="#202124" spellcheck="false">
+            <label for="theme-foreground" data-i18n="themeForeground"></label>
+            <input id="theme-foreground" type="text" maxlength="7" placeholder="#eeeeee" spellcheck="false">
+            <label for="theme-accent" data-i18n="themeAccent"></label>
+            <input id="theme-accent" type="text" maxlength="7" placeholder="#75b9ff" spellcheck="false">
+            <label for="theme-chatFont" data-i18n="themeChatFont"></label>
+            <input id="theme-chatFont" type="text" maxlength="256">
+            <label for="theme-codeFont" data-i18n="themeCodeFont"></label>
+            <input id="theme-codeFont" type="text" maxlength="256">
+            <label for="theme-fontSize" data-i18n="themeFontSize"></label>
+            <input id="theme-fontSize" type="number" min="10" max="24" step="1">
+            <label for="theme-density" data-i18n="themeDensity"></label>
+            <select id="theme-density">
+              <option value="" data-i18n="themeInherit"></option>
+              <option value="compact" data-i18n="themeCompact"></option>
+              <option value="normal" data-i18n="themeNormal"></option>
+              <option value="spacious" data-i18n="themeSpacious"></option>
+            </select>
+            <label for="theme-borderRadius" data-i18n="themeRadius"></label>
+            <input id="theme-borderRadius" type="number" min="0" max="24" step="1">
+            <label for="theme-ask" data-i18n="themeAsk"></label>
+            <input id="theme-ask" type="text" maxlength="7" placeholder="#75b9ff" spellcheck="false">
+            <label for="theme-plan" data-i18n="themePlan"></label>
+            <input id="theme-plan" type="text" maxlength="7" placeholder="#75b9ff" spellcheck="false">
+            <label for="theme-agent" data-i18n="themeAgent"></label>
+            <input id="theme-agent" type="text" maxlength="7" placeholder="#75b9ff" spellcheck="false">
+            <p id="theme-warning" role="status" aria-live="polite"></p>
+            <p id="theme-status" role="status" aria-live="polite"></p>
+            <div class="theme-actions">
+              <button id="theme-apply" type="submit" class="text-button" data-i18n="themeApply" disabled></button>
+              <button id="theme-cancel" type="button" class="text-button" data-i18n="themeCancel"></button>
+              <button id="theme-reset" type="button" class="text-button" data-i18n="themeReset" disabled></button>
+            </div>
+          </form>
+        </details>
         <details id="byok-panel" class="byok-panel">
           <summary data-i18n="byokTitle"></summary>
           <div class="byok-scroll" tabindex="0" data-i18n-label="byokTitle">

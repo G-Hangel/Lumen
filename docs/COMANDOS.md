@@ -883,6 +883,25 @@ Cleanup` (feche o `devenv` antes, ou a raiz da fixture fica presa por handle) e
 credencial e conversas removidas. A Fase 6 foi marcada concluída em
 `docs/STATUS.md`.
 
+### Fatia 7b — painel de aparência (2026-11-16)
+
+`dotnet build Lumen.sln -c Release --nologo`, `npm run check:ui` e
+`dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo`.
+Com o PATH normal a suíte .NET repetiu a falha ambiental de `pwsh`; para
+verificar a suíte integral foi executada novamente com `WindowsApps` removido
+somente do PATH do processo: 1.617 aprovados. UI: 224 aprovados. Uma execução
+após o clean também falhou por acesso concorrente a `child.pid` em
+`TimeoutAndCancellationKillLiveShellChildWithinDeadline`; a repetição
+completa passou.
+
+Na Exp, a prévia, validação, aviso, salvar, descartar e reset foram exercitados
+no painel real pelo CDP; a configuração original foi verificada como ausente
+antes de qualquer gravação e retornou a esse estado. Layout verificado em
+320×240 com fonte 24 px. Os verificadores usados nesta sessão ficam em
+`%TEMP%\opencode\verify-theme-7b.mjs` e `verify-theme-layout-7b.mjs`.
+**Não executar o antigo `verify-theme-webview.mjs` com uma configuração de
+tema existente**: ele apaga o tema compartilhado do usuário.
+
 ### Fatia 7a — núcleo de tema custom (2026-11-16)
 
 ```bash

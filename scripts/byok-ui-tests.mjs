@@ -30,7 +30,7 @@ function fakeRoot() {
   const props = new Map();
   const attributes = new Map();
   return {
-    props, attributes,
+    props, attributes, dataset: {},
     style: { setProperty: (name, value) => props.set(name, value), removeProperty: name => props.delete(name) },
     setAttribute: (name, value) => attributes.set(name, value),
     removeAttribute: name => attributes.delete(name)
@@ -2887,8 +2887,8 @@ test('static probe section follows manual overrides with native labels, unchecke
 
 test('workspace navigation presents one selected tool panel beside a direct topic list', async () => {
   const nav = html.slice(html.indexOf('<nav class="workspace-nav"'), html.indexOf('</nav>', html.indexOf('<nav class="workspace-nav"')) + '</nav>'.length);
-  assert.equal([...nav.matchAll(/class="workspace-tab"/g)].length, 5);
-  for (const id of ['byok-panel', 'byok-history', 'byok-read-tools', 'byok-write-tools', 'byok-skills']) {
+  assert.equal([...nav.matchAll(/class="workspace-tab"/g)].length, 6);
+  for (const id of ['byok-panel', 'byok-history', 'byok-read-tools', 'byok-write-tools', 'byok-skills', 'theme-panel']) {
     assert.match(nav, new RegExp(`data-panel="${id}" aria-controls="${id}" aria-pressed="false"`));
     assert.match(html, new RegExp(`<details id="${id}"`));
   }

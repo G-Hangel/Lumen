@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using Lumen.Core.Agents;
 using Lumen.Core.Bridge;
 using Lumen.Providers;
 using Lumen.Tools;
@@ -29,6 +30,9 @@ internal sealed class LumenControl : UserControl, IDisposable
     private readonly Lazy<ByokSession> byok;
     private readonly VisualStudioWriteTools writeTools;
     private readonly VisualStudioShellTools shellTools;
+    private readonly AgentRegistry agentRegistry = new();
+    private readonly DelegationCoordinator agentCoordinator;
+    private readonly VisualStudioAgentSource agentSource;
     private bool started;
     private bool disposed;
 
@@ -37,6 +41,8 @@ internal sealed class LumenControl : UserControl, IDisposable
         this.taskFactory = taskFactory;
         writeTools = new VisualStudioWriteTools(taskFactory, PromptApprovalAsync);
         shellTools = new VisualStudioShellTools(taskFactory, PromptApprovalAsync);
+        agentCoordinator = new DelegationCoordinator(agentRegistry);
+        agentSource = new VisualStudioAgentSource(taskFactory);
         var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lumen");
         byok = new Lazy<ByokSession>(() =>
         {
@@ -44,7 +50,7 @@ internal sealed class LumenControl : UserControl, IDisposable
             var resolver = new CapabilityResolver(File.Exists(registryPath) ? File.ReadAllText(registryPath) : null);
             var transport = new HttpTransport(http);
             return new ByokSession(new ProviderFactory(transport, resolver), new WindowsCredentialStore(),
-                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools, new VisualStudioSkillSource(taskFactory));
+                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools, new VisualStudioSkillSource(taskFactory), agentRegistry, agentCoordinator, agentSource);
         });
         browser = new WebView2
         {
@@ -210,6 +216,8 @@ internal sealed class LumenControl : UserControl, IDisposable
         disposed = true;
         lifetime.Cancel();
         if (byok.IsValueCreated) byok.Value.Dispose();
+        agentCoordinator.Dispose();
+        agentRegistry.Dispose();
         writeTools.Dispose();
         shellTools.Dispose();
         http.Dispose();

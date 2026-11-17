@@ -82,6 +82,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   let contexts = [], contextBusy = false;
   let skillItems = [], skillDiagnostics = [], skillsLoaded = false, skillsLoading = false, skillRefreshRequested = false, suggestionIndex = 0;
   const selectedSkills = new Set();
+  let agentItems = [], agentDiagnostics = [], agentsLoaded = false, agentsLoading = false, agentRefreshRequested = false;
   let readBusy = false, readStatusKey = 'readToolsIdle', readErrorCode = null;
   function renderReadStatus() {
     node('read-status').textContent = readErrorCode
@@ -687,6 +688,65 @@ export function startByok({ transport, connected = () => false, text, renderMark
     catch (error) { node('skills-status').textContent = text(errorLabel(error.code)); }
   }
 
+  function renderAgents() {
+    const select = node('agents-name'), previous = select.value;
+    select.replaceChildren(...agentItems.map(agent => {
+      const option = document.createElement('option'); option.value = agent.name; option.textContent = agent.name;
+      return option;
+    }));
+    if (agentItems.some(agent => agent.name === previous)) select.value = previous;
+    else if (agentItems.length) select.value = agentItems[0].name;
+    node('agents-list').replaceChildren();
+    for (const agent of agentItems) {
+      const item = document.createElement('li'), title = document.createElement('strong'), description = document.createElement('p'), source = document.createElement('p');
+      title.textContent = agent.name; description.className = 'secondary'; description.textContent = agent.description;
+      source.className = 'secondary'; source.textContent = `${agent.source} · ${agent.scope}`;
+      item.append(title, description, source); node('agents-list').append(item);
+    }
+    node('agents-diagnostics').replaceChildren();
+    for (const diagnostic of agentDiagnostics) {
+      const item = document.createElement('li'); item.textContent = `${diagnostic.location}: ${diagnostic.code} — ${diagnostic.detail}`;
+      node('agents-diagnostics').append(item);
+    }
+    node('agents-status').textContent = text(agentItems.length ? 'agentsLoaded' : 'agentsEmpty');
+    node('agents-delegate').disabled = !agentItems.length || node('mode').value !== 'Agent';
+  }
+
+  function pumpAgents() {
+    if (!agentRefreshRequested || agentsLoading || !online() || busy || imageLoading || needsCancel || cancelling) return;
+    agentRefreshRequested = false; agentsLoading = true;
+    void loadAgents().finally(() => { agentsLoading = false; });
+  }
+
+  function requestAgents() {
+    if (agentsLoading) return;
+    agentRefreshRequested = true; pumpAgents();
+  }
+
+  async function loadAgents() {
+    await operate(async () => {
+      try {
+        const result = await bridge.request('byok.agents.list', {});
+        if (disposed) return;
+        agentItems = result.agents; agentDiagnostics = result.diagnostics; agentsLoaded = true;
+        renderAgents();
+      } catch (error) { node('agents-status').textContent = text(errorLabel(error.code)); throw error; }
+    });
+  }
+
+  async function delegateAgent(event) {
+    event.preventDefault();
+    const name = node('agents-name').value, taskValue = node('agents-task').value;
+    if (!name || node('mode').value !== 'Agent') { node('agents-result-status').textContent = text('agentsNeedAgentMode'); return; }
+    await operate(async () => {
+      try {
+        const result = await bridge.request('byok.agents.delegate', { name, task: taskValue, mode: 'Agent' });
+        node('agents-result').textContent = result.text; node('agents-result').hidden = false;
+        node('agents-result-status').textContent = text('agentsDelegated');
+      } catch (error) { node('agents-result-status').textContent = text(errorLabel(error.code)); throw error; }
+    });
+  }
+
   function applyCatalog(result) {
     models = result.models; selectedModelId = ''; clearProbeConsent(); clearToolConsent();
     // Public catalogs can succeed without verifying a key; errors with unknown validity must not be saved.
@@ -1114,11 +1174,13 @@ export function startByok({ transport, connected = () => false, text, renderMark
       bridge.disconnect(); node('key').value = ''; loaded = false; configurationId = ''; configurations = []; resetSelection(); renderProviders();
       needsCancel = false; remainingBudget = null; renderProbeBudget(); setStatus('byokDisconnected');
       skillItems = []; skillDiagnostics = []; skillsLoaded = false; skillRefreshRequested = false; selectedSkills.clear(); renderSkills();
+      agentItems = []; agentDiagnostics = []; agentsLoaded = false; agentRefreshRequested = false; renderAgents();
       writePending = null; writeRefreshRequested = false; clearWriteDiff(); renderWriteStatus();
     } else {
       setStatus('byokReady'); if (panel.open && !loaded && !busy) void listProviders();
       if (!wasConnected && node('write-tools').open) requestWriteStatus();
       if (!wasConnected && node('skills').open && !skillsLoaded) requestSkills();
+      if (!wasConnected && node('agents').open && !agentsLoaded) requestAgents();
     }
     updateControls();
   }
@@ -1132,6 +1194,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('skills-edit'), 'click', () => void writeSkill(true));
   listen(node('skills-open'), 'click', () => void openSkillsFolder());
   listen(node('skills-undo'), 'click', () => void undoSkill());
+  listen(node('agents'), 'toggle', () => { if (node('agents').open && online() && !agentsLoaded) requestAgents(); });
+  listen(node('agents-reload'), 'click', requestAgents);
+  listen(node('agents-form'), 'submit', delegateAgent);
   listen(node('history'), 'toggle', () => { if (node('history').open && !historyLoaded) void listHistory(); });
   listen(node('history-search-form'), 'submit', event => { event.preventDefault(); void listHistory(); });
   listen(node('history-list'), 'change', () => { deleteTarget = ''; node('history-confirmation').hidden = true; void openHistory(); });
@@ -1159,7 +1224,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     clearToolConsent();
     setMode(node('mode').value);
     for (const name of selectedSkills) if (!skillItems.some(skill => skill.name === name && skill.enabled && skill.modes.includes(node('mode').value))) selectedSkills.delete(name);
-    renderSkills(); updateControls();
+    renderSkills(); renderAgents(); updateControls();
   };
   listen(node('mode'), 'change', modeChanged);
   listen(node('apply-plan'), 'click', () => {
@@ -1286,7 +1351,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('write-refresh'), 'click', () => { if (writeAllowed()) requestWriteStatus(); });
   listen(node('write-cancel'), 'click', cancel);
   listen(node('cancel'), 'click', cancel);
-  refreshLocale(); setConnected(connectedState);
+  renderAgents(); refreshLocale(); setConnected(connectedState);
   return {
     refreshLocale, setConnected, bridge,
     dispose() {

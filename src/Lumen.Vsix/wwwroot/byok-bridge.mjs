@@ -48,7 +48,9 @@ const codes = new Set(['invalid_message', 'invalid_response', 'bridge_unavailabl
   'unknown_tool', 'invalid_arguments', 'invalid_path', 'path_unavailable', 'outside_workspace',
   'output_too_large', 'file_too_large', 'binary_file', 'workspace_unavailable', 'tool_budget_exceeded',
   'file_exists', 'undo_failed', 'undo_conflict', 'edit_conflict', 'journal_limit', 'mode_denied',
-  'approval_denied', 'command_blocked', 'command_timeout', 'command_failed', 'skill_unavailable', 'invalid_configuration']);
+  'approval_denied', 'command_blocked', 'command_timeout', 'command_failed', 'skill_unavailable', 'invalid_configuration',
+  'agent_unavailable', 'unknown_agent', 'invalid_task', 'invalid_agent_name', 'duplicate_agent', 'depth_exceeded',
+  'registry_disposed', 'delegation_failed', 'invalid_result', 'missing_frontmatter', 'name_mismatch', 'invalid_field']);
 const execution = value => ['Running', 'Completed', 'Failed', 'Cancelled'].includes(value.status)
   && typeof value.isError === 'boolean' && string(value.content, MAX_READ_TOOL_CONTENT, true)
   && (!['Running', 'Cancelled'].includes(value.status) || value.content === '');
@@ -272,9 +274,15 @@ export function isByokEnvelope(value) {
     case 'byok.tool.write.result': return writeToolResult(p);
     case 'byok.tool.write.status.result': return fields(p, ['pending']) && pendingWrites(p.pending);
     case 'byok.tool.write.undo.result': return fields(p, ['undone', 'pending']) && p.undone === true && pendingWrites(p.pending);
-    case 'byok.agents.list.result': return fields(p, ['agents']) && list(p.agents, 64, value => fields(value, ['name', 'scope'])
-      && typeof value.name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) && value.name.length <= 64
-      && ['Project', 'User', 'Global'].includes(value.scope));
+    case 'byok.agents.list.result': return fields(p, ['agents', 'diagnostics'])
+      && list(p.agents, 64, value => fields(value, ['name', 'description', 'source', 'scope'])
+        && typeof value.name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) && value.name.length <= 64
+        && string(value.description, 1024) && string(value.source, 128) && ['Project', 'User', 'Global'].includes(value.scope))
+      && list(p.diagnostics, 256, value => fields(value, ['location', 'code', 'detail'])
+        && string(value.location, 512) && string(value.code, 64) && string(value.detail, 1024));
+    case 'byok.agents.delegate.result': return fields(p, ['name', 'success', 'text', 'generatedAtUtc'])
+      && typeof p.name === 'string' && p.name.length <= 64 && typeof p.success === 'boolean'
+      && typeof p.text === 'string' && p.text.length <= 65536 && typeof p.generatedAtUtc === 'string' && p.generatedAtUtc.length <= 40;
     case 'byok.theme.get.result': return fields(p, ['theme', 'warnings']) && (p.theme === null || isThemePreset(p.theme)) && themeWarnings(p.warnings);
     case 'byok.theme.set.result': return fields(p, ['theme', 'warnings']) && isThemePreset(p.theme) && themeWarnings(p.warnings);
     case 'byok.theme.reset.result': return fields(p, ['reset']) && p.reset === true;
@@ -296,6 +304,8 @@ function validRequest(type, p) {
     case 'byok.tool.write': return isWriteToolRequest(p);
     case 'byok.tool.write.undo': case 'byok.tool.write.status': return fields(p, []);
     case 'byok.theme.get': case 'byok.theme.reset': case 'byok.agents.list': return fields(p, []);
+    case 'byok.agents.delegate': return fields(p, ['name', 'task', 'mode']) && typeof p.name === 'string' && p.name.length <= 64
+      && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(p.name) && string(p.task, 4096) && p.mode === 'Agent';
     case 'byok.theme.set': return fields(p, ['theme']) && isThemePreset(p.theme);
     case 'byok.history.list': return fields(p, ['query']) && string(p.query, 256, true);
     case 'byok.history.open': return fields(p, ['conversationId', 'offset', 'limit']) && guid(p.conversationId)
@@ -351,7 +361,7 @@ export class ByokBridge {
       'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
       'byok.skills.list', 'byok.skills.set', 'byok.skills.write', 'byok.skills.undo', 'byok.skills.open',
-      'byok.theme.get', 'byok.theme.set', 'byok.theme.reset', 'byok.agents.list',
+      'byok.theme.get', 'byok.theme.set', 'byok.theme.reset', 'byok.agents.list', 'byok.agents.delegate',
       'byok.approval.respond'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size) {

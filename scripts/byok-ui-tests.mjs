@@ -1684,17 +1684,41 @@ test('skills bridge validates requests, rejects forged results and accepts bound
 
 test('agent bridge rejects forged agent lists and accepts bounded metadata', async t => {
   const f = fixture(t);
-  const valid = { agents: [{ name: 'review-helper', scope: 'Project' }] };
+  const valid = { agents: [{ name: 'review-helper', description: 'Reviews code', source: '.lumen/agents', scope: 'Project' }], diagnostics: [] };
   assert.equal(isByokEnvelope(envelope('byok.agents.list.result', valid)), true);
   for (const bad of [
-    { agents: [{ name: '../escape', scope: 'Project' }] },
-    { agents: [{ name: 'helper', scope: 'Untrusted' }] },
-    { agents: [{ name: 'helper' }] },
-    { agents: 'helper' }
+    { agents: [{ name: '../escape', description: 'x', source: 'x', scope: 'Project' }], diagnostics: [] },
+    { agents: [{ name: 'helper', description: 'x', source: 'x', scope: 'Untrusted' }], diagnostics: [] },
+    { agents: [{ name: 'helper' }], diagnostics: [] },
+    { agents: 'helper', diagnostics: [] }
   ]) assert.equal(isByokEnvelope(envelope('byok.agents.list.result', bad)), false, JSON.stringify(bad));
   const listing = f.bridge.request('byok.agents.list', {});
   f.transport.reply(valid);
   assert.equal((await listing).agents[0].name, 'review-helper');
+  const delegated = f.bridge.request('byok.agents.delegate', { name: 'review-helper', task: 'review this', mode: 'Agent' });
+  f.transport.reply({ name: 'review-helper', success: true, text: 'Read the diff.', generatedAtUtc: new Date().toISOString() });
+  assert.equal((await delegated).text, 'Read the diff.');
+});
+
+test('agents UI lists discovered agents and delegates only in Agent mode', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('agents').open = true; await f.node('agents').emit('toggle');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.agents.list');
+  f.transport.reply({ agents: [{ name: 'review-helper', description: 'Reviews code', source: '.lumen/agents', scope: 'Project' }], diagnostics: [] });
+  await tick();
+  assert.equal(f.node('agents-list').children.length, 1);
+  assert.equal(f.node('agents-name').value, 'review-helper');
+  assert.equal(f.node('agents-delegate').disabled, true);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
+  assert.equal(f.node('agents-delegate').disabled, false);
+  f.node('agents-task').value = 'review the diff';
+  const submitting = f.node('agents-form').emit('submit'), sent = f.transport.messages.at(-1);
+  assert.equal(sent.type, 'byok.agents.delegate');
+  assert.deepEqual(sent.payload, { name: 'review-helper', task: 'review the diff', mode: 'Agent' });
+  f.transport.reply({ name: 'review-helper', success: true, text: 'Read the diff.', generatedAtUtc: new Date().toISOString() }, sent);
+  await submitting;
+  assert.equal(f.node('agents-result').hidden, false);
+  assert.equal(f.node('agents-result').textContent, 'Read the diff.');
 });
 
 test('skills UI reloads, offers slash completion and sends the manual selection', async t => {
@@ -2902,8 +2926,8 @@ test('static probe section follows manual overrides with native labels, unchecke
 
 test('workspace navigation presents one selected tool panel beside a direct topic list', async () => {
   const nav = html.slice(html.indexOf('<nav class="workspace-nav"'), html.indexOf('</nav>', html.indexOf('<nav class="workspace-nav"')) + '</nav>'.length);
-  assert.equal([...nav.matchAll(/class="workspace-tab"/g)].length, 6);
-  for (const id of ['byok-panel', 'byok-history', 'byok-read-tools', 'byok-write-tools', 'byok-skills', 'theme-panel']) {
+  assert.equal([...nav.matchAll(/class="workspace-tab"/g)].length, 7);
+  for (const id of ['byok-panel', 'byok-history', 'byok-read-tools', 'byok-write-tools', 'byok-skills', 'byok-agents', 'theme-panel']) {
     assert.match(nav, new RegExp(`data-panel="${id}" aria-controls="${id}" aria-pressed="false"`));
     assert.match(html, new RegExp(`<details id="${id}"`));
   }

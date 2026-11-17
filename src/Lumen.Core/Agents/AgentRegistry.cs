@@ -24,6 +24,8 @@ public sealed class AgentRegistry : IDisposable
 {
     private static readonly Regex NamePattern = new("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant);
     public const int MaxNameLength = 64;
+
+    public static bool IsValidName(string name) => !string.IsNullOrEmpty(name) && name.Length <= MaxNameLength && NamePattern.IsMatch(name);
     private readonly Dictionary<string, AgentBase> agents = new(StringComparer.Ordinal);
     private bool disposed;
 
@@ -34,7 +36,7 @@ public sealed class AgentRegistry : IDisposable
         EnsureActive();
         if (agent is null) throw new AgentException("unknown_agent");
         var name = agent.Name;
-        if (string.IsNullOrWhiteSpace(name) || name.Length > MaxNameLength || !NamePattern.IsMatch(name))
+        if (!IsValidName(name))
             throw new AgentException("invalid_agent_name");
         lock (agents)
         {
@@ -63,6 +65,27 @@ public sealed class AgentRegistry : IDisposable
     {
         EnsureActive();
         lock (agents) return agents.Values.Select(agent => new AgentInfo(agent.Name, agent.Scope)).ToArray();
+    }
+
+    // Swaps the full agent set atomically. Previous agents are disposed so a
+    // folder rename cannot leave a stale agent delegated by the model.
+    public void Replace(IEnumerable<AgentBase> nextAgents)
+    {
+        EnsureActive();
+        var next = new List<AgentBase>(nextAgents ?? throw new AgentException("unknown_agent"));
+        List<AgentBase> previous;
+        lock (agents)
+        {
+            previous = new List<AgentBase>(agents.Values);
+            agents.Clear();
+            foreach (var agent in next)
+            {
+                if (!IsValidName(agent.Name)) throw new AgentException("invalid_agent_name");
+                if (agents.ContainsKey(agent.Name)) throw new AgentException("duplicate_agent");
+                agents.Add(agent.Name, agent);
+            }
+        }
+        foreach (var agent in previous) agent.Dispose();
     }
 
     private void EnsureActive()

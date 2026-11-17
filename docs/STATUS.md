@@ -40,7 +40,30 @@ houve chamadas pagas.
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
-| Fase 9 — Subagentes e delegação | **em andamento (9a e 9b concluídas)** |
+| Fase 9 — Subagentes e delegação | **concluído (9a–9c; verificação consolidada pendente)** |
+
+## Fase 9c — descoberta por pasta e painel de agentes (2026-11-17)
+
+- `AgentCatalog` (`src/Lumen.Tools/AgentCatalog.cs`) descobre `AGENT.md` em
+  `.lumen/agents/<nome>/` do projeto e `~/.lumen/agents/<nome>/` do usuário,
+  com precedência projeto > usuário. Valida frontmatter (`name`, `description`),
+  nome igual ao da pasta, corpo obrigatório, limites de tamanho e diagnosticos
+  acionáveis (`name_mismatch`, `missing_frontmatter`, `duplicate_name`...).
+  `WorkspaceGuard` rejeita junções para fora das pastas permitidas.
+- `MarkdownAgent` devolve o próprio corpo como resultado da delegação —
+  **texto não confiável**, sem ferramentas ou aprovações próprias.
+  `AgentRegistry.Replace` troca o conjunto completo e descarta agentes antigos;
+  o `ByokSession` atualiza a descoberta antes de cada chat no modo Agent e nos
+  RPCs `byok.agents.list` / `byok.agents.delegate`.
+- Painel localizado PT-BR/EN com lista, origem/escopo, diagnósticos, recarga e
+  formulário de delegação. O botão só habilita no modo Agent; a ponte valida
+  envelope, nomes, `task` e exige `mode === 'Agent'`.
+- Build Release 0 erros/0 avisos; 83 testes com filtro `Agent`, suíte .NET
+  1.649/1.649, UI 228/228, pacote 2/2. Exp `25e762c6` com fixture de projeto:
+  agente `review-helper` descoberto sem reiniciar, lista no painel, delegação
+  devolvendo as instruções e 0 exceções JS; `-Action Verify` passou.
+- Escopo fechado para 9c; falta apenas a verificação consolidada dos ACs da
+  Fase 9 (integração ponta a ponta com o modelo escolhendo `delegate_agent`).
 
 ## Fase 9b — delegação no loop de chat (2026-11-17)
 

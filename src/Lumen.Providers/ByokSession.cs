@@ -25,6 +25,7 @@ public sealed class ByokSession : IDisposable
     private readonly ISkillSource? skills;
     private readonly AgentRegistry? agentRegistry;
     private readonly DelegationCoordinator? agentCoordinator;
+    private readonly IAgentSource? agentSource;
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -37,9 +38,9 @@ public sealed class ByokSession : IDisposable
     private readonly object approvalGate = new object();
     private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
     private Func<object, Task>? approvalEmit;
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null, AgentRegistry? agentRegistry = null, DelegationCoordinator? agentCoordinator = null)
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null, AgentRegistry? agentRegistry = null, DelegationCoordinator? agentCoordinator = null, IAgentSource? agentSource = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills; this.agentRegistry = agentRegistry; this.agentCoordinator = agentCoordinator;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills; this.agentRegistry = agentRegistry; this.agentCoordinator = agentCoordinator; this.agentSource = agentSource;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -254,12 +255,31 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
                     break;
                 }
+                case "byok.agents.delegate":
+                {
+                    Require(payload, new[] { "name", "task", "mode" });
+                    if (RequiredString(payload, "mode", 8) != "Agent") throw new ProviderException("mode_denied");
+                    var name = RequiredString(payload, "name", AgentRegistry.MaxNameLength);
+                    var task = RequiredString(payload, "task", DelegationCoordinator.MaxTaskChars);
+                    if (agentRegistry is null || agentCoordinator is null) throw new ProviderException("agent_unavailable");
+                    await RefreshAgentsAsync(cancellationToken).ConfigureAwait(false);
+                    var delegationResult = await agentCoordinator.DelegateAsync(name, task, ChatMode.Agent, 0, cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new
+                    {
+                        name = delegationResult.AgentName, success = delegationResult.Success, text = delegationResult.Text, generatedAtUtc = delegationResult.GeneratedAt
+                    }).ConfigureAwait(false);
+                    break;
+                }
                 case "byok.agents.list":
                 {
                     Require(payload, Array.Empty<string>());
-                    var agents = agentRegistry is null ? Array.Empty<object>() : agentRegistry.List()
-                        .Select(agent => (object)new { name = agent.Name, scope = agent.Scope.ToString() }).ToArray();
-                    await Reply(send, id, type + ".result", new { agents }).ConfigureAwait(false);
+                    var agentSnapshot = await RefreshAgentsAsync(cancellationToken).ConfigureAwait(false);
+                    var agents = agentSnapshot.Agents.Select(agent => (object)new
+                    {
+                        name = agent.Name, description = agent.Description, source = agent.Source, scope = agent.Scope.ToString()
+                    }).ToArray();
+                    var diagnostics = agentSnapshot.Diagnostics.Select(item => new { location = item.Location, code = item.Code, detail = item.Detail }).ToArray();
+                    await Reply(send, id, type + ".result", new { agents, diagnostics }).ConfigureAwait(false);
                     break;
                 }
                 case "byok.theme.get":
@@ -511,6 +531,8 @@ public sealed class ByokSession : IDisposable
                         capturedTools = new SkillToolExecutor(capturedTools, availableSkills);
                         skillCatalog = SkillCatalog.PromptSection(availableSkills);
                     }
+                    if (capturedTools is not null && mode == ChatMode.Agent && agentRegistry is not null && agentCoordinator is not null)
+                        await RefreshAgentsAsync(cancellationToken).ConfigureAwait(false);
                     if (capturedTools is not null && mode == ChatMode.Agent && agentRegistry is not null && agentCoordinator is not null && agentRegistry.Count > 0)
                         capturedTools = new AgentToolExecutor(capturedTools, agentRegistry, agentCoordinator);
                     var toolSpecs = capturedTools is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(mode, capturedTools);
@@ -698,6 +720,15 @@ public sealed class ByokSession : IDisposable
             activated.Add(skill);
         }
         return activated;
+    }
+
+    private async Task<AgentSnapshot> RefreshAgentsAsync(CancellationToken cancellationToken)
+    {
+        if (agentSource is null) return AgentSnapshot.Empty;
+        var snapshot = await agentSource.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+        if (agentRegistry is not null)
+            agentRegistry.Replace(snapshot.Agents.Select(agent => (AgentBase)new MarkdownAgent(agent)));
+        return snapshot;
     }
 
     private static object ThemeView(ThemePreset theme) => new

@@ -91,7 +91,7 @@ public sealed class AgentToolTests
         using var client = new HttpClient(new StubHandler());
         using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
             new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-rpc-" + Guid.NewGuid().ToString("N"), "providers.json")),
-            agentRegistry: registry, agentCoordinator: coordinator);
+            agentRegistry: registry, agentCoordinator: coordinator, agentSource: new FakeSource());
         JsonElement? reply = null;
         await session.HandleAsync("https://lumen.local/index.html", JsonSerializer.Serialize(new
         {
@@ -114,6 +114,44 @@ public sealed class AgentToolTests
         public Task<string?> ReadAsync(string id, CancellationToken token) => Task.FromResult<string?>(null);
         public Task WriteAsync(string id, string key, CancellationToken token) => Task.CompletedTask;
         public Task DeleteAsync(string id, CancellationToken token) => Task.CompletedTask;
+    }
+
+    private sealed class FakeSource : IAgentSource
+    {
+        public Task<AgentSnapshot> DiscoverAsync(CancellationToken token) => Task.FromResult(new AgentSnapshot(
+            new[] { new AgentDefinition("helper", "Help", "Instructions.", ".lumen/agents", AgentScope.Project, "C:/agents/helper") },
+            Array.Empty<AgentDiagnostic>()));
+    }
+
+    [Fact]
+    public async Task DelegateRpcRequiresAgentModeAndReturnsPlainText()
+    {
+        using var registry = new AgentRegistry();
+        using var coordinator = new DelegationCoordinator(registry);
+        using var client = new HttpClient(new StubHandler());
+        using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
+            new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-delegate-" + Guid.NewGuid().ToString("N"), "providers.json")),
+            agentRegistry: registry, agentCoordinator: coordinator, agentSource: new FakeSource());
+        async Task<JsonElement> Send(string type, object payload)
+        {
+            JsonElement? reply = null;
+            await session.HandleAsync("https://lumen.local/index.html", JsonSerializer.Serialize(new
+            { version = 1, id = Guid.NewGuid().ToString("D"), type, payload }), message =>
+            {
+                using var parsed = JsonDocument.Parse(message);
+                reply = parsed.RootElement.Clone();
+                return Task.CompletedTask;
+            }, CancellationToken.None);
+            return reply!.Value;
+        }
+        var denied = await Send("byok.agents.delegate", new { name = "helper", task = "work", mode = "Plan" });
+        Assert.Equal("error", denied.GetProperty("type").GetString());
+        Assert.Equal("mode_denied", denied.GetProperty("payload").GetProperty("code").GetString());
+        var ok = await Send("byok.agents.delegate", new { name = "helper", task = "work", mode = "Agent" });
+        Assert.Equal("byok.agents.delegate.result", ok.GetProperty("type").GetString());
+        var payload = ok.GetProperty("payload");
+        Assert.True(payload.GetProperty("success").GetBoolean());
+        Assert.Equal("Instructions.", payload.GetProperty("text").GetString());
     }
 
     private sealed class StubHandler : HttpMessageHandler

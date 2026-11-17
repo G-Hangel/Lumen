@@ -1009,3 +1009,21 @@ suíte .NET com `WindowsApps` fora do PATH (1.646/1.646; 61 testes com filtro
 temporário para `byok.agents.list`: resposta `byok.agents.list.result` com
 lista vazia e 0 exceções. A lista é vazia porque a host ainda não registra
 agentes; ferramenta e UI chegam na 9c.
+
+### Fatia 9c — descoberta e painel de agentes (2026-11-17)
+
+```bash
+dotnet build Lumen.sln -c Release --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter FullyQualifiedName~Agent --nologo
+npm run check:ui
+npm run check:package
+```
+
+Na Exp usei
+`context-experimental.ps1 -Action Prepare` e criei
+`<root>/.lumen/agents/review-helper/AGENT.md` com frontmatter `name`,
+`description` e instruções. Depois de abrir o painel Agentes, o verificador CDP
+temporário confirmou listagem, seleção, delegação no modo Agent e texto
+devolvido; sem exceções JS. Resultado: 83/83 testes de agentes, 1.649/1.649
+.NET, 228/228 UI e 2/2 pacote. O VSIX foi reinstalado após o build porque o
+pacote anterior ainda continha o `index.html` sem o painel.

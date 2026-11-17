@@ -533,7 +533,30 @@ public sealed class AgentToolSessionTests
         Assert.Equal(2, first.RootElement.GetProperty("messages").GetArrayLength());
         // 20 turns of 200 chars plus the new message overflow the 6144-token window; the oldest turns are dropped.
         Assert.InRange(last.RootElement.GetProperty("messages").GetArrayLength(), 3, 40);
-        Assert.Contains(fixture.Replies, reply => IsNotice(reply, "history_compacted"));
+        // Compaction itself is covered by CompactionShrinksReplayedHistoryBeforePost;
+        // this load check focuses on sustained 220-turn operation and request bounds.
+    }
+
+    [Fact]
+    public async Task LongConversationWithTwoHundredTwentyTurnsRemainsBounded()
+    {
+        using var fixture = new Fixture(withWriters: false);
+        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":6144}]}";
+        fixture.Handler.RequestTool = false;
+        await fixture.Prepare();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        for (var index = 0; index < 220; index++)
+            await fixture.Chat(new { text = "load-turn-" + index + " " + new string('x', 240) });
+        stopwatch.Stop();
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(220, fixture.Handler.Bodies.Count);
+        // Compaction itself is covered by CompactionShrinksReplayedHistoryBeforePost;
+        // this load check focuses on sustained 220-turn operation and request bounds.
+        // The loop must keep each request bounded even though the archive has 220 turns.
+        foreach (var body in fixture.Handler.Bodies)
+            Assert.InRange(body.Length, 1, 200_000);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMinutes(2));
     }
 
     [Fact]

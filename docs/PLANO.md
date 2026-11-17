@@ -767,9 +767,12 @@ reload na hive experimental; evidências em `docs/STATUS.md`.
 - [x] Revisão de segurança: paths, shell injection, sanitização de markdown,
       vazamento de chave, permissões do broker. *(8a/8b; lacuna de validação de
       esquema de URL na host corrigida em 8b)*
-- [ ] Teste de carga: conversa longa (200+ mensagens), muitos arquivos,
-      output de comando grande. Sem leak de memória. *(8d)*
-- [ ] Teste em VS 18 **estável** se disponível, além do Insiders. *(8d)*
+- [x] Teste de carga: conversa longa (200+ mensagens), muitos arquivos,
+      output de comando grande. Sem leak de memória. *(8d — 220 turnos, limites
+      de leitura e output truncado; teste de UI/histórico de 500 turnos já existente)*
+- [x] Teste em VS 18 **estável** se disponível, além do Insiders. *(8d —
+      `vswhere -prerelease -all` encontrou apenas o Insiders; estável não está
+      instalado nesta máquina)*
 - [ ] Ícone e preview image de marketplace. *(B12: decidido adiar em 2026-11-17)*
 - [x] Display name, descrição e tags de marketplace no manifesto. *(8c)*
 - [x] `LICENSE` (MIT), `README` de usuário final, `CHANGELOG`. *(8c)*

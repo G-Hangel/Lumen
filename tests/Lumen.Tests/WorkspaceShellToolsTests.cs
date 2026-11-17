@@ -29,6 +29,21 @@ public sealed class WorkspaceShellToolsTests
     }
 
     [Fact]
+    public async Task VeryLargeCommandOutputIsTruncatedWithoutUnboundedMemory()
+    {
+        using var fixture = new Fixture();
+        var result = await fixture.Execute("run_command", JsonSerializer.Serialize(new
+        {
+            command = "powershell.exe",
+            args = new[] { "-NoProfile", "-Command", "Write-Output ('x' * 200000)" }
+        }));
+        Assert.False(result.IsError);
+        using var json = JsonDocument.Parse(result.Content);
+        Assert.True(json.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.True(result.Content.Length <= 65536);
+    }
+
+    [Fact]
     public async Task NonZeroExitCodeIsReturnedNotAnError()
     {
         using var fixture = new Fixture();

@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–7 e 9 concluídas; Fase 8 em andamento (8a–8c, fatia 8d pendente).** A aceitação consolidada de
+**Fases 0–7 e 9 concluídas; Fase 8 concluída (8a–8d; imagem pendente por decisão).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -39,7 +39,7 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
-| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a–8c; 8d pendente)** |
+| Fase 8 — Hardening, empacotamento e entrega | **concluído (8a–8d; imagem pendente por decisão)** |
 | Fase 9 — Subagentes e delegação | **concluído (9a–9c; AC parcialmente atendido — limitações registradas)** |
 
 ## Fase 9 — fechamento (2026-11-17)
@@ -167,6 +167,15 @@ próprias; a política de edição continua exclusivamente no agente principal.
   normalizado: painel Aparência leu `byok.log.get` (`Error`), botão “Abrir log”
   habilitado, 0 exceções JS; `-Action Verify` passou. Nenhum arquivo de nível
   de log foi criado na máquina (somente leitura).
+
+## Fase 8d — carga e compatibilidade de ambiente (2026-11-17)
+
+- Teste de carga offline `AgentToolSessionTests.LongConversationWithTwoHundredTwentyTurnsRemainsBounded`: 220 turnos, requests individuais limitados a 200 KB, compactação existente preservada por teste dedicado e execução em menos de dois minutos.
+- Teste de muitos arquivos e limites de leitura já coberto por `WorkspaceReadToolsTests.ListingFindingAndLiteralSearchAreBounded`: listagem/busca bounded, 1.024 entradas visitadas, 4 MiB de scan e output bounded; arquivos binários e oversized são rejeitados.
+- `WorkspaceShellToolsTests.VeryLargeCommandOutputIsTruncatedWithoutUnboundedMemory`: saída sintética de 200.000 caracteres truncada com `truncated=true` e payload abaixo de 65.536 caracteres.
+- Verificação de UI/histórico real já cobre arquivo de histórico com 500 turnos, virtualização, páginas, alturas variáveis e layout negativo; não duplica dados sintéticos nem usa APIs pagas.
+- `vswhere -prerelease -all` retornou somente `25e762c6` / Visual Studio Community 2026 Insiders. Não há VS 18 estável instalado; essa limitação foi registrada honestamente e não houve instalação alteradora.
+- Build limpo: 0 erros/0 avisos; suíte .NET **1.661/1.661**, UI **230/230**, pacote **3/3**. `git status` limpo. O único item restante da Fase 8 é B12, ícone/preview image, adiado explicitamente pelo usuário.
 
 ## Fase 8b — revisão de segurança (2026-11-16)
 

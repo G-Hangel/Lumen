@@ -1069,3 +1069,23 @@ Na Exp, abri o painel Aparência e confirmei `byok.log.get` → `Error` com o bo
 “Abrir log” habilitado e 0 exceções JS; não gravei nível nem abri o Notepad
 para não alterar o ambiente do usuário. Verificador temporário:
 `%TEMP%\opencode\verify-diagnostics-8c.mjs`.
+
+### Fatia 8d — carga e compatibilidade (2026-11-17)
+
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:quiet
+$env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'WindowsApps' }) -join ';'
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo
+npm run check:ui
+npm run check:package
+```
+
+Controles de carga: 220 turnos de conversa com requests bounded e compactação
+já existente; leitura de muitos arquivos/scan 4 MiB/1.024 entradas; comando com
+200.000 caracteres de stdout truncado em menos de 65.536 caracteres; histórico
+WebView de 500 turnos e virtualização já cobertos por `verify-history-webview`.
+Resultado final: 1.661/1.661 .NET, 230/230 UI, 3/3 pacote, build 0/0.
+`vswhere -prerelease -all` encontrou apenas o Insiders `25e762c6`; nenhum VS 18
+estável está instalado, então o teste estável foi registrado como indisponível,
+sem alterar o ambiente.

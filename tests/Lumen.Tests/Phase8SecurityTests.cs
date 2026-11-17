@@ -67,6 +67,45 @@ public sealed class Phase8SecurityTests : IDisposable
         Assert.False(File.Exists(Path.Combine(root, "providers.json")), "No settings file may be created by read-only onboarding RPCs.");
     }
 
+    [Theory]
+    [InlineData("file:///C:/Windows/win.ini")]
+    [InlineData("ftp://provider.test/v1/")]
+    [InlineData("https://user:pass@provider.test/v1/")]
+    [InlineData("https://provider.test/v1/?key=x")]
+    [InlineData("https://provider.test/v1/#x")]
+    [InlineData("https://provider.test/v1/ with space")]
+    public async Task ConfigureRejectsUnsafeBaseUrlsBeforeAnyNetworkCall(string baseUrl)
+    {
+        var handler = new CountingHandler();
+        using var client = new HttpClient(handler);
+        using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
+            new Phase8Credentials(), new SettingsStore(Path.Combine(root, "providers.json")));
+        string? reply = null;
+        await session.HandleAsync("https://lumen.local/index.html", Request("byok.configure", new
+        {
+            id = Guid.NewGuid().ToString("D"), providerId = "fixture", kind = "OpenAI",
+            baseUrl, key = "synthetic-key-that-must-not-leak"
+        }), json => { reply = json; return Task.CompletedTask; }, CancellationToken.None);
+        Assert.Equal(0, handler.Calls);
+        Assert.NotNull(reply);
+        using var parsed = JsonDocument.Parse(reply!);
+        Assert.Equal("invalid_url", parsed.RootElement.GetProperty("payload").GetProperty("code").GetString());
+        Assert.DoesNotContain("synthetic-key-that-must-not-leak", reply!);
+    }
+
+    [Fact]
+    public async Task TamperedSettingsWithUnsafeBaseUrlAreRejectedOnRead()
+    {
+        var path = Path.Combine(root, "providers.json");
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new[]
+        {
+            new { id = Guid.NewGuid().ToString("D"), providerId = "fixture", kind = "OpenAI", baseUrl = "file:///C:/Windows/win.ini", selectedModelId = (string?)null, deploymentNames = Array.Empty<string>() }
+        }));
+        // ProviderConfiguration itself refuses an unsafe base URL, so a tampered settings file
+        // cannot become a usable provider configuration.
+        await Assert.ThrowsAsync<ArgumentException>(() => new SettingsStore(path).ReadAsync(CancellationToken.None));
+    }
+
     private sealed class Phase8Credentials : ICredentialStore
     {
         public int Reads;

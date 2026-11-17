@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–7 concluídas; Fase 8 em andamento (fatia 8a concluída).** A aceitação consolidada de
+**Fases 0–7 concluídas; Fase 8 em andamento (fatias 8a e 8b concluídas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -39,8 +39,32 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
-| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a concluída)** |
+| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a e 8b concluídas)** |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
+
+## Fase 8b — revisão de segurança (2026-11-16)
+
+- Lacuna encontrada e corrigida: `byok.configure` aceitava na host qualquer
+  esquema de URL (a UI já rejeitava). `HttpTransport.ValidateBaseUrl` agora
+  espelha `normalizeBaseUrl` do bridge: HTTPS em qualquer host, HTTP só em
+  loopback, sem usuário/senha, query, fragmento, espaços ou barras invertidas.
+  O erro é `invalid_url`, o mesmo contrato da UI, e nenhum pedido de rede é
+  feito. `ProviderConfiguration` já validava o valor lido de settings, o que
+  também foi confirmado por teste com arquivo adulterado.
+- `Phase8SecurityTests` passou de 1 para 8 testes: casos negativos de
+  `file:`, `ftp:`, credenciais na URL, query/fragmento e espaço, todos com
+  **0 chamadas HTTP** e sem vazar a chave sintética na resposta.
+- Demais vetores revisitados e ainda cobertos pelos controles existentes:
+  `WorkspaceGuard` canonicaliza, rejeita `../`, dispositivos, aliases, junções
+  e valida o handle aberto (`GetFinalPathNameByHandle`); shell usa lista de
+  argumentos escapada, blocklist e aprovação; markdown usa `html:false`,
+  allowlist de links, imagens desligadas e CSP sem `eval`/recursos externos;
+  chaves ficam no Credential Manager/DPAPI e são redigidas em erros; a ponte
+  valida envelope, origem, correlação e aprovações.
+- Build Release 0 erros/0 avisos; suíte UI 226/226; `check:package` 2/2;
+  suíte .NET 1.626/1.626 com `WindowsApps` removido do PATH do processo.
+  Exp com o VSIX final: startup com 13 requisições apenas em `lumen.local`,
+  0 externas, 0 POST, 0 exceções; `-Action Verify` confirmou o pacote.
 
 ## Fase 8a — pacote limpo e silêncio de rede (2026-11-16)
 

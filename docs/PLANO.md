@@ -764,9 +764,9 @@ reload na hive experimental; evidências em `docs/STATUS.md`.
 
 ### Tarefas
 
-- [ ] Revisão de segurança: paths, shell injection, sanitização de markdown,
-      vazamento de chave, permissões do broker. *(8a cobriu pacote e silêncio de
-      rede; os demais vetores seguem em 8b)*
+- [x] Revisão de segurança: paths, shell injection, sanitização de markdown,
+      vazamento de chave, permissões do broker. *(8a/8b; lacuna de validação de
+      esquema de URL na host corrigida em 8b)*
 - [ ] Teste de carga: conversa longa (200+ mensagens), muitos arquivos,
       output de comando grande. Sem leak de memória.
 - [ ] Teste em VS 18 **estável** se disponível, além do Insiders.

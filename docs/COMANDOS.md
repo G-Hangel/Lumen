@@ -975,3 +975,13 @@ vazia é coberto por `Phase8SecurityTests`, cujo transporte lança se chamado.
 Resultado: 1/1 teste de fase, 226/226 UI, 2/2 pacote e 1.619/1.619 .NET (com
 `WindowsApps` fora do PATH do processo). Se `-Action Verify` acusar DLL
 desatualizado após o build final, reinstale o VSIX antes de verificar.
+
+### Fatia 8b — revisão de segurança (2026-11-16)
+
+Repeti build, `npm run check:ui`, `npm run check:package`, a suíte .NET com
+`WindowsApps` fora do PATH e o ciclo Exp (install → open →
+`node scripts/verify-offline-startup.mjs` → close → Verify). Resultado: 8/8
+testes de fase, 226/226 UI, 2/2 pacote, 1.626/1.626 .NET; no WebView, 13
+requisições em `lumen.local`, 0 externas/POST/exceções. O teste de URL
+adulterada em `providers.json` usa `ArgumentException` porque a validação já
+existe no construtor de `ProviderConfiguration`.

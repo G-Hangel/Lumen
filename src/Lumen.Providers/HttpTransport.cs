@@ -56,6 +56,23 @@ public sealed class HttpTransport
     }
 
     public static bool SameOrigin(Uri left, Uri right) => left.Scheme == right.Scheme && left.Host == right.Host && left.Port == right.Port && string.IsNullOrEmpty(right.UserInfo);
+
+    // Mirrors wwwroot/byok-bridge.mjs normalizeBaseUrl: HTTPS anywhere, plain HTTP only on loopback.
+    // The host enforces this too, so a forged bridge message or a tampered settings file cannot
+    // make the provider factory connect to a non-HTTP scheme or smuggle credentials in the URL.
+    public static void ValidateBaseUrl(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 2048 || value.IndexOfAny(new[] { ' ', '\t', '\r', '\n', '\\' }) >= 0)
+            throw new ProviderException("invalid_url");
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) throw new ProviderException("invalid_url");
+        var host = uri.Host.ToLowerInvariant();
+        var loopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]" ||
+            (IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address));
+        if ((uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && loopback)) ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) ||
+            value.IndexOfAny(new[] { '?', '#' }) >= 0)
+            throw new ProviderException("invalid_url");
+    }
     public static string ErrorCode(HttpStatusCode status) => (int)status switch
     {
         401 => "invalid_key", 403 => "permission_denied", 404 => "invalid_url", 429 => "rate_limited",

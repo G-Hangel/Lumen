@@ -349,7 +349,9 @@ public sealed class ByokSession : IDisposable
                     var kindText = RequiredString(payload, "kind", 32);
                     if (!Enum.TryParse<ProviderKind>(kindText, out var kind) || !Enum.IsDefined(typeof(ProviderKind), kind)) throw new ProviderException("invalid_message");
                     var names = JsonWire.Array(JsonWire.Get(payload, "deploymentNames")).Select(value => value.GetString()!).ToArray();
-                    var configuration = new ProviderConfiguration(RequiredString(payload, "id", 36), RequiredString(payload, "providerId", 64), kind, RequiredString(payload, "baseUrl", 2048), null, names);
+                    var baseUrl = RequiredString(payload, "baseUrl", 2048);
+                    HttpTransport.ValidateBaseUrl(baseUrl);
+                    var configuration = new ProviderConfiguration(RequiredString(payload, "id", 36), RequiredString(payload, "providerId", 64), kind, baseUrl, null, names);
                     var secret = RequiredString(payload, "key", 4096, true);
                     var existing = configurations.FirstOrDefault(value => value.Id == configuration.Id);
                     if (existing is not null && (existing.Kind != configuration.Kind || existing.ProviderId != configuration.ProviderId || existing.BaseUrl != configuration.BaseUrl))

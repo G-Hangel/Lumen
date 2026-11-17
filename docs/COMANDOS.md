@@ -985,3 +985,18 @@ testes de fase, 226/226 UI, 2/2 pacote, 1.626/1.626 .NET; no WebView, 13
 requisições em `lumen.local`, 0 externas/POST/exceções. O teste de URL
 adulterada em `providers.json` usa `ArgumentException` porque a validação já
 existe no construtor de `ProviderConfiguration`.
+
+### Fatia 9a — núcleo de subagentes (2026-11-16)
+
+```bash
+dotnet build Lumen.sln -c Release --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter FullyQualifiedName~Agent --nologo
+npm run check:ui
+npm run check:package
+```
+
+O código vive em `src/Lumen.Core/Agents/` (compilado no `Lumen.Core.dll` que
+segue no VSIX). Resultado: 73/73 testes com filtro `Agent`, 1.639/1.639 na
+suíte completa, 226/226 UI e 2/2 pacote. Na Exp, instalei o VSIX final, rodei
+`node scripts/verify-offline-startup.mjs` (13 requisições apenas em
+`lumen.local`) e fechei com `-Action Verify`.

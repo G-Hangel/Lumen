@@ -12,6 +12,7 @@
     <ProjectReference Include="../../src/Lumen.Core/Lumen.Core.csproj" />
     <ProjectReference Include="../../src/Lumen.Providers/Lumen.Providers.csproj" />
     <ProjectReference Include="../../src/Lumen.Tools/Lumen.Tools.csproj" />
+
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../src/Lumen.Vsix/WindowsCredentialStore.cs" Link="WindowsCredentialStore.cs" />

@@ -40,7 +40,28 @@ houve chamadas pagas.
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
-| Fase 9 — Subagentes e delegação | planejada; não iniciada |
+| Fase 9 — Subagentes e delegação | **em andamento (9a concluída)** |
+
+## Fase 9a — núcleo de subagentes e delegação (2026-11-16)
+
+- `Lumen.Core.Agents`: `AgentBase` (execução, resultado padronizado, descarte),
+  `AgentRegistry` (nomes `^[a-z0-9]+(-[a-z0-9]+)*$`, até 64 caracteres, sem
+  duplicatas) e `DelegationCoordinator` (modo Agent obrigatório, profundidade
+  máxima 2, tarefa até 4.096 caracteres, 4 delegações concorrentes, resultado
+  até 65.536 caracteres).
+- Controles negativos: nomes inválidos, duplicata, agente desconhecido,
+  tarefa vazia/controlada/gigante, delegação em Plan/Ask, profundidade
+  excedida, exceção do agente (sem vazar detalhe) e resultado nulo/trocar
+  de nome/estourado — todos rejeitados com códigos estáveis
+  (`invalid_agent_name`, `duplicate_agent`, `mode_denied`, `depth_exceeded`…).
+- O registro descarta todos os agentes ao ser descartado; o coordenador
+  independente libera seus semáforos sem destruir o registro.
+- Build Release 0 erros/0 avisos; suíte .NET 1.639/1.639 (73 testes com filtro
+  `Agent`), UI 226/226 e pacote 2/2. Exp com o VSIX final: startup com 13
+  requisições em `lumen.local`, 0 externas/POST/exceções; `-Action Verify`
+  confirmou o pacote. Nenhuma chamada paga.
+- Escopo ainda aberto para 9b: integração da delegação ao loop de chat,
+  descoberta de agentes por pasta e exposição de progresso/resultados na UI.
 
 ## Fase 8b — revisão de segurança (2026-11-16)
 

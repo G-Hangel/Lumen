@@ -1027,3 +1027,23 @@ temporário confirmou listagem, seleção, delegação no modo Agent e texto
 devolvido; sem exceções JS. Resultado: 83/83 testes de agentes, 1.649/1.649
 .NET, 228/228 UI e 2/2 pacote. O VSIX foi reinstalado após o build porque o
 pacote anterior ainda continha o `index.html` sem o painel.
+
+### Fechamento da Fase 9 — delegação ponta a ponta (2026-11-17)
+
+```bash
+node scripts/verify-agents-webview.mjs verify
+node scripts/verify-agents-webview.mjs cleanup
+```
+
+Pré-requisito: Exp aberta com `context-experimental.ps1 -Action Prepare`.
+O verificador cria o agente fixture, configura um provedor loopback, força o
+modelo simulado a chamar `delegate_agent` e confere que o corpo do agente
+chega ao provider como resultado de ferramenta. Também verifica `mode_denied`
+em Plan e executa o cleanup de provider/credencial/conversas/arquivos. Na
+execução final: 2 requisições ao loopback, 0 exceções JS, 0 chamadas pagas.
+O script recarrega o WebView no início para limpar estado de uma execução
+interrompida; as RPCs de cleanup não esperam a UI ficar ociosa.
+
+Antes de rodar o verificador, reconstrua o VSIX: a primeira execução revelou
+que `ToolChatLoop` rejeitava argumentos de `delegate_agent` (`invalid_arguments`);
+a correção e o teste de sessão estão no commit do fechamento.

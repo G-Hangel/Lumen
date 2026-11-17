@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Lumen.Core.Agents;
 using Lumen.Core.Domain;
 
 namespace Lumen.Providers;
@@ -484,6 +485,7 @@ public sealed class ToolChatLoop
         if (call.Name == "run_command") return ValidCommandArguments(call.Arguments);
         if (call.Name == "run_build" || call.Name == "run_tests") return ValidTaskArguments(call.Arguments);
         if (call.Name == "load_skill") return ValidSkillArguments(call.Arguments);
+        if (call.Name == "delegate_agent") return ValidDelegationArguments(call.Arguments);
         if (call.Name == "get_errors" || call.Name == "get_output_logs" || call.Name == "detect_shells")
             return call.Arguments.ValueKind == JsonValueKind.Object && !call.Arguments.EnumerateObject().Any();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -522,6 +524,21 @@ public sealed class ToolChatLoop
             else if (field.Name != "path" || text.Length == 0 || text.Length > 1024 || text.Any(char.IsControl) || !ValidUnicodeText(text)) return false;
         }
         return name is not null && Regex.IsMatch(name, "^[a-z0-9]+(-[a-z0-9]+)*$", RegexOptions.CultureInvariant) && name.Length <= 64;
+    }
+
+    private static bool ValidDelegationArguments(JsonElement arguments)
+    {
+        if (arguments.ValueKind != JsonValueKind.Object || !UniqueProperties(arguments)) return false;
+        string? name = null, task = null;
+        foreach (var field in arguments.EnumerateObject())
+        {
+            if (field.Value.ValueKind != JsonValueKind.String) return false;
+            if (field.Name == "name") name = field.Value.GetString();
+            else if (field.Name == "task") task = field.Value.GetString();
+            else return false;
+        }
+        return name is not null && AgentRegistry.IsValidName(name)
+            && task is not null && task.Length > 0 && task.Length <= DelegationCoordinator.MaxTaskChars && ValidUnicodeText(task);
     }
 
     private static bool ValidTaskArguments(JsonElement arguments)

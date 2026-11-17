@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–8 concluídas.** A aceitação consolidada de
+**Fases 0–9 concluídas (Fase 9 com limitações registradas).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -40,7 +40,41 @@ houve chamadas pagas.
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
-| Fase 9 — Subagentes e delegação | **concluído (9a–9c; verificação consolidada pendente)** |
+| Fase 9 — Subagentes e delegação | **concluído (9a–9c; AC parcialmente atendido — limitações registradas)** |
+
+## Fase 9 — fechamento (2026-11-17)
+
+Verificação consolidada na Exp (`25e762c6`) com `scripts/verify-agents-webview.mjs`
+e provedor loopback próprio, **0 chamadas pagas**: agente `review-helper`
+descoberto em `.lumen/agents/` sem reiniciar, listado no painel, `mode_denied`
+em Plan, e — no chat real — o modelo recebeu `delegate_agent` na lista de
+ferramentas, chamou a ferramenta e o corpo do agente voltou como resultado
+`tool` ao provedor; 0 exceções JS. Limpeza removeu provider, credencial,
+conversas e fixture. O verificador tem estágios `verify`/`cleanup` e sempre
+cria/remove seus próprios arquivos em `artifacts/agents-fixtures.json`.
+
+Durante a verificação foi encontrado e corrigido um bug real: `ToolChatLoop`
+rejeitava argumentos de qualquer ferramenta não conhecida, então o
+`delegate_agent` do modelo chegava ao host como `invalid_arguments`. Agora
+há validação explícita de `{name, task}` e um teste de sessão que prova o
+fluxo ponta a ponta. Controle negativo adicional: uma chave sintética dentro do
+resultado do subagente é barrada por `RejectSecret` antes do provider e gera
+envelope `error`, sem vazamento no corpo enviado.
+
+Build Release 0 erros/0 avisos; suíte .NET 1.651/1.651 (85 testes com filtro
+`Agent`), UI 228/228, pacote 2/2. Uma execução da suíte falhou de forma
+intermitente em `ShellExitAlsoKillsChildHoldingPipesOpen` (acesso concorrente a
+`child.pid`); a repetição completa passou. `docs/PLANO.md`, que havia sido
+acidentalmente truncado para uma seção de compressão de contexto, foi restaurado
+do histórico e anotado com o escopo real da Fase 9.
+
+**Limitações registradas (escopo original não coberto):** não há chamadas de
+modelo por subagente, perfis de pesquisa/planejamento/implementação, seleção de
+modelo, orçamento/custo por delegação, execução paralela em lote com histórico e
+fontes próprias, cancelamento individual, limites configuráveis ou delegação de
+escrita com diff/undo e resolução de conflitos. Subagentes são instruções locais
+em `AGENT.md`, executadas em processo, sem ferramentas e sem aprovações
+próprias; a política de edição continua exclusivamente no agente principal.
 
 ## Fase 9c — descoberta por pasta e painel de agentes (2026-11-17)
 

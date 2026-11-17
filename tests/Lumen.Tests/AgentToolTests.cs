@@ -111,9 +111,10 @@ public sealed class AgentToolTests
 
     private sealed class Credentials : ICredentialStore
     {
-        public Task<string?> ReadAsync(string id, CancellationToken token) => Task.FromResult<string?>(null);
-        public Task WriteAsync(string id, string key, CancellationToken token) => Task.CompletedTask;
-        public Task DeleteAsync(string id, CancellationToken token) => Task.CompletedTask;
+        private readonly Dictionary<string, string> values = new();
+        public Task<string?> ReadAsync(string id, CancellationToken token) => Task.FromResult(values.TryGetValue(id, out var value) ? value : null);
+        public Task WriteAsync(string id, string key, CancellationToken token) { values[id] = key; return Task.CompletedTask; }
+        public Task DeleteAsync(string id, CancellationToken token) { values.Remove(id); return Task.CompletedTask; }
     }
 
     private sealed class FakeSource : IAgentSource
@@ -152,6 +153,86 @@ public sealed class AgentToolTests
         var payload = ok.GetProperty("payload");
         Assert.True(payload.GetProperty("success").GetBoolean());
         Assert.Equal("Instructions.", payload.GetProperty("text").GetString());
+    }
+
+    private sealed class ToolCallHandler : HttpMessageHandler
+    {
+        public readonly List<string> Bodies = new();
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.Method == HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":32768}]}")
+            };
+            Bodies.Add(await request.Content!.ReadAsStringAsync(token));
+            var data = Bodies.Count == 1
+                ? JsonSerializer.Serialize(new { choices = new[] { new { index = 0, delta = new { tool_calls = new[] { new { index = 0, id = "call-agent", function = new { name = AgentToolCatalog.ToolName, arguments = "{\"name\":\"helper\",\"task\":\"check this\"}" } } } }, finish_reason = "tool_calls" } } })
+                : "{\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}";
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("data: " + data + "\n\ndata: [DONE]\n\n") };
+        }
+    }
+
+    [Fact]
+    public async Task ModelToolCallDelegatesAndReturnsTheAgentBody()
+    {
+        using var registry = new AgentRegistry();
+        using var coordinator = new DelegationCoordinator(registry);
+        using var agent = new EchoAgent();
+        registry.Register(agent);
+        var handler = new ToolCallHandler();
+        using var client = new HttpClient(handler);
+        var id = Guid.NewGuid().ToString("D");
+        using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
+            new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-chat-" + Guid.NewGuid().ToString("N"), "providers.json")),
+            readTools: new FakeRead(), agentRegistry: registry, agentCoordinator: coordinator);
+        async Task Send(string type, object payload) => await session.HandleAsync("https://lumen.local/index.html",
+            JsonSerializer.Serialize(new { version = 1, id = Guid.NewGuid().ToString("D"), type, payload }), _ => Task.CompletedTask, CancellationToken.None);
+        await Send("byok.configure", new { id, providerId = "fixture", kind = "OpenAI", baseUrl = "https://provider.test/v1/", key = "synthetic" });
+        await Send("byok.select", new { configurationId = id, modelId = "fixture" });
+        await Send("byok.override", new { configurationId = id, modelId = "fixture", vision = false, tools = true, reasoning = false });
+        await Send("byok.chat", new { configurationId = id, text = "delegate", effort = "Off", mode = "Agent", readTools = true });
+        Assert.Equal(2, handler.Bodies.Count);
+        Assert.Contains("\"name\":\"delegate_agent\"", handler.Bodies[0]);
+        Assert.Contains("done:check this", handler.Bodies[1]);
+    }
+
+    private sealed class SecretAgent : AgentBase
+    {
+        private readonly string secret;
+        public SecretAgent(string secret) : base("helper", AgentScope.Project) { this.secret = secret; }
+        public override Task<AgentResult> ExecuteAsync(string task, CancellationToken token = default) =>
+            Task.FromResult(CreateResult("agent text with " + secret));
+    }
+
+    [Fact]
+    public async Task SecretInsideAnAgentResultIsRejectedBeforeTheProvider()
+    {
+        const string key = "synthetic-agent-secret-123456";
+        using var registry = new AgentRegistry();
+        using var coordinator = new DelegationCoordinator(registry);
+        using var agent = new SecretAgent(key);
+        registry.Register(agent);
+        var handler = new ToolCallHandler();
+        using var client = new HttpClient(handler);
+        var id = Guid.NewGuid().ToString("D");
+        using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
+            new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-secret-" + Guid.NewGuid().ToString("N"), "providers.json")),
+            readTools: new FakeRead(), agentRegistry: registry, agentCoordinator: coordinator);
+        var replies = new List<JsonElement>();
+        async Task Send(string type, object payload) => await session.HandleAsync("https://lumen.local/index.html",
+            JsonSerializer.Serialize(new { version = 1, id = Guid.NewGuid().ToString("D"), type, payload }), message =>
+            {
+                using var parsed = JsonDocument.Parse(message);
+                replies.Add(parsed.RootElement.Clone());
+                return Task.CompletedTask;
+            }, CancellationToken.None);
+        await Send("byok.configure", new { id, providerId = "fixture", kind = "OpenAI", baseUrl = "https://provider.test/v1/", key });
+        await Send("byok.select", new { configurationId = id, modelId = "fixture" });
+        await Send("byok.override", new { configurationId = id, modelId = "fixture", vision = false, tools = true, reasoning = false });
+        await Send("byok.chat", new { configurationId = id, text = "delegate", effort = "Off", mode = "Agent", readTools = true });
+        Assert.Single(handler.Bodies);
+        Assert.DoesNotContain(key, string.Concat(handler.Bodies));
+        Assert.Contains(replies, reply => reply.GetProperty("type").GetString() == "error");
     }
 
     private sealed class StubHandler : HttpMessageHandler

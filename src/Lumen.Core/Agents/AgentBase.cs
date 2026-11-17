@@ -30,7 +30,7 @@ public abstract class AgentBase : IDisposable
     public abstract Task<AgentResult> ExecuteAsync(string taskDescription, CancellationToken cancellationToken = default);
 
     // Helper to package results consistently
-    protected AgentResult CreateResult(string resultText, bool success = true, 
+    protected AgentResult CreateResult(string resultText, bool success = true,
         Dictionary<string, object>? metadata = null)
     {
         return new AgentResult

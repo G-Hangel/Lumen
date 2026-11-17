@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–7 concluídas; Fase 8 em andamento (fatias 8a e 8b concluídas).** A aceitação consolidada de
+**Fases 0–8 concluídas.** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -39,7 +39,7 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
-| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a e 8b concluídas)** |
+| Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
 | Fase 9 — Subagentes e delegação | planejada; não iniciada |
 
 ## Fase 8b — revisão de segurança (2026-11-16)

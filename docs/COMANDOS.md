@@ -1047,3 +1047,25 @@ interrompida; as RPCs de cleanup não esperam a UI ficar ociosa.
 Antes de rodar o verificador, reconstrua o VSIX: a primeira execução revelou
 que `ToolChatLoop` rejeitava argumentos de `delegate_agent` (`invalid_arguments`);
 a correção e o teste de sessão estão no commit do fechamento.
+
+### Fatia 8c — entrega e diagnóstico (2026-11-17)
+
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:quiet
+(Get-FileHash src\Lumen.Vsix\bin\Release\net48\Lumen.Vsix.vsix -Algorithm SHA256).Hash
+npm run check:ui
+npm run check:package
+```
+
+Repita `clean`+`build`+hash: ambos os builds devem produzir
+`A4BFF307B83D11132EA39D4021549F4DCB0A2F52AD6BABDCFCD7C7C5A87E7AD1`.
+Sem a normalização, os hashes mudavam embora os 53 arquivos do ZIP fossem
+byte-idênticos; a diferença vinha dos timestamps e do `extensionDir` aleatório.
+O script `scripts/normalize-vsix.ps1` é chamado automaticamente pelo target
+`NormalizeVsixTimestamps` somente em Release.
+
+Na Exp, abri o painel Aparência e confirmei `byok.log.get` → `Error` com o botão
+“Abrir log” habilitado e 0 exceções JS; não gravei nível nem abri o Notepad
+para não alterar o ambiente do usuário. Verificador temporário:
+`%TEMP%\opencode\verify-diagnostics-8c.mjs`.

@@ -83,6 +83,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   let skillItems = [], skillDiagnostics = [], skillsLoaded = false, skillsLoading = false, skillRefreshRequested = false, suggestionIndex = 0;
   const selectedSkills = new Set();
   let agentItems = [], agentDiagnostics = [], agentsLoaded = false, agentsLoading = false, agentRefreshRequested = false;
+  let diagLevel = 'Error', diagLoaded = false, diagBusy = false;
   let readBusy = false, readStatusKey = 'readToolsIdle', readErrorCode = null;
   function renderReadStatus() {
     node('read-status').textContent = readErrorCode
@@ -747,6 +748,44 @@ export function startByok({ transport, connected = () => false, text, renderMark
     });
   }
 
+  function renderDiagnostics() {
+    node('diag-level').value = diagLevel;
+    node('diag-level').disabled = !diagLoaded || diagBusy;
+    node('diag-open').disabled = !diagLoaded || diagBusy;
+  }
+
+  async function loadDiagnostics() {
+    if (diagBusy || !online()) return;
+    diagBusy = true; renderDiagnostics();
+    try {
+      const result = await bridge.request('byok.log.get', {});
+      diagLevel = result.level; diagLoaded = true;
+      node('diag-status').textContent = '';
+    } catch (error) { node('diag-status').textContent = text(errorLabel(error.code)); }
+    finally { diagBusy = false; renderDiagnostics(); }
+  }
+
+  async function changeDiagnosticLevel() {
+    if (diagBusy || !diagLoaded) return;
+    const level = node('diag-level').value;
+    diagBusy = true; renderDiagnostics();
+    try {
+      const result = await bridge.request('byok.log.set', { level });
+      diagLevel = result.level; node('diag-status').textContent = text('diagSaved');
+    } catch (error) { node('diag-status').textContent = text(errorLabel(error.code)); }
+    finally { diagBusy = false; renderDiagnostics(); }
+  }
+
+  async function openDiagnosticLog() {
+    if (diagBusy || !diagLoaded) return;
+    diagBusy = true; renderDiagnostics();
+    try {
+      await bridge.request('byok.log.open', {});
+      node('diag-status').textContent = text('diagOpened');
+    } catch (error) { node('diag-status').textContent = text(errorLabel(error.code)); }
+    finally { diagBusy = false; renderDiagnostics(); }
+  }
+
   function applyCatalog(result) {
     models = result.models; selectedModelId = ''; clearProbeConsent(); clearToolConsent();
     // Public catalogs can succeed without verifying a key; errors with unknown validity must not be saved.
@@ -1175,6 +1214,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       needsCancel = false; remainingBudget = null; renderProbeBudget(); setStatus('byokDisconnected');
       skillItems = []; skillDiagnostics = []; skillsLoaded = false; skillRefreshRequested = false; selectedSkills.clear(); renderSkills();
       agentItems = []; agentDiagnostics = []; agentsLoaded = false; agentRefreshRequested = false; renderAgents();
+      diagLoaded = false; renderDiagnostics();
       writePending = null; writeRefreshRequested = false; clearWriteDiff(); renderWriteStatus();
     } else {
       setStatus('byokReady'); if (panel.open && !loaded && !busy) void listProviders();
@@ -1197,6 +1237,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('agents'), 'toggle', () => { if (node('agents').open && online() && !agentsLoaded) requestAgents(); });
   listen(node('agents-reload'), 'click', requestAgents);
   listen(node('agents-form'), 'submit', delegateAgent);
+  listen(node('diag-level'), 'change', () => void changeDiagnosticLevel());
+  listen(node('diag-open'), 'click', () => void openDiagnosticLog());
+  const themePanel = document.getElementById('theme-panel');
+  listen(themePanel, 'toggle', () => { if (themePanel.open && !diagLoaded && online()) void loadDiagnostics(); });
   listen(node('history'), 'toggle', () => { if (node('history').open && !historyLoaded) void listHistory(); });
   listen(node('history-search-form'), 'submit', event => { event.preventDefault(); void listHistory(); });
   listen(node('history-list'), 'change', () => { deleteTarget = ''; node('history-confirmation').hidden = true; void openHistory(); });
@@ -1351,7 +1395,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('write-refresh'), 'click', () => { if (writeAllowed()) requestWriteStatus(); });
   listen(node('write-cancel'), 'click', cancel);
   listen(node('cancel'), 'click', cancel);
-  renderAgents(); refreshLocale(); setConnected(connectedState);
+  renderAgents(); renderDiagnostics(); refreshLocale(); setConnected(connectedState);
   return {
     refreshLocale, setConnected, bridge,
     dispose() {

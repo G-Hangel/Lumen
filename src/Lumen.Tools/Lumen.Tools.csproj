@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Lumen.Core/Lumen.Core.csproj" />

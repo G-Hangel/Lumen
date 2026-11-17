@@ -114,6 +114,26 @@ public sealed class SettingsStore
         catch (ThemeValidationException exception) { throw new ProviderException(exception.Code); }
     }
 
+    public async Task<string> ReadLogLevelAsync(CancellationToken cancellationToken)
+    {
+        var logPath = Path.ChangeExtension(path, "log.json");
+        if (!File.Exists(logPath)) return "Error";
+        using var file = File.OpenRead(logPath);
+        if (file.Length > 4096) throw new ProviderException("invalid_configuration");
+        using var json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (json.RootElement.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
+        var level = JsonWire.String(json.RootElement, "level");
+        if (level is null || !DiagnosticLevels.IsValid(level) || json.RootElement.EnumerateObject().Count() != 1)
+            throw new ProviderException("invalid_configuration");
+        return level;
+    }
+
+    public Task WriteLogLevelAsync(string level, CancellationToken cancellationToken)
+    {
+        if (!DiagnosticLevels.IsValid(level)) throw new ProviderException("invalid_configuration");
+        return WriteJsonAsync(Path.ChangeExtension(path, "log.json"), JsonWire.Serialize(new { level }), cancellationToken);
+    }
+
     public Task ClearThemeAsync(CancellationToken cancellationToken)
     {
         var themePath = Path.ChangeExtension(path, "theme.json");

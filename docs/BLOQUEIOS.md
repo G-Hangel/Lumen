@@ -8,7 +8,13 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
-### B8 — Azure: inventory de deployments requer Entra/RBAC
+### B12 - Ícone e preview image do marketplace adiados
+
+Display name, descrição e tags já estão no manifesto, mas `Icon` e
+`PreviewImage` não foram criados. Decisão do usuário em 2026-11-17: adiar;
+não gerar imagem por IA nesta fatia. Não bloqueia build, testes ou instalação.
+
+### B8 - Azure: inventory de deployments requer Entra/RBAC
 
 A rota data-plane prevista não foi confirmada pela documentação oficial.
 `GET /openai/v1/models` valida a chave, mas lista ofertas, não nomes de deployments.
@@ -26,7 +32,8 @@ consomem espaço, mas o build limpo da Fase 0 passou.
 
 **Mitigação:** antes de build grande, conferir `df -h /c`. Se necessário, limpar
 `bin/`, `obj/` e o cache NuGet (`dotnet nuget locals all --clear`). Não apagar
-nada do usuário sem perguntar.
+nada do usuário sem perguntar. Em 2026-11-17, `Get-PSDrive C` mostrou
+~14,1 GB livres; os builds limpos da 8c passaram.
 
 ### B3 — Insiders expira em 2027-01-26
 
@@ -34,7 +41,10 @@ A instância de teste é prerelease com data de expiração. Depois disso o ambi
 de teste morre.
 
 **Mitigação:** manifesto com range `[18.0,)` (não `[18.12,)`), e testar em VS 18
-estável quando disponível. Não prender o projeto ao Insiders.
+estável quando disponível. Não prender o projeto ao Insiders. Em 2026-11-17,
+`vswhere -all -format json` retornou `[]` nesta sessão; a consulta validada
+anteriormente usa `-prerelease -all` e encontra o Insiders. Confirmar a presença
+do estável na fatia 8d.
 
 ---
 

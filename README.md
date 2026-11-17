@@ -4,9 +4,9 @@ Chat de IA para **Visual Studio Community 2026 (18.x)** com **BYOK** (bring your
 own key), modos **Agent / Ask / Plan**, ferramentas de arquivo e terminal,
 sistema de **Skills** e personalização visual.
 
-> **Status: planejamento concluído, implementação não iniciada.**
-> Este repositório contém o plano executável para o agente que vai construir o
-> projeto inteiro. Comece por [`AGENTS.md`](AGENTS.md).
+> **Status: fases 0–9 implementadas; endurecimento e entrega em andamento.**
+> O plano executável está em [`docs/PLANO.md`](docs/PLANO.md) e o estado real em
+> [`docs/STATUS.md`](docs/STATUS.md). Regras de execução: [`AGENTS.md`](AGENTS.md).
 
 ## Documentos
 
@@ -30,6 +30,28 @@ sistema de **Skills** e personalização visual.
 - **Skills** no formato `SKILL.md` (agentskills.io) — compatível com as skills
   que o VS 2026 e o Claude já leem.
 - **Personalização visual** com temas em CSS variables que seguem o tema do VS.
+
+## Instalação e primeiro uso
+
+1. **Instale o VSIX** de `src/Lumen.Vsix/bin/Release/net48/Lumen.Vsix.vsix`
+   (duplo clique, ou `VSIXInstaller.exe /rootSuffix:Exp /instanceIds:<id>` para a
+   instância experimental). Requer VS Community 2026 (18.x) amd64 e WebView2 Runtime.
+2. **Abra a janela** `Exibir → Lumen`.
+3. **Cole sua chave** no painel Provedores, escolha o tipo de provedor e a URL
+   base. A URL deve ser HTTPS; HTTP é aceito somente em `localhost`/loopback.
+   Nenhuma requisição é feita antes dessa configuração explícita.
+4. **Escolha o modelo** descoberto. As badges mostram visão, raciocínio e tools;
+   a origem de cada capacidade aparece no painel. Para Azure, informe os nomes
+   de deployments manualmente (limitação B8).
+5. **Converse**. Em `Ask` e `Plan` nada é escrito nem executado. Em `Agent`,
+   leitura é livre; criar/editar arquivos dentro da solução aplica um diff com
+   undo em lote; escrita fora da solução e qualquer comando exigem confirmação.
+6. **Opcional:** use `/nome` para acionar uma Skill, `@arquivo` para anexar
+   contexto, e o painel Aparência para temas e o painel Agentes para delegação.
+
+A chave fica no Windows Credential Manager (com fallback DPAPI), nunca em
+settings, log ou pacote. Não há telemetria: nenhum dado sai do computador além
+das chamadas ao provedor que você configurou.
 
 ## Decisões já tomadas (não reabrir)
 
@@ -65,9 +87,9 @@ pesada não compete com a UI thread do VS. Detalhe e fontes em
 - **WebView2 Runtime 156.0.4314.58** presente
 - SDK local: .NET 11.0.100-rc.3 — **testado**: compila `net8.0-windows` + WPF
   com 0 erros e 0 avisos
-- Disco `C:` com 19 GB livres
+- Disco `C:` com ~14,1 GB livres em 2026-11-17 — conferir antes de builds grandes
 
 ## Repositório
 
-Git local inicializado em `main`. **Sem remote** — `gh` CLI não está instalado.
-Criar remote no GitHub e dar push é decisão e ação do usuário.
+Git em `main` com `origin` configurado pelo usuário. `gh` CLI não está instalado;
+criar remote, dar push e abrir PR são decisões e ações do usuário.

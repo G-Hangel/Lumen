@@ -768,17 +768,19 @@ reload na hive experimental; evidências em `docs/STATUS.md`.
       vazamento de chave, permissões do broker. *(8a/8b; lacuna de validação de
       esquema de URL na host corrigida em 8b)*
 - [ ] Teste de carga: conversa longa (200+ mensagens), muitos arquivos,
-      output de comando grande. Sem leak de memória.
-- [ ] Teste em VS 18 **estável** se disponível, além do Insiders.
-- [ ] Ícone, preview image, display name, descrição, tags de marketplace.
-- [ ] `LICENSE`, `README` de usuário final, `CHANGELOG`.
-- [ ] Guia de instalação e de primeiro uso (colar chave → escolher modelo →
-      conversar).
-- [ ] VSIX de Release determinístico; verificar que nenhuma chave, `bin/`,
-      `obj/` ou segredo entrou no pacote.
-- [ ] Diagnóstico: log estruturado **sem segredos**, nível configurável,
-      botão "abrir log".
-- [ ] Telemetria: **nenhuma** por padrão. Se houver, opt-in explícito.
+      output de comando grande. Sem leak de memória. *(8d)*
+- [ ] Teste em VS 18 **estável** se disponível, além do Insiders. *(8d)*
+- [ ] Ícone e preview image de marketplace. *(B12: decidido adiar em 2026-11-17)*
+- [x] Display name, descrição e tags de marketplace no manifesto. *(8c)*
+- [x] `LICENSE` (MIT), `README` de usuário final, `CHANGELOG`. *(8c)*
+- [x] Guia de instalação e de primeiro uso no `README.md`. *(8c)*
+- [x] VSIX de Release determinístico; verificar que nenhuma chave, `bin/`,
+      `obj/` ou segredo entrou no pacote. *(8c: dois builds limpos com o mesmo
+      SHA-256 após normalização de timestamps e do `extensionDir`)*
+- [x] Diagnóstico: log estruturado **sem segredos**, nível configurável,
+      botão "abrir log". *(8c)*
+- [x] Telemetria: **nenhuma** por padrão. *(8c: ausência confirmada por varredura
+      do pacote; nenhum SDK de telemetria referenciado)*
 
 ### AC
 

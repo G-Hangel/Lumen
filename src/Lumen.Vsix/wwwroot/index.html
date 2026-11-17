@@ -120,6 +120,18 @@
               <button id="theme-reset" type="button" class="text-button" data-i18n="themeReset" disabled></button>
             </div>
           </form>
+          <fieldset id="byok-diag-fields">
+            <legend data-i18n="diagTitle"></legend>
+            <label for="byok-diag-level" data-i18n="diagLevel"></label>
+            <select id="byok-diag-level" disabled>
+              <option value="Error" data-i18n="diagLevelError"></option>
+              <option value="Warning" data-i18n="diagLevelWarning"></option>
+              <option value="Info" data-i18n="diagLevelInfo"></option>
+              <option value="Debug" data-i18n="diagLevelDebug"></option>
+            </select>
+            <button id="byok-diag-open" type="button" class="text-button" data-i18n="diagOpen" disabled></button>
+            <p id="byok-diag-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          </fieldset>
         </details>
         <details id="byok-panel" class="byok-panel">
           <summary data-i18n="byokTitle"></summary>

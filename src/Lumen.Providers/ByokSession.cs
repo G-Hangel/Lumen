@@ -26,6 +26,7 @@ public sealed class ByokSession : IDisposable
     private readonly AgentRegistry? agentRegistry;
     private readonly DelegationCoordinator? agentCoordinator;
     private readonly IAgentSource? agentSource;
+    private readonly IDiagnosticLog? diagnosticLog;
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -38,9 +39,9 @@ public sealed class ByokSession : IDisposable
     private readonly object approvalGate = new object();
     private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
     private Func<object, Task>? approvalEmit;
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null, AgentRegistry? agentRegistry = null, DelegationCoordinator? agentCoordinator = null, IAgentSource? agentSource = null)
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null, AgentRegistry? agentRegistry = null, DelegationCoordinator? agentCoordinator = null, IAgentSource? agentSource = null, IDiagnosticLog? diagnosticLog = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills; this.agentRegistry = agentRegistry; this.agentCoordinator = agentCoordinator; this.agentSource = agentSource;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills; this.agentRegistry = agentRegistry; this.agentCoordinator = agentCoordinator; this.agentSource = agentSource; this.diagnosticLog = diagnosticLog;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -253,6 +254,32 @@ public sealed class ByokSession : IDisposable
                     if (skills is not ISkillEditor editor) throw new ProviderException("unsupported_type");
                     var path = await editor.OpenFolderAsync(cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.log.get":
+                {
+                    Require(payload, Array.Empty<string>());
+                    if (diagnosticLog is null) throw new ProviderException("unsupported_type");
+                    await Reply(send, id, type + ".result", new { level = diagnosticLog.Level }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.log.set":
+                {
+                    Require(payload, new[] { "level" });
+                    if (diagnosticLog is null) throw new ProviderException("unsupported_type");
+                    var level = RequiredString(payload, "level", 16);
+                    if (!DiagnosticLevels.IsValid(level)) throw new ProviderException("invalid_configuration");
+                    await settings.WriteLogLevelAsync(level, cancellationToken).ConfigureAwait(false);
+                    diagnosticLog.SetLevel(level);
+                    await Reply(send, id, type + ".result", new { level }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.log.open":
+                {
+                    Require(payload, Array.Empty<string>());
+                    if (diagnosticLog is null) throw new ProviderException("unsupported_type");
+                    diagnosticLog.Open();
+                    await Reply(send, id, type + ".result", new { opened = true }).ConfigureAwait(false);
                     break;
                 }
                 case "byok.agents.delegate":

@@ -4,7 +4,7 @@ Atualizado em **2026-11-16**.
 
 ## Estado atual
 
-**Fases 0–9 concluídas (Fase 9 com limitações registradas).** A aceitação consolidada de
+**Fases 0–7 e 9 concluídas; Fase 8 em andamento (8a–8c, fatia 8d pendente).** A aceitação consolidada de
 2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
 experimental, com as limitações registradas. O modelo pode ler, criar/editar
 arquivos e executar comandos com opt-in por envio. Escrita interna aplica
@@ -39,7 +39,7 @@ houve chamadas pagas.
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
-| Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
+| Fase 8 — Hardening, empacotamento e entrega | **em andamento (8a–8c; 8d pendente)** |
 | Fase 9 — Subagentes e delegação | **concluído (9a–9c; AC parcialmente atendido — limitações registradas)** |
 
 ## Fase 9 — fechamento (2026-11-17)
@@ -142,6 +142,31 @@ próprias; a política de edição continua exclusivamente no agente principal.
   confirmou o pacote. Nenhuma chamada paga.
 - Escopo ainda aberto para 9b: integração da delegação ao loop de chat,
   descoberta de agentes por pasta e exposição de progresso/resultados na UI.
+
+## Fase 8c — entrega e diagnóstico (2026-11-17)
+
+- `LICENSE` MIT (copyright "Lumen contributors"), `CHANGELOG.md` com a versão
+  0.1.0 e limitações, e `README.md` reescrito com instalação, primeiro uso,
+  política de chave/telemetria e estado real do projeto. O guia de instalação
+  foi incorporado ao README (sem documento extra).
+- Manifesto do VSIX com display name **Lumen — Chat BYOK**, descrição PT-BR/EN
+  e tags. Ícone e preview image ficaram pendentes por decisão do usuário (B12).
+- Log estruturado em JSONL em `%LocalAppData%\Lumen\logs\lumen.log`
+  (`LumenDiagnosticLog`): nível `Error|Warning|Info|Debug` persistido em
+  `providers.log.json`, redação de `sk-`, `ghp_`, `AIza`, `Bearer` e
+  `api_key`/`x-api-key`, e sem mensagem de exceção crua. RPCs
+  `byok.log.get/set/open` com validação na ponte; os controles do painel
+  Aparência só aparecem quando a host oferece o log. Nenhuma telemetria:
+  `check:package` rejeita qualquer SDK/padrão de telemetria.
+- **VSIX determinístico:** dois `clean`+`build` Release geraram o mesmo
+  SHA-256 (`A4BFF307B83D11132EA39D4021549F4DCB0A2F52AD6BABDCFCD7C7C5A87E7AD1`).
+  `scripts/normalize-vsix.ps1` congela timestamps dos entradas e o
+  `extensionDir` aleatório do `manifest.json`/`catalog.json`; todas as
+  assinaturas de arquivos já eram idênticas antes da normalização.
+- Build limpo, suíte .NET 1.659/1.659, UI 230/230, pacote 3/3. Exp com o VSIX
+  normalizado: painel Aparência leu `byok.log.get` (`Error`), botão “Abrir log”
+  habilitado, 0 exceções JS; `-Action Verify` passou. Nenhum arquivo de nível
+  de log foi criado na máquina (somente leitura).
 
 ## Fase 8b — revisão de segurança (2026-11-16)
 

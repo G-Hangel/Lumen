@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
+    <Deterministic>true</Deterministic>
     <UseWPF>true</UseWPF>
     <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
     <VsixDeployOnDebug>true</VsixDeployOnDebug>
@@ -35,6 +36,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+  <!-- VSSDK stamps source timestamps into the zip; normalize them so Release VSIX bytes are reproducible. -->
+  <Target Name="NormalizeVsixTimestamps" AfterTargets="CreateVsixContainer" Condition="'$(Configuration)' == 'Release' and Exists('$(TargetVsixContainer)')">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)/../../scripts/normalize-vsix.ps1&quot; &quot;$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(TargetVsixContainer)'))&quot;" />
+  </Target>
   <Target Name="IncludeRuntimeDependencies" BeforeTargets="GetVsixSourceItems" DependsOnTargets="ResolveReferences">
     <!-- VSSDK otherwise drops framework-named NuGet dependencies such as System.Text.Json. -->
     <ItemGroup>

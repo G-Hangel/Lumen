@@ -20,6 +20,12 @@ const SECRET_PATTERNS = [
 ];
 const FORBIDDEN_NAMES = [/^\.env($|\.)/i, /\.vsix$/i, /\.pfx$/i, /\.p12$/i, /\.snk$/i, /\.key$/i, /^providers(\.theme|\.skills)?\.json$/i];
 const FORBIDDEN_FOLDERS = new Set(['bin', 'obj', '.git', '.vs']);
+const TELEMETRY_PATTERN = /applicationinsights|appinsights|segment\.io|mixpanel|trackEvent\s*\(/i;
+const PROJECTS = [
+  'src/Lumen.Core/Lumen.Core.csproj', 'src/Lumen.Tools/Lumen.Tools.csproj',
+  'src/Lumen.Providers/Lumen.Providers.csproj', 'src/Lumen.Vsix/Lumen.Vsix.csproj',
+  'tests/Lumen.Tests/Lumen.Tests.csproj'
+];
 
 // Findings are returned, not thrown, so the negative controls can prove the detector rejects bad packages.
 export function scanPackageEntries(entries) {
@@ -33,6 +39,7 @@ export function scanPackageEntries(entries) {
     const text = entry.content.toString('utf8');
     for (const [pattern, code] of SECRET_PATTERNS)
       if (pattern.test(text)) findings.push(`${name}: ${code}`);
+    if (TELEMETRY_PATTERN.test(text)) findings.push(`${name}: telemetry`);
   }
   return findings;
 }
@@ -61,6 +68,7 @@ test('package scanner rejects secrets, key files and bin/obj with negative contr
   assert.ok(scanPackageEntries([{ path: 'src/bin/leak.dll', content: Buffer.from('') }]).some(f => f.includes('forbidden folder')));
   assert.ok(scanPackageEntries([{ path: 'providers.json', content: Buffer.from('{}') }]).some(f => f.includes('forbidden file')));
   assert.ok(scanPackageEntries([{ path: 'wwwroot/config.json', content: Buffer.from('{"api_key":"abcdefghijklmnopqrstuvwxyz"}') }]).some(f => f.includes('credential-assignment')));
+  assert.ok(scanPackageEntries([{ path: 'wwwroot/app.mjs', content: Buffer.from('appInsights.trackEvent("open")') }]).some(f => f.includes('telemetry')));
 });
 
 test('built VSIX contains no secret, bin/obj or key material', async () => {
@@ -71,5 +79,19 @@ test('built VSIX contains no secret, bin/obj or key material', async () => {
     const entries = await collectFiles(temp);
     assert.ok(entries.length > 20, 'A partial extraction would make the scan meaningless.');
     assert.deepEqual(scanPackageEntries(entries), []);
+    const manifest = entries.find(entry => entry.path === 'extension.vsixmanifest');
+    assert.ok(manifest, 'The VSIX manifest is required.');
+    const xml = manifest.content.toString('utf8');
+    assert.match(xml, /<DisplayName>Lumen — Chat BYOK<\/DisplayName>/);
+    assert.match(xml, /Independent BYOK chat for Visual Studio/);
+    assert.match(xml, /Chat independente para Visual Studio/);
+    assert.match(xml, /<Tags>[^<]*BYOK[^<]*<\/Tags>/);
   } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test('all projects opt into deterministic Release builds', async () => {
+  const deterministic = text => /<Deterministic>true<\/Deterministic>/.test(text);
+  assert.equal(deterministic('<PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup>'), false);
+  for (const project of PROJECTS)
+    assert.equal(deterministic(await readFile(path.join(root, project), 'utf8')), true, project);
 });

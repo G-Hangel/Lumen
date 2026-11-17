@@ -2,8 +2,9 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Id="Lumen.37b13e92-66f4-4ebd-8f31-4fe1a889f684" Version="0.1.0" Language="en-US" Publisher="Lumen" />
-    <DisplayName>Lumen</DisplayName>
-    <Description xml:space="preserve">Independent chat for Visual Studio / Chat independente para Visual Studio. Phase 0 UI spike.</Description>
+    <DisplayName>Lumen — Chat BYOK</DisplayName>
+    <Description xml:space="preserve">Chat independente para Visual Studio com BYOK, modos Agent/Ask/Plan, ferramentas de arquivo e terminal, Skills e temas. Independent BYOK chat for Visual Studio with file/shell tools, Skills and themes.</Description>
+    <Tags>BYOK, Chat, IA, Agent, Skills, Visual Studio</Tags>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[18.0,)">

@@ -33,6 +33,8 @@ internal sealed class LumenControl : UserControl, IDisposable
     private readonly AgentRegistry agentRegistry = new();
     private readonly DelegationCoordinator agentCoordinator;
     private readonly VisualStudioAgentSource agentSource;
+    private readonly SettingsStore settings;
+    private readonly LumenDiagnosticLog diagnosticLog;
     private bool started;
     private bool disposed;
 
@@ -44,13 +46,15 @@ internal sealed class LumenControl : UserControl, IDisposable
         agentCoordinator = new DelegationCoordinator(agentRegistry);
         agentSource = new VisualStudioAgentSource(taskFactory);
         var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lumen");
+        settings = new SettingsStore(Path.Combine(dataFolder, "providers.json"));
+        diagnosticLog = new LumenDiagnosticLog(dataFolder, "Error");
         byok = new Lazy<ByokSession>(() =>
         {
             var registryPath = Path.Combine(dataFolder, "capabilities.registry.json");
             var resolver = new CapabilityResolver(File.Exists(registryPath) ? File.ReadAllText(registryPath) : null);
             var transport = new HttpTransport(http);
             return new ByokSession(new ProviderFactory(transport, resolver), new WindowsCredentialStore(),
-                new SettingsStore(Path.Combine(dataFolder, "providers.json")), new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools, new VisualStudioSkillSource(taskFactory), agentRegistry, agentCoordinator, agentSource);
+                settings, new CapabilityHttpProbe(transport), new VisualStudioContextSource(taskFactory), new VisualStudioReadTools(taskFactory), writeTools, shellTools, new VisualStudioSkillSource(taskFactory), agentRegistry, agentCoordinator, agentSource, diagnosticLog);
         });
         browser = new WebView2
         {
@@ -100,6 +104,8 @@ internal sealed class LumenControl : UserControl, IDisposable
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += OnWebResourceRequested;
             VSColorTheme.ThemeChanged += OnThemeChanged;
+            try { diagnosticLog.SetLevel(await settings.ReadLogLevelAsync(lifetime.Token).ConfigureAwait(true)); }
+            catch (ProviderException) { /* an invalid level file must not block startup */ }
             core.Navigate("https://lumen.local/index.html");
         }
         catch (Exception exception)
@@ -108,7 +114,7 @@ internal sealed class LumenControl : UserControl, IDisposable
             if (!disposed)
             {
                 status.Text = Strings.GetString("StartupError");
-                ActivityLog.LogError("Lumen", "WebView2 initialization: " + exception.GetType().Name);
+                diagnosticLog.Write("Error", "WebView2", "initialization_failed", exception.GetType().Name);
             }
         }
     }
@@ -159,9 +165,10 @@ internal sealed class LumenControl : UserControl, IDisposable
             catch (OperationCanceledException) { }
             catch (Exception exception)
             {
-                ActivityLog.LogError("Lumen", "Bridge request: " + exception.GetType().FullName + "; HRESULT=" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture));
+                diagnosticLog.Write("Error", "Bridge", exception.GetType().Name,
+                    "HRESULT=" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture));
                 if (exception is MissingMethodException)
-                    ActivityLog.LogError("Lumen", "Missing public contract: " + exception.Message);
+                    diagnosticLog.Write("Error", "Bridge", "missing_public_contract", exception.GetType().Name);
                 string? requestId = null;
                 try
                 {
@@ -221,6 +228,7 @@ internal sealed class LumenControl : UserControl, IDisposable
         writeTools.Dispose();
         shellTools.Dispose();
         http.Dispose();
+        diagnosticLog.Dispose();
         Loaded -= OnLoaded;
         VSColorTheme.ThemeChanged -= OnThemeChanged;
         if (browser.CoreWebView2 != null)

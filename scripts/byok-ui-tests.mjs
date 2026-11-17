@@ -1700,6 +1700,42 @@ test('agent bridge rejects forged agent lists and accepts bounded metadata', asy
   assert.equal((await delegated).text, 'Read the diff.');
 });
 
+test('diagnostics bridge validates log RPCs and rejects forged levels', async t => {
+  const f = fixture(t);
+  assert.equal(isByokEnvelope(envelope('byok.log.get.result', { level: 'Error' })), true);
+  assert.equal(isByokEnvelope(envelope('byok.log.set.result', { level: 'Debug' })), true);
+  assert.equal(isByokEnvelope(envelope('byok.log.open.result', { opened: true })), true);
+  for (const bad of [{ level: 'Verbose' }, { level: 1 }, { level: 'Error', extra: 1 }, { opened: false }])
+    assert.equal(isByokEnvelope(envelope('byok.log.set.result', bad)), false, JSON.stringify(bad));
+  await rejects(f.bridge.request('byok.log.set', { level: 'Verbose' }), 'invalid_message');
+  await rejects(f.bridge.request('byok.log.set', { level: 'Debug', extra: 1 }), 'invalid_message');
+  const setting = f.bridge.request('byok.log.set', { level: 'Debug' });
+  f.transport.reply({ level: 'Debug' });
+  assert.equal((await setting).level, 'Debug');
+});
+
+test('diagnostics UI reads, changes and opens the structured log', async t => {
+  const f = uiFixture(t);
+  f.connect(); await tick();
+  const panel = f.document.getElementById('theme-panel');
+  panel.open = true; await panel.emit('toggle'); await tick();
+  assert.equal(f.transport.messages.at(-1).type, 'byok.log.get');
+  f.transport.reply({ level: 'Error' }); await tick();
+  assert.equal(f.node('diag-level').disabled, false);
+  assert.equal(f.node('diag-open').disabled, false);
+  f.node('diag-level').value = 'Debug'; await f.node('diag-level').emit('change'); await tick();
+  const setting = f.transport.messages.at(-1);
+  assert.equal(setting.type, 'byok.log.set');
+  assert.deepEqual(setting.payload, { level: 'Debug' });
+  f.transport.reply({ level: 'Debug' }, setting); await tick();
+  assert.equal(f.node('diag-status').textContent, en.diagSaved);
+  f.node('diag-open').emit('click'); await tick();
+  const opening = f.transport.messages.at(-1);
+  assert.equal(opening.type, 'byok.log.open');
+  f.transport.reply({ opened: true }, opening); await tick();
+  assert.equal(f.node('diag-status').textContent, en.diagOpened);
+});
+
 test('agents UI lists discovered agents and delegates only in Agent mode', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('agents').open = true; await f.node('agents').emit('toggle');

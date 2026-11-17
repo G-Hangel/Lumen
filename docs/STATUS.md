@@ -40,7 +40,30 @@ houve chamadas pagas.
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a e 8b; Fase 9 em andamento)** |
-| Fase 9 — Subagentes e delegação | **em andamento (9a concluída)** |
+| Fase 9 — Subagentes e delegação | **em andamento (9a e 9b concluídas)** |
+
+## Fase 9b — delegação no loop de chat (2026-11-17)
+
+- `AgentToolCatalog` expõe a ferramenta `delegate_agent` (apenas `name` e
+  `task`, `additionalProperties:false`) e `AgentToolExecutor` a anexa ao
+  executor de ferramentas **somente quando há agentes registrados**. A
+  ferramenta é anunciada exclusivamente no modo Agent — `ToolChatLoop.SpecsFor`
+  a remove em Ask/Plan, mantendo esses modos read-only.
+- `ByokSession` aceita `AgentRegistry`/`DelegationCoordinator` opcionais,
+  embrulha o executor com `AgentToolExecutor` no modo Agent e responde ao RPC
+  `byok.agents.list` com `{name, scope}` por agente. A ponte JS valida o
+  formato e rejeita nomes/path traversal ou scopes desconhecidos.
+- Controles negativos: ferramenta ausente sem agentes e em Ask/Plan; argumentos
+  ausentes/tipo errado/campo extra; agente desconhecido; tarefa vazia; lista
+  forjada rejeitada pela ponte. Resultados de delegacao são dados não
+  confiáveis (`isError` espelha `success`, sem conteúdo executável).
+- Build Release 0 erros/0 avisos; 61 testes com filtro `Agent`, suíte .NET
+  1.646/1.646, UI 227/227, pacote 2/2. Exp com o VSIX final: startup sem
+  requisições externas e RPC `byok.agents.list` respondendo com lista vazia
+  (a host ainda não registra agentes), 0 exceções; `-Action Verify` passou.
+- **Limitação honesta:** nenhum agente é registrado na extensão nesta fatia,
+  então `delegate_agent` não aparece no chat real. Isso é intencional: a
+  descoberta de agentes por pasta e a UI de progresso/resultados ficam para 9c.
 
 ## Fase 9a — núcleo de subagentes e delegação (2026-11-16)
 

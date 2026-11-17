@@ -1000,3 +1000,12 @@ segue no VSIX). Resultado: 73/73 testes com filtro `Agent`, 1.639/1.639 na
 suíte completa, 226/226 UI e 2/2 pacote. Na Exp, instalei o VSIX final, rodei
 `node scripts/verify-offline-startup.mjs` (13 requisições apenas em
 `lumen.local`) e fechei com `-Action Verify`.
+
+### Fatia 9b — delegação no loop de chat (2026-11-17)
+
+Repeti build, `npm run check:ui` (227/227), `npm run check:package` (2/2) e a
+suíte .NET com `WindowsApps` fora do PATH (1.646/1.646; 61 testes com filtro
+`Agent`). Na Exp, além do `verify-offline-startup.mjs`, usei um verificador CDP
+temporário para `byok.agents.list`: resposta `byok.agents.list.result` com
+lista vazia e 0 exceções. A lista é vazia porque a host ainda não registra
+agentes; ferramenta e UI chegam na 9c.

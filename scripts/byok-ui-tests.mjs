@@ -1682,6 +1682,21 @@ test('skills bridge validates requests, rejects forged results and accepts bound
   assert.equal((await listing).skills[0].name, 'review');
 });
 
+test('agent bridge rejects forged agent lists and accepts bounded metadata', async t => {
+  const f = fixture(t);
+  const valid = { agents: [{ name: 'review-helper', scope: 'Project' }] };
+  assert.equal(isByokEnvelope(envelope('byok.agents.list.result', valid)), true);
+  for (const bad of [
+    { agents: [{ name: '../escape', scope: 'Project' }] },
+    { agents: [{ name: 'helper', scope: 'Untrusted' }] },
+    { agents: [{ name: 'helper' }] },
+    { agents: 'helper' }
+  ]) assert.equal(isByokEnvelope(envelope('byok.agents.list.result', bad)), false, JSON.stringify(bad));
+  const listing = f.bridge.request('byok.agents.list', {});
+  f.transport.reply(valid);
+  assert.equal((await listing).agents[0].name, 'review-helper');
+});
+
 test('skills UI reloads, offers slash completion and sends the manual selection', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('skills').open = true; await f.node('skills').emit('toggle');

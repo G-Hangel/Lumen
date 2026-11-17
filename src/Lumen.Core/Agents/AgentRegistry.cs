@@ -1,8 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Lumen.Core.Agents;
+
+public sealed class AgentInfo
+{
+    public AgentInfo(string name, AgentScope scope) { Name = name; Scope = scope; }
+    public string Name { get; }
+    public AgentScope Scope { get; }
+}
 
 public sealed class AgentException : Exception
 {
@@ -49,6 +57,12 @@ public sealed class AgentRegistry : IDisposable
     {
         EnsureActive();
         lock (agents) return new List<string>(agents.Keys).AsReadOnly();
+    }
+
+    public IReadOnlyList<AgentInfo> List()
+    {
+        EnsureActive();
+        lock (agents) return agents.Values.Select(agent => new AgentInfo(agent.Name, agent.Scope)).ToArray();
     }
 
     private void EnsureActive()

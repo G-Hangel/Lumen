@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Lumen.Core.Agents;
 using Lumen.Core.Bridge;
 using Lumen.Core.Domain;
 using Lumen.Tools;
@@ -22,6 +23,8 @@ public sealed class ByokSession : IDisposable
     private readonly IWriteToolExecutor? writeTools;
     private readonly IShellToolExecutor? shellTools;
     private readonly ISkillSource? skills;
+    private readonly AgentRegistry? agentRegistry;
+    private readonly DelegationCoordinator? agentCoordinator;
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -34,9 +37,9 @@ public sealed class ByokSession : IDisposable
     private readonly object approvalGate = new object();
     private readonly Dictionary<string, PendingApproval> approvals = new Dictionary<string, PendingApproval>();
     private Func<object, Task>? approvalEmit;
-    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null)
+    public ByokSession(ProviderFactory providers, ICredentialStore credentials, SettingsStore settings, CapabilityHttpProbe? httpProbe = null, IContextSource? contextSource = null, IReadToolExecutor? readTools = null, IWriteToolExecutor? writeTools = null, IShellToolExecutor? shellTools = null, ISkillSource? skills = null, AgentRegistry? agentRegistry = null, DelegationCoordinator? agentCoordinator = null)
     {
-        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills;
+        this.providers = providers; this.credentials = credentials; this.settings = settings; this.contextSource = contextSource; this.readTools = readTools; this.writeTools = writeTools; this.shellTools = shellTools; this.skills = skills; this.agentRegistry = agentRegistry; this.agentCoordinator = agentCoordinator;
         canProbe = httpProbe is not null;
         probe = new CapabilityProbe(async (configurationId, modelId, capability, token) =>
         {
@@ -249,6 +252,14 @@ public sealed class ByokSession : IDisposable
                     if (skills is not ISkillEditor editor) throw new ProviderException("unsupported_type");
                     var path = await editor.OpenFolderAsync(cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { path }).ConfigureAwait(false);
+                    break;
+                }
+                case "byok.agents.list":
+                {
+                    Require(payload, Array.Empty<string>());
+                    var agents = agentRegistry is null ? Array.Empty<object>() : agentRegistry.List()
+                        .Select(agent => (object)new { name = agent.Name, scope = agent.Scope.ToString() }).ToArray();
+                    await Reply(send, id, type + ".result", new { agents }).ConfigureAwait(false);
                     break;
                 }
                 case "byok.theme.get":
@@ -500,6 +511,8 @@ public sealed class ByokSession : IDisposable
                         capturedTools = new SkillToolExecutor(capturedTools, availableSkills);
                         skillCatalog = SkillCatalog.PromptSection(availableSkills);
                     }
+                    if (capturedTools is not null && mode == ChatMode.Agent && agentRegistry is not null && agentCoordinator is not null && agentRegistry.Count > 0)
+                        capturedTools = new AgentToolExecutor(capturedTools, agentRegistry, agentCoordinator);
                     var toolSpecs = capturedTools is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(mode, capturedTools);
                     if (!Enum.TryParse<ReasoningIntent>(RequiredString(payload, "effort", 16), out var effort) || !Enum.IsDefined(typeof(ReasoningIntent), effort)) throw new ProviderException("invalid_message");
                     var text = RequiredString(payload, "text", 4096);

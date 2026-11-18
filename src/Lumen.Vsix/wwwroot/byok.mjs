@@ -1001,18 +1001,27 @@ export function startByok({ transport, connected = () => false, text, renderMark
     }
     article.append(assistant, reasoning, response, tools, usage, notices);
     return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, notices, record: { userText: value,
-      ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], status: 'failed' } };
+      ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], steps: [], status: 'failed' } };
   }
   function renderEvent(turn, event) {
     if (disposed) return;
     const pinned = !turn.archived && scrollPinned();
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const step = { kind: event.kind, timestamp, ...event };
+    turn.record.steps.push(step);
     if (event.kind === 'TextDelta') {
-      turn.text += event.text; turn.response.append(document.createTextNode(event.text));
+      turn.text += event.text;
+      const textNode = document.createTextNode(event.text);
+      textNode.dataset.timestamp = timestamp;
+      turn.response.append(textNode);
     } else if (event.kind === 'ReasoningDelta') {
       turn.record.reasoning += event.text;
-      turn.reasoning.hidden = false; turn.thoughts.append(document.createTextNode(event.text));
+      turn.reasoning.hidden = false;
+      const textNode = document.createTextNode(event.text);
+      textNode.dataset.timestamp = timestamp;
+      turn.thoughts.append(textNode);
     } else if (event.kind === 'ToolCallStart') {
-      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true;
+      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true; card.dataset.timestamp = timestamp;
       const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = event.name;
       const state = localized('p', 'byokToolPending', 'secondary'); const args = document.createElement('pre'); args.tabIndex = 0;
       state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
@@ -1022,7 +1031,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       card.append(title, name, state, args, result); turn.tools.append(card); turn.calls.set(event.id, { args, state, title, result, name: event.name });
     } else if (event.kind === 'ToolCallArgsDelta') turn.calls.get(event.id).args.append(document.createTextNode(event.chunk));
     else if (event.kind === 'ToolCallEnd') {
-      const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2);
+      const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2); call.args.dataset.timestamp = timestamp;
       call.state.dataset.byokText = 'byokToolEnded'; call.state.textContent = text('byokToolEnded');
       turn.record.tools.push({ id: event.id, name: call.name, arguments: event.arguments });
     } else if (event.kind === 'ToolExecution') {
@@ -1032,7 +1041,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       }
       call.state.dataset.byokText = `byokTool${event.status}`; call.state.textContent = text(`byokTool${event.status}`);
       call.state.className = event.isError ? 'error' : 'secondary';
-      call.result.textContent = event.content; call.result.hidden = event.status === 'Running';
+      call.result.textContent = event.content; call.result.hidden = event.status === 'Running'; call.result.dataset.timestamp = timestamp;
       if (event.status !== 'Running') {
         Object.assign(turn.record.tools.find(item => item.id === event.id), { status: event.status, isError: event.isError, content: event.content });
       }

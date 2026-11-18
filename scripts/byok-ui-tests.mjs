@@ -147,7 +147,7 @@ const approvalEvent = (category = 'ExecuteCommand', extra = {}) => ({ kind: 'App
   arguments: { command: 'cmd', args: ['echo', 'hi'] }, targetPath: category === 'ExecuteCommand' ? null : 'C:/outside/target.cs',
   canAllowSession: category === 'ExecuteCommand', ...extra });
 const agentChat = { configurationId, text: 'Edit and run', effort: 'Off', mode: 'Agent', readTools: true, writeTools: true, terminal: true };
-const defaultBudget = { maxRounds: 4, maxOutputTokens: 8192, maxInvocations: 8 };
+const defaultBudget = { maxRounds: 8, maxOutputTokens: 32768, maxInvocations: 32 };
 const approvalCards = f => f.node('live').querySelectorAll('section').filter(item => item.className === 'byok-approval');
 
 test('automatic chat request accepts optional booleans only; omits declarations and browser authority', async t => {
@@ -526,7 +526,7 @@ test('apply plan appears only in Plan, switches to Agent without requests and pr
 
 test('budget inputs gate sending, travel per-send and reject out-of-range values locally', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  for (const [id, value] of [['budget-rounds', '4'], ['budget-tokens', '8192'], ['budget-tools', '8']]) assert.equal(f.node(id).value, value);
+  for (const [id, value] of [['budget-rounds', '8'], ['budget-tokens', '32768'], ['budget-tools', '32']]) assert.equal(f.node(id).value, value);
   f.node('message').value = 'hello'; await f.node('message').emit('input');
   assert.equal(f.node('send').disabled, false);
   const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);

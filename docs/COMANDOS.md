@@ -732,7 +732,7 @@ powershell.exe -NoProfile -File scripts/context-experimental.ps1 -Action Cleanup
 powershell.exe -NoProfile -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
 ```
 
-`plan-budget` verifica: estado inicial Ask com orçamento padrão 4/8192/8 e
+`plan-budget` verifica: estado inicial Ask com orçamento padrão 8/32768/32 e
 botão aplicar plano oculto; turno Plan com critérios de aceite; clique em
 aplicar plano muda para Agent sem requests, revoga consentimentos e anuncia;
 orçamento de rodadas 1 interrompe o loop com `tool_budget_exceeded` **antes de
@@ -812,8 +812,9 @@ Agent de 5 rodadas com orçamento 8/32768/16 — create `Calculator.cs` + create
 aprovado (exit 0; o teste referencia `Calculator.Add`, então o build prova que
 ambos os fontes compilaram juntos) + resposta; undo em lote restaura os 3
 arquivos; colisão mid-task `file_exists` recupera sem duplicar escrita. Usa
-credencial sintética e servidor loopback próprios. **O orçamento padrão 4
-aborta a rodada do build** — o estágio eleva para 8 rodadas de propósito.
+credencial sintética e servidor loopback próprios. O orçamento padrão antigo (4
+rodadas) abortava a rodada do build; o estágio fixa 8 rodadas e 16 invocações
+de propósito.
 Não comprova skills ativas (Fase 6), a regressão geral nem o layout 203 px.
 Mesmas regras de interrupção das fatias anteriores: não apagar a fixture com
 escritas no journal; não repetir `Prepare` sobre manifesto existente.

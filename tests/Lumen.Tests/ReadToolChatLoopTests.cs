@@ -212,7 +212,7 @@ public sealed class ReadToolChatLoopTests
         var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, maxOutputTokens: 512) };
         var executor = new Executor();
         fixture.Provider.Run = async (round, emit, _) => { for (var index = 0; index < (round == 1 ? 8 : 1); index++) await Call(emit, "r" + round + "c" + index); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor))).Code);
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(8, 32768, 8)))).Code);
         Assert.Equal(8, executor.Calls);
         Assert.Equal(2, fixture.Provider.Requests.Count);
         Assert.All(fixture.Provider.Requests, request => Assert.Equal(512, request.MaxOutputTokens));
@@ -231,11 +231,11 @@ public sealed class ReadToolChatLoopTests
     }
 
     [Fact]
-    public void ToolBudgetAcceptsBoundariesAndDefaultMatchesLegacyLimits()
+    public void ToolBudgetAcceptsBoundariesAndDefaultUsesFullHeadroom()
     {
-        Assert.Equal(4, ToolBudget.Default.MaxRounds);
-        Assert.Equal(8192, ToolBudget.Default.MaxOutputTokens);
-        Assert.Equal(8, ToolBudget.Default.MaxInvocations);
+        Assert.Equal(8, ToolBudget.Default.MaxRounds);
+        Assert.Equal(32768, ToolBudget.Default.MaxOutputTokens);
+        Assert.Equal(32, ToolBudget.Default.MaxInvocations);
         var low = new ToolBudget(1, 1024, 1);
         var high = new ToolBudget(8, 32768, 32);
         Assert.Equal(1, low.MaxRounds);
@@ -654,7 +654,7 @@ public sealed class ReadToolChatLoopTests
         if (reasoning) fixture.Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.Reasoning, reasoning: new ReasoningSupport(ReasoningKind.BudgetTokens, new[] { ReasoningIntent.Low }));
         var executor = new Executor();
         fixture.Provider.Run = async (round, emit, _) => { for (var index = 0; index < batchSize; index++) await Call(emit, "r" + round + "c" + index); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, effort: reasoning ? ReasoningIntent.Low : ReasoningIntent.Off))).Code);
+        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 8), effort: reasoning ? ReasoningIntent.Low : ReasoningIntent.Off))).Code);
         Assert.Equal(requests, fixture.Provider.Requests.Count);
         Assert.Equal(executions, executor.Calls);
         Assert.True(fixture.Provider.Requests.Sum(request => request.MaxOutputTokens) <= 8192);

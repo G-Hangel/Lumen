@@ -95,7 +95,7 @@ public sealed class ToolResult
 
 public sealed class ToolBudget
 {
-    public static ToolBudget Default { get; } = new(4, 8192, 8);
+    public static ToolBudget Default { get; } = new(8, 32768, 32);
 
     public ToolBudget(int maxRounds, int maxOutputTokens, int maxInvocations)
     {

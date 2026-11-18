@@ -422,7 +422,7 @@ try {
       const en = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/en.json', import.meta.url), 'utf8'));
       const setBudget = (rounds, tokens, tools) => evaluate(`(()=>{for(const [id,value] of [['budget-rounds',${rounds}],['budget-tokens',${tokens}],['budget-tools',${tools}]]){const input=document.querySelector('#byok-'+id);input.value=String(value);input.dispatchEvent(new Event('input'));}})()`);
       const initial = await evaluate("({mode:document.querySelector('#byok-mode').value,applyHidden:document.querySelector('#byok-apply-plan').hidden,rounds:document.querySelector('#byok-budget-rounds').value,tokens:document.querySelector('#byok-budget-tokens').value,tools:document.querySelector('#byok-budget-tools').value})");
-      assert.deepEqual(initial, { mode: 'Ask', applyHidden: true, rounds: '4', tokens: '8192', tools: '8' });
+      assert.deepEqual(initial, { mode: 'Ask', applyHidden: true, rounds: '8', tokens: '32768', tools: '32' });
       await evaluate("(()=>{const mode=document.querySelector('#byok-mode');mode.value='Agent';mode.dispatchEvent(new Event('change'));})()");
       assert.equal(await evaluate("document.querySelector('#byok-apply-plan').hidden"), true, 'apply plan must stay hidden outside Plan');
       const plan = await agentChat('fixture-plan-budget-plan', ['auto-read-tools'], 'none', 'Plan');

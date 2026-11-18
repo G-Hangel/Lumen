@@ -44,6 +44,44 @@ persistir credencial OAuth). Nesta fatia não houve chamadas pagas.
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a–8d; imagem pendente por decisão)** |
 | Fase 9 — Subagentes e delegação | **concluído (9a–9d; ModelAgent com chamada de modelo via provedor)** |
 
+## Hotfix — turno encerrado cedo por orçamento padrão (2026-11-18)
+
+Sintoma: modelos que já liam, editavam e executavam comandos paravam cedo com
+`byokErrorToolBudget` (texto "Resposta interrompida...") sem concluir a tarefa.
+Causa: o orçamento padrão do loop era **4 rodadas / 8192 tokens / 8 invocações**
+(`ToolBudget.Default`). A conversa `25df7129-2940-46ae-9495-dbd2e740de26`
+mostra dois turnos `failed`: 7 ferramentas executadas (~44.9 mil caracteres de
+resultado) e um lote seguinte de 4 chamadas planejado; 7 + 4 = 11 invocações
+ultrapassava o limite 8 e o loop lançava `tool_budget_exceeded` antes de
+executar o lote.
+
+Correção: `ToolBudget.Default` e os campos padrão da UI passam para o teto do
+contrato, **8 rodadas / 32768 tokens / 32 invocações**. As mensagens
+`byokErrorToolBudget` e `byokBudgetHelp` agora dizem que o turno parou no
+orçamento e mandam elevar os limites em Orçamento antes de reenviar, em vez de
+sugerir reduzir o escopo. Testes que dependiam do padrão antigo passaram a
+declarar orçamento explícito, preservando os controles negativos (9ª invocação,
+rodadas esgotadas, orçamento de tokens). `docs/COMANDOS.md` atualizado.
+
+Verificação: build Release **0 erros/0 avisos**; `npm run check:ui`
+**231/231**; `npm run check:package` **3/3**; suíte .NET **1663/1664**, com a
+única falha sendo a ambiental pré-existente de `pwsh` AppExecutionAlias em
+`DetectedShellsExecuteOnlyAfterApproval` (executável `WindowsApps` retorna
+`command_failed`). O outro teste de shell, `ShellExitAlsoKillsChildHoldingPipesOpen`,
+falhou de forma intermitente em uma execução e passou no rerun, como já registrado
+na Fase 9.
+
+Verificação na Exp (`25e762c6`) após reinstalar o VSIX em `ozimyyub.34v` (SHA
+conferido): `node scripts/verify-agent-tools-webview.mjs plan-budget` confirmou
+o orçamento inicial **8/32768/32**, o bloqueio de orçamentos forjados, o
+orçamento de 1 rodada interrompendo antes de qualquer tool e 2/2048/8 concluindo
+com histórico preservado. Foram **4 requests loopback, 0 pagos, 0 exceções JS**.
+Fixtures, solução e processos da Exp foram limpos ao final.
+
+Limites que continuam valendo: 8 rodadas é o máximo do contrato atual; o
+resultado acumulado de ferramentas por turno continua limitado a 131072
+caracteres; e `byok.chat` ainda tem deadline global de 2 minutos.
+
 ## Hotfix BYOK — configuração de provedor rejeitada (2026-11-18)
 
 Ao clicar em **Salvar / testar listagem**, a UI exibia `byokErrorFormat`

@@ -413,3 +413,5 @@ textarea:disabled { opacity: .65; }
   :focus-visible { outline-color: Highlight; }
   .d2h-ins ins, .d2h-del del { font-weight: 700; }
 }
+
+.byok-turn > .byok-plain + .byok-tool { margin-top: 4px; border-left: 2px solid var(--border); padding-left: 8px; }

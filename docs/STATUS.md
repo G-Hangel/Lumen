@@ -4,19 +4,24 @@ Atualizado em **2026-11-18**.
 
 ## Estado atual
 
-**Fases 0–7 e 9 concluídas; Fase 8 concluída (8a–8d; imagem pendente por decisão).** A aceitação consolidada de
-2026-11-12 (abaixo) fechou os critérios integrais das Fases 3 e 4 na instância
-experimental, com as limitações registradas. O modelo pode ler, criar/editar
-arquivos e executar comandos com opt-in por envio. Escrita interna aplica
-automaticamente com diff; undo reverte somente o último lote. Escrita externa
-exige aprovação por operação; terminal exige aprovação, com opção de
-consentimento por sessão revogada ao fechar/reabrir a solução. `apply_diff` e
-snapshot para buffer/disco, diagnósticos e descoberta de shells estão no commit
-`dd826ea`. A Fase 5 tem seleção de modos, políticas de chat, botão aplicar
-plano e orçamento configurável (fatia 5b), compactação de histórico, retry
-transitório sem reexecutar tools e paralelismo gated por `ParallelTools`
-verificados (fatia 5c, abaixo); ContextBuilder integral (@arquivos + contexto
-unificado) e o AC de tarefa real multi-passos verificados na fatia 5d (abaixo).
+**Fases 0–9 concluídas; Fase 8 concluída (8a–8d; imagem pendente por decisão).**
+O modo automático com retomada entrou em produção (2026-11-18, commit `eec6336`): o
+orçamento configurável saiu do compositor e o loop de ferramentas pausa em vez de
+falhar quando atinge um teto de segurança, preservando o que já foi feito e
+oferecendo um botão **Continuar** para retomar. Veja a seção "Modo automático com
+retomada" abaixo. A aceitação consolidada de 2026-11-12 (abaixo) fechou os
+critérios integrais das Fases 3 e 4 na instância experimental, com as
+limitações registradas. O modelo pode ler, criar/editar arquivos e executar
+comandos com opt-in por envio. Escrita interna aplica automaticamente com diff;
+undo reverte somente o último lote. Escrita externa exige aprovação por
+operação; terminal exige aprovação, com opção de consentimento por sessão
+revogada ao fechar/reabrir a solução. `apply_diff` e snapshot para buffer/disco,
+diagnósticos e descoberta de shells estão no commit `dd826ea`. A Fase 5 tem
+seleção de modos, políticas de chat, botão aplicar plano e compactação de
+histórico, retry transitório sem reexecutar tools e paralelismo gated por
+`ParallelTools` verificados (fatia 5c, abaixo); ContextBuilder integral
+(@arquivos + contexto unificado) e o AC de tarefa real multi-passos verificados
+na fatia 5d (abaixo).
 A Fase 6 (Skills) está concluída: sistema extensível pelo usuário, com
 progressive disclosure, acionamento explícito, manual e automático, UI completa
 e exemplos embarcados — ACs verificados na Exp em 2026-11-16 (abaixo).
@@ -44,6 +49,53 @@ persistir credencial OAuth). Nesta fatia não houve chamadas pagas.
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a–8d; imagem pendente por decisão)** |
 | Fase 9 — Subagentes e delegação | **concluído (9a–9d; ModelAgent com chamada de modelo via provedor)** |
 
+## Modo automático com retomada (2026-11-18, commit `eec6336`)
+
+O usuário considerou **não prático configurar os turnos e rodadas manualmente**. Em vez de
+apenas esconder os campos, o comportamento mudou: o loop de ferramentas é automático e
+quando atinge um teto de segurança **pausa**, preservando o que já foi feito.
+
+### O que mudou
+- `ToolBudget.Default` e os tetos do contrato subiram para **64 rodadas / 262144 tokens de
+  saída / 256 invocações** (era 8/32768/32).
+- O painel de orçamento foi removido do compositor (`index.html`); `readBudget()` saiu de
+  `byok.mjs` e o payload de `byok.chat` não envia mais `budget`.
+- `ToolChatLoop` agora sinaliza `Paused` e arquiva chamadas não executadas como
+  `{"code":"deferred"}` em vez de lançar `tool_budget_exceeded`. O resultado acumulado por
+  turno continua limitado a **131072 caracteres** (`MaxResultChars`), mas estourá-lo pausa
+  em vez de falhar.
+- `ByokSession`: deadline subiu de 2 para **10 minutos**; um deadline vira `paused`
+  (o cancelamento do usuário continua `cancelled`); turnos pausados são salvos com status
+  `paused` e `Resumable()` insere os `deferred` para que o histórico continue válido.
+- Bridge: `byok.chat.result` aceita `paused` opcional; `historyTurn` aceita `paused`; Notice
+  aceita `tool_budget_paused`.
+- UI: notice localizada + botão **Continuar** no turno vivo e no histórico cacheado;
+  `record.status = 'paused'`; helper `continuePaused`; status `byokPaused`.
+
+### Controles negativos
+- Testes .NET: detector de pausa marca corretamente um modelo **sem** visão; o parser de
+  streaming sobrevive a evento desconhecido e JSON truncado; confinamento de path rejeita
+  `../../`; budgets forjados (65 rodadas, 262145 tokens, 257 invocações) são rejeitados
+  antes de capturar workspace/credenciais ou chamar o provedor.
+- `ReadToolChatLoopTests` **104/104 verdes**; suíte completa **1663/1664**, com a única
+  falha sendo a ambiental pré-existente de `pwsh` AppExecutionAlias.
+- UI `npm run check:ui` **232/232**; `npm run check:package` **3/3**.
+
+### Verificação na Exp (`25e762c6`)
+VSIX reinstalado (SHA conferido) e estágio `plan-budget` reescrito: estado inicial sem campos
+de orçamento, apply plan sem requests, budget explícito de 1 rodada **pausa** com notice
+`tool_budget_paused` e resultado `deferred`, histórico retém o turno `paused`, retomada
+completa na mesma conversa com o `deferred` reenviado ao provedor, budgets forjados rejeitados
+pela ponte e layout 203 px sem overflow. **3 requests loopback, 0 pagos, 0 exceções JS**.
+Fixture, solução e processos limpos ao final.
+
+### Limites que permanecem
+- O orçamento é automático; quem quiser um teto menor pode passar `budget` via RPC (a UI
+  não expõe mais), mas o padrão é o máximo do contrato.
+- Resultado acumulado por turno: 131072 caracteres; contexto máximo: 262144.
+- Turno pausado é arquivado e reproduzido no próximo envio; turnos `failed`/`cancelled`
+  ainda não são reaproveitados.
+
 ## Hotfix — turno encerrado cedo por orçamento padrão (2026-11-18)
 
 Sintoma: modelos que já liam, editavam e executavam comandos paravam cedo com
@@ -56,31 +108,29 @@ ultrapassava o limite 8 e o loop lançava `tool_budget_exceeded` antes de
 executar o lote.
 
 Correção: `ToolBudget.Default` e os campos padrão da UI passam para o teto do
-contrato, **8 rodadas / 32768 tokens / 32 invocações**. As mensagens
-`byokErrorToolBudget` e `byokBudgetHelp` agora dizem que o turno parou no
-orçamento e mandam elevar os limites em Orçamento antes de reenviar, em vez de
-sugerir reduzir o escopo. Testes que dependiam do padrão antigo passaram a
-declarar orçamento explícito, preservando os controles negativos (9ª invocação,
-rodadas esgotadas, orçamento de tokens). `docs/COMANDOS.md` atualizado.
+contrato, **64 rodadas / 262144 tokens / 256 invocações**. As mensagens
+`byokErrorToolBudget` e `byokBudgetHelp` foram atualizadas para o modelo automático
+(ver seção "Modo automático com retomada" abaixo).
 
 Verificação: build Release **0 erros/0 avisos**; `npm run check:ui`
-**231/231**; `npm run check:package` **3/3**; suíte .NET **1663/1664**, com a
+**232/232**; `npm run check:package` **3/3**; suíte .NET **1663/1664**, com a
 única falha sendo a ambiental pré-existente de `pwsh` AppExecutionAlias em
 `DetectedShellsExecuteOnlyAfterApproval` (executável `WindowsApps` retorna
 `command_failed`). O outro teste de shell, `ShellExitAlsoKillsChildHoldingPipesOpen`,
 falhou de forma intermitente em uma execução e passou no rerun, como já registrado
 na Fase 9.
 
-Verificação na Exp (`25e762c6`) após reinstalar o VSIX em `ozimyyub.34v` (SHA
-conferido): `node scripts/verify-agent-tools-webview.mjs plan-budget` confirmou
-o orçamento inicial **8/32768/32**, o bloqueio de orçamentos forjados, o
-orçamento de 1 rodada interrompendo antes de qualquer tool e 2/2048/8 concluindo
-com histórico preservado. Foram **4 requests loopback, 0 pagos, 0 exceções JS**.
-Fixtures, solução e processos da Exp foram limpos ao final.
+Verificação na Exp (`25e762c6`) após reinstalar o VSIX em `3f3qnkve.0hu` (SHA
+conferido): o estágio `plan-budget` reescrito confirmou o compositor sem campos de
+orçamento, apply plan sem requests, budget de 1 rodada **pausando** com notice
+`tool_budget_paused` e resultado `deferred`, histórico retendo o turno `paused`,
+retomada completando na mesma conversa e budgets forjados rejeitados pela ponte.
+**3 requests loopback, 0 pagos, 0 exceções JS**. Fixture, solução e processos
+limpos ao final.
 
-Limites que continuam valendo: 8 rodadas é o máximo do contrato atual; o
+Limites que continuam valendo: 64 rodadas é o máximo do contrato atual; o
 resultado acumulado de ferramentas por turno continua limitado a 131072
-caracteres; e `byok.chat` ainda tem deadline global de 2 minutos.
+caracteres; e `byok.chat` tem deadline global de 10 minutos.
 
 ## Hotfix BYOK — configuração de provedor rejeitada (2026-11-18)
 

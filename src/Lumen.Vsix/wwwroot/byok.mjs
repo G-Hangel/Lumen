@@ -497,6 +497,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('probe-capability').disabled = !probeEligible();
     node('verify').disabled = !canProbe();
     node('probe').setAttribute('aria-busy', String(probing && busy));
+    const isAzure = node('kind').value === 'Azure';
+    const armFieldsFilled = isAzure && node('azure-subscription').value.trim() && node('azure-resource-group').value.trim() && node('azure-account').value.trim() && node('azure-tenant').value.trim() && node('azure-client').value.trim();
+    node('azure-inventory').disabled = !enabled || locked || !configurationId || !isAzure || !armFieldsFilled;
     node('configure').setAttribute('aria-busy', String(busy && !streaming));
     node('chat-form').setAttribute('aria-busy', String(streaming || imageLoading || (contextBusy && busy)));
     node('count').textContent = text('byokCount', { count: node('message').value.length, max: 4096 });
@@ -822,6 +825,40 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (!disposed && configurationId === id) applyCatalog(result);
     }, node('models'));
   }
+  async function requestAzureInventory() {
+    if (!configurationId || node('kind').value !== 'Azure') return;
+    const subscriptionId = node('azure-subscription').value.trim();
+    const resourceGroup = node('azure-resource-group').value.trim();
+    const accountName = node('azure-account').value.trim();
+    const tenantId = node('azure-tenant').value.trim();
+    const clientId = node('azure-client').value.trim();
+    if (!subscriptionId || !resourceGroup || !accountName || !tenantId || !clientId) {
+      node('azure-inventory-status').textContent = text('byokAzureDeviceCode');
+      return;
+    }
+    const btn = node('azure-inventory');
+    btn.disabled = true;
+    node('azure-inventory-status').textContent = '';
+    try {
+      const result = await bridge.request('byok.azure.arm.list', {
+        configurationId, tenantId, clientId, subscriptionId, resourceGroup, accountName
+      });
+      if (disposed) return;
+      const deployments = result.deployments || [];
+      if (deployments.length === 0) {
+        node('azure-inventory-status').textContent = text('byokEmptyProviders');
+        return;
+      }
+      node('deployments').value = deployments.join('\n');
+      node('azure-inventory-status').textContent = `${deployments.length} deployment(s) found`;
+      // Also update the configuration with ARM details
+      configurations = configurations.map(config => config.id === configurationId ? { ...config, arm: result.arm } : config);
+    } catch (error) {
+      if (!disposed) node('azure-inventory-status').textContent = error.message || text('byokErrorUrl');
+    } finally {
+      if (!disposed) btn.disabled = false;
+    }
+  }
   function changeKind() {
     clearToolConsent();
     const kind = node('kind').value;
@@ -829,6 +866,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('provider-id').value = kind.toLowerCase(); node('key').value = '';
     node('deployments-group').hidden = kind !== 'Azure';
     node('key-label').textContent = text(kind === 'Ollama' || kind === 'LMStudio' ? 'byokKeyLocal' : 'byokKey');
+    if (kind !== 'Azure') {
+      ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']
+        .forEach(id => node(id).value = '');
+      node('azure-inventory-status').textContent = '';
+    }
+    updateControls();
   }
   async function configure(event) {
     event.preventDefault();
@@ -841,9 +884,15 @@ export function startByok({ transport, connected = () => false, text, renderMark
       try {
         const baseUrl = normalizeBaseUrl(node('url').value);
         const names = node('kind').value === 'Azure' ? node('deployments').value.split(/\r?\n/).map(name => name.trim()).filter(Boolean) : [];
+        const arm = node('kind').value === 'Azure' && node('azure-subscription').value.trim() ? {
+          subscriptionId: node('azure-subscription').value.trim(),
+          resourceGroup: node('azure-resource-group').value.trim(),
+          accountName: node('azure-account').value.trim()
+        } : null;
         const request = bridge.request('byok.configure', {
           id, providerId: node('provider-id').value.trim(), kind: node('kind').value, baseUrl, key,
-          ...(names.length ? { deploymentNames: names } : {})
+          ...(names.length ? { deploymentNames: names } : {}),
+          ...(arm ? { arm } : {})
         });
         key = '';
         const result = await request;
@@ -1280,12 +1329,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (!node('message').disabled) node('message').focus({ preventScroll: true });
   });
   for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) listen(node(id), 'input', updateControls);
+  for (const id of ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']) listen(node(id), 'input', updateControls);
   listen(node('auto-read-tools'), 'change', updateControls);
   listen(node('auto-write-tools'), 'change', updateControls);
   listen(node('auto-terminal'), 'change', updateControls);
   listen(node('list'), 'click', listProviders);
   listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
   listen(node('discover'), 'click', discover);
+  listen(node('azure-inventory'), 'click', requestAzureInventory);
   listen(node('models'), 'change', chooseModel);
   listen(node('apply-override'), 'click', override);
   listen(node('probe-consent'), 'change', updateControls);

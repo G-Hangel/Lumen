@@ -9,6 +9,31 @@ namespace Lumen.Providers;
 
 public enum ProviderKind { OpenAI, OpenRouter, Anthropic, Gemini, Ollama, Azure, LMStudio }
 
+public sealed class AzureArmConfiguration
+{
+    public AzureArmConfiguration(string subscriptionId, string resourceGroup, string accountName)
+    {
+        if (!Guid.TryParse(subscriptionId, out var subscription) || subscription == Guid.Empty)
+            throw new ArgumentException("Invalid Azure subscription id.", nameof(subscriptionId));
+        SubscriptionId = subscription.ToString("D");
+        ResourceGroup = ValidateArmSegment(resourceGroup, nameof(resourceGroup));
+        AccountName = ValidateArmSegment(accountName, nameof(accountName));
+    }
+
+    private static string ValidateArmSegment(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 90 || value.IndexOfAny(new[] { '/', '\\', '?', '#', '@', ' ' }) >= 0)
+            throw new ArgumentException("Invalid Azure ARM segment.", name);
+        foreach (var character in value)
+            if (char.IsControl(character)) throw new ArgumentException("Invalid Azure ARM segment.", name);
+        return value;
+    }
+
+    public string SubscriptionId { get; }
+    public string ResourceGroup { get; }
+    public string AccountName { get; }
+}
+
 public sealed class ProviderConfiguration
 {
     public ProviderConfiguration(string id, string providerId, ProviderKind kind, string baseUrl,
@@ -34,6 +59,7 @@ public sealed class ProviderConfiguration
     public string BaseUrl { get; }
     public string? SelectedModelId { get; }
     public IReadOnlyList<string> DeploymentNames { get; }
+    public AzureArmConfiguration? Arm { get; set; }
 }
 
 public sealed class CatalogResult

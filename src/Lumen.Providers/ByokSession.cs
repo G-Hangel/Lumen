@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,6 +28,7 @@ public sealed class ByokSession : IDisposable
     private readonly DelegationCoordinator? agentCoordinator;
     private readonly IAgentSource? agentSource;
     private readonly IDiagnosticLog? diagnosticLog;
+    private readonly HttpClient http = new();
     private readonly Dictionary<string, ContextSnapshot> contexts = new Dictionary<string, ContextSnapshot>();
     private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
     private readonly List<ProviderConfiguration> configurations = new List<ProviderConfiguration>();
@@ -282,6 +284,34 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { opened = true }).ConfigureAwait(false);
                     break;
                 }
+                case "byok.azure.arm.list":
+                {
+                    Require(payload, new[] { "configurationId", "tenantId", "clientId", "subscriptionId", "resourceGroup", "accountName" });
+                    var armOwner = Find(payload);
+                    if (armOwner.Kind != ProviderKind.Azure) throw new ProviderException("invalid_configuration");
+                    var tenantId = RequiredString(payload, "tenantId", 36);
+                    var clientId = RequiredString(payload, "clientId", 36);
+                    AzureArmConfiguration arm;
+                    try
+                    {
+                        arm = new AzureArmConfiguration(
+                            RequiredString(payload, "subscriptionId", 36),
+                            RequiredString(payload, "resourceGroup", 90),
+                            RequiredString(payload, "accountName", 64));
+                    }
+                    catch (ArgumentException) { throw new ProviderException("invalid_configuration"); }
+                    armOwner.Arm = arm;
+                    var deploymentNames = await AzureArmInventory.ListDeploymentsAsync(arm, tenantId, clientId, async code =>
+                    {
+                        await Reply(send, id, "byok.event", new
+                        {
+                            kind = "Notice", code = "azure_device_code", message = code.Message,
+                            verificationUri = code.VerificationUrl, expiresIn = code.ExpiresOn - DateTimeOffset.UtcNow
+                        }).ConfigureAwait(false);
+                    }, http, cancellationToken).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { deployments = deploymentNames, arm = new { arm.SubscriptionId, arm.ResourceGroup, arm.AccountName } }).ConfigureAwait(false);
+                    break;
+                }
                 case "byok.agents.delegate":
                 {
                     Require(payload, new[] { "name", "task", "mode" });
@@ -403,7 +433,7 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { configurations = configurations.Select(ConfigurationView).ToArray(), remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.configure":
-                    Require(payload, new[] { "id", "providerId", "kind", "baseUrl", "key" }, new[] { "deploymentNames" });
+                    Require(payload, new[] { "id", "providerId", "kind", "baseUrl", "key" }, new[] { "deploymentNames", "arm" });
                     var kindText = RequiredString(payload, "kind", 32);
                     if (!Enum.TryParse<ProviderKind>(kindText, out var kind) || !Enum.IsDefined(typeof(ProviderKind), kind)) throw new ProviderException("invalid_message");
                     var names = JsonWire.Array(JsonWire.Get(payload, "deploymentNames")).Select(value => value.GetString()!).ToArray();
@@ -411,6 +441,15 @@ public sealed class ByokSession : IDisposable
                     HttpTransport.ValidateBaseUrl(baseUrl);
                     var configuration = new ProviderConfiguration(RequiredString(payload, "id", 36), RequiredString(payload, "providerId", 64), kind, baseUrl, null, names);
                     var secret = RequiredString(payload, "key", 4096, true);
+                    if (JsonWire.Get(payload, "arm").ValueKind == JsonValueKind.Object)
+                    {
+                        var arm = JsonWire.Get(payload, "arm");
+                        if (arm.TryGetProperty("subscriptionId", out var sub) && arm.TryGetProperty("resourceGroup", out var rg) && arm.TryGetProperty("accountName", out var acc))
+                        {
+                            try { configuration.Arm = new AzureArmConfiguration(sub.GetString()!, rg.GetString()!, acc.GetString()!); }
+                            catch (ArgumentException) { throw new ProviderException("invalid_configuration"); }
+                        }
+                    }
                     var existing = configurations.FirstOrDefault(value => value.Id == configuration.Id);
                     if (existing is not null && (existing.Kind != configuration.Kind || existing.ProviderId != configuration.ProviderId || existing.BaseUrl != configuration.BaseUrl))
                         throw new ProviderException("invalid_configuration");
@@ -754,7 +793,15 @@ public sealed class ByokSession : IDisposable
         if (agentSource is null) return AgentSnapshot.Empty;
         var snapshot = await agentSource.DiscoverAsync(cancellationToken).ConfigureAwait(false);
         if (agentRegistry is not null)
-            agentRegistry.Replace(snapshot.Agents.Select(agent => (AgentBase)new MarkdownAgent(agent)));
+        {
+            var agents = snapshot.Agents.Select(agent =>
+            {
+                if (agent.HasModelConfig)
+                    return (AgentBase)new ModelAgent(agent, providers, credentials);
+                return (AgentBase)new MarkdownAgent(agent);
+            });
+            agentRegistry.Replace(agents);
+        }
         return snapshot;
     }
 
@@ -858,7 +905,7 @@ public sealed class ByokSession : IDisposable
         return configurations.FirstOrDefault(value => value.Id == id) ?? throw new ProviderException("provider_not_found");
     }
     private ModelInfo FindModel(ProviderConfiguration configuration, string modelId) => models.TryGetValue(configuration.Id, out var catalog) ? catalog.FirstOrDefault(value => value.ModelId == modelId) ?? throw new ProviderException("model_not_found") : throw new ProviderException("model_not_found");
-    private static object ConfigurationView(ProviderConfiguration configuration) => new { id = configuration.Id, providerId = configuration.ProviderId, kind = configuration.Kind.ToString(), baseUrl = configuration.BaseUrl, selectedModelId = configuration.SelectedModelId, deploymentNames = configuration.DeploymentNames };
+    private static object ConfigurationView(ProviderConfiguration configuration) => new { id = configuration.Id, providerId = configuration.ProviderId, kind = configuration.Kind.ToString(), baseUrl = configuration.BaseUrl, selectedModelId = configuration.SelectedModelId, deploymentNames = configuration.DeploymentNames, arm = configuration.Arm != null ? new { configuration.Arm.SubscriptionId, configuration.Arm.ResourceGroup, configuration.Arm.AccountName } : null };
     private static object CatalogView(ProviderConfiguration configuration, CatalogResult result) => new
   {
     configuration = ConfigurationView(configuration),
@@ -936,5 +983,6 @@ public sealed class ByokSession : IDisposable
             foreach (var pending in approvals.Values) pending.Decision.TrySetCanceled();
             approvals.Clear();
         }
+        http.Dispose();
     }
 }

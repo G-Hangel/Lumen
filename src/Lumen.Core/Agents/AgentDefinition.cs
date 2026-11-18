@@ -4,9 +4,11 @@ namespace Lumen.Core.Agents;
 
 public sealed class AgentDefinition
 {
-    public AgentDefinition(string name, string description, string body, string source, AgentScope scope, string directory)
+    public AgentDefinition(string name, string description, string body, string source, AgentScope scope, string directory,
+        string? providerKind = null, string? modelId = null, int? maxTokens = null, int? maxTurns = null)
     {
         Name = name; Description = description; Body = body; Source = source; Scope = scope; Directory = directory;
+        ProviderKind = providerKind; ModelId = modelId; MaxTokens = maxTokens; MaxTurns = maxTurns;
     }
 
     public string Name { get; }
@@ -15,6 +17,11 @@ public sealed class AgentDefinition
     public string Source { get; }
     public AgentScope Scope { get; }
     public string Directory { get; }
+    public string? ProviderKind { get; }
+    public string? ModelId { get; }
+    public int? MaxTokens { get; }
+    public int? MaxTurns { get; }
+    public bool HasModelConfig => !string.IsNullOrEmpty(ProviderKind) && !string.IsNullOrEmpty(ModelId);
 }
 
 public sealed class AgentDiagnostic

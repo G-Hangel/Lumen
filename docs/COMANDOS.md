@@ -1048,6 +1048,102 @@ Antes de rodar o verificador, reconstrua o VSIX: a primeira execução revelou
 que `ToolChatLoop` rejeitava argumentos de `delegate_agent` (`invalid_arguments`);
 a correção e o teste de sessão estão no commit do fechamento.
 
+### Fatia 9d — ModelAgent: chamada de modelo por subagente (2026-11-17)
+
+Resolve a limitação "não há chamadas de modelo por subagente" permitindo que
+agentes em `AGENT.md` definam `provider`, `model`, `max_tokens`, `max_turns` no
+frontmatter e executem chamadas reais via provedor — **sem gastar créditos** (testes
+usam mocks/fakes; 0 chamadas pagas; validação na Exp com Ollama local).
+
+**Build e testes C#:**
+
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:quiet
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~Agent" --nologo
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo
+```
+
+**Testes UI:**
+
+```bash
+npm run check:ui
+npm run check:package
+```
+
+**Verificação na Exp (`25e762c6`) com Ollama local:**
+
+```bash
+# 1. Ollama rodando localmente
+ollama serve  # se não estiver rodando
+ollama pull qwen3.5:2b-q4_K_M
+
+# 2. Build, deploy e abrir Exp
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:quiet
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Install -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Open -InstanceId 25e762c6
+
+# 3. Preparar fixture de contexto (cria solução, buffer, etc.)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/context-experimental.ps1 -Action Prepare -InstanceId 25e762c6
+
+# 4. Criar agente ModelAgent no projeto da fixture
+mkdir artifacts\context-<guid>\.lumen\agents\ollama-coder
+# Escrever AGENT.md com frontmatter (veja abaixo)
+
+# 5. Via CDP (porta 9223): configurar provedor Ollama, descobrir modelo, selecionar, modo Agent, delegar
+# O script abaixo automatiza via chrome.webview.postMessage:
+node scripts/verify-modelagent-webview.mjs verify
+node scripts/verify-modelagent-webview.mjs cleanup
+
+# 6. Cleanup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/context-experimental.ps1 -Action Cleanup -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/open-experimental.ps1 -Action Close -InstanceId 25e762c6
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-experimental.ps1 -Action Verify -InstanceId 25e762c6
+```
+
+**AGENT.md do agente `ollama-coder` (criar em passo 4):**
+
+```yaml
+---
+name: ollama-coder
+description: A coding assistant that uses local Ollama model to help with code tasks
+provider: Ollama
+model: qwen3.5:2b-q4_K_M
+max_tokens: 2048
+max_turns: 3
+---
+
+You are a helpful coding assistant running on a local Ollama model.
+When given a task, provide clear, concise code solutions.
+Focus on practical implementations without unnecessary complexity.
+```
+
+**Fluxo CDP automatizado (`verify-modelagent-webview.mjs`):**
+
+1. `byok.discover` (configuração Ollama existente ou cria nova via `byok.configure`)
+2. `byok.select` (modelId: `qwen3.5:2b-q4_K_M`)
+3. `byok.mode` (mode: `Agent`)
+4. `byok.chat` (text: "Please delegate to the ollama-coder agent to write a simple hello world function in JavaScript", mode: `Agent`, readTools: true)
+5. Aguarda eventos `byok.event` com `TextDelta` do streaming, tool calls, turnos
+6. Valida: `ModelAgent` recebeu delegação, histórico isolado, `MaxTurns` respeitado, resultado devolvido ao chat principal
+
+**Controles negativos (rodam em testes C#, 0 chamadas pagas):**
+
+```bash
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter "ModelAgentTests" --nologo
+```
+
+- `provider: InvalidProvider` → diagnóstico `provider_invalid`, agente não vira `ModelAgent`
+- `model: ""` → diagnóstico `model_missing`, continua como `MarkdownAgent`
+- `max_tokens: 0` ou `>128000` → diagnóstico `max_tokens_range`
+- `max_turns: 0` ou `>16` → diagnóstico `max_turns_range`
+- `ModelAgent` atinge `MaxTurns` → encerra com `error: "max_turns_exceeded"`
+- Histórico isolado: mensagens do subagente não vazam para chat principal
+- `RejectSecret` no resultado do subagente → chave sintética barrada antes do provider, envelope `error` sem vazar
+
+**Resultado final:** Build Release 0 erros/0 avisos; suíte .NET **1.662/1.664** (2 falhas pré-existentes em `WorkspaceShellToolsTests` — `pwsh` AppExecutionAlias "Access denied"); testes `Agent` **85/85**; UI **228/228**; pacote **2/2**. **0 chamadas pagas**.
+
 ### Fatia 8c — entrega e diagnóstico (2026-11-17)
 
 ```bash
@@ -1089,3 +1185,42 @@ Resultado final: 1.661/1.661 .NET, 230/230 UI, 3/3 pacote, build 0/0.
 `vswhere -prerelease -all` encontrou apenas o Insiders `25e762c6`; nenhum VS 18
 estável está instalado, então o teste estável foi registrado como indisponível,
 sem alterar o ambiente.
+
+### B8 — Azure ARM inventory manual + OAuth Device Code opt-in (2026-11-17)
+
+**Pré-requisito:** app registration Entra (public client/native) com
+`https://management.azure.com/.default` scope e tenant ID, client ID conhecidos.
+
+**UI (painel BYOK → Azure):**
+1. Preencher Subscription ID (GUID), Resource Group, Cognitive Services Account.
+2. Preencher Entra Tenant ID (GUID) e App Registration Client ID (GUID).
+3. Botão "Entrar e listar deployments" habilita quando todos os 5 campos preenchidos.
+4. Fluxo Device Code: abre navegador em `https://microsoft.com/devicelogin`, mostra
+   código e URI; usuário autentica; token Bearer armazenado apenas em memória.
+4b. Silent acquisition tenta cache MSAL primeiro; falha cai no Device Code.
+5. Requisição ARM: `GET https://management.azure.com/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{account}/deployments?api-version=2025-06-01` com `Authorization: Bearer <token>`.
+6. Nomes válidos (sem `/`, `?`, `#`, `@`, espaço, até 64 chars) preenchem o campo
+   Deployments na UI; status ARIA live region mostra contagem.
+7. Configuração ARM persiste junto ao provider BYOK (`arm` object).
+
+**Testes de controle negativo (rodam em mock/fake, 0 chamadas Azure):**
+```bash
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter "AzureArmInventoryTests"
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --filter "CatalogProviderTests&Azure"
+```
+
+**Build e testes completos:**
+```bash
+dotnet clean Lumen.sln -c Release --nologo -v:quiet
+dotnet build Lumen.sln -c Release --nologo -v:quiet
+dotnet test tests/Lumen.Tests/Lumen.Tests.csproj -c Release --no-build --nologo
+```
+
+Resultado: 1.664 testes .NET (1 falha ambiental conhecida em
+`WorkspaceShellToolsTests.DetectedShellsExecuteOnlyAfterApproval`), UI 230/230,
+pacote 3/3, build 0/0.
+
+**Limitações honestas:** sem credencial real, o fluxo OAuth não é exercitado na Exp;
+todos os testes usam mocks/fakes. OAuth real exige autorização escrita e credencial
+de teste do usuário (AGENTS.md §2). O adapter continua a exigir `deploymentNames`
+informados; sem eles retorna `deployment_required`.

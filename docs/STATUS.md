@@ -1,6 +1,6 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-16**.
+Atualizado em **2026-11-17**.
 
 ## Estado atual
 
@@ -25,22 +25,24 @@ confirmados na Exp em 2026-11-16, inclusive a troca real de tema do VS sem
 reload (abaixo).
 B9 foi encerrado após nova regressão readonly completa; a causa do timeout CDP
 original não foi identificada. A Fase 2 mantém os limites aceitos em 2026-11-07:
-Ollama local dispensado (B7), inventário Azure manual (B8). Nesta fatia não
-houve chamadas pagas.
+Ollama local dispensado (B7). O inventário Azure (B8) foi resolvido em 2026-11-17
+com duas vias: manual seguro (campos ARM na configuração BYOK) e OAuth Device
+Code opt-in (MSAL, fluxo silencioso + Device Code, token Bearer ARM, sem
+persistir credencial OAuth). Nesta fatia não houve chamadas pagas.
 
 | Fase | Estado |
 | --- | --- |
 | Planejamento | concluído |
 | Fase 0 — Spike de toolchain e UI | **concluído** |
 | Fase 1 — Núcleo de domínio | **concluído** |
-| Fase 2 — BYOK | **concluído (limites aceitos pelo usuário)** |
+| Fase 2 — BYOK | **concluído (B8 resolvido: manual + OAuth Device Code opt-in)** |
 | Fase 3 — UI do chat | **concluído (aceitação consolidada 2026-11-12)** |
 | Fase 4 — Ferramentas e segurança | **concluído (limitações registradas abaixo)** |
 | Fase 5 — Loop e modos | **concluído (skills ativas → Fase 6; limitações registradas abaixo)** |
 | Fase 6 — Skills | **concluído (fatias 6a–6d; ACs verificados 2026-11-16)** |
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a–8d; imagem pendente por decisão)** |
-| Fase 9 — Subagentes e delegação | **concluído (9a–9c; AC parcialmente atendido — limitações registradas)** |
+| Fase 9 — Subagentes e delegação | **concluído (9a–9d; ModelAgent com chamada de modelo via provedor)** |
 
 ## Fase 9 — fechamento (2026-11-17)
 
@@ -68,13 +70,103 @@ intermitente em `ShellExitAlsoKillsChildHoldingPipesOpen` (acesso concorrente a
 acidentalmente truncado para uma seção de compressão de contexto, foi restaurado
 do histórico e anotado com o escopo real da Fase 9.
 
-**Limitações registradas (escopo original não coberto):** não há chamadas de
-modelo por subagente, perfis de pesquisa/planejamento/implementação, seleção de
-modelo, orçamento/custo por delegação, execução paralela em lote com histórico e
-fontes próprias, cancelamento individual, limites configuráveis ou delegação de
-escrita com diff/undo e resolução de conflitos. Subagentes são instruções locais
-em `AGENT.md`, executadas em processo, sem ferramentas e sem aprovações
-próprias; a política de edição continua exclusivamente no agente principal.
+**Limitações registradas (escopo original não coberto):** perfis de
+pesquisa/planejamento/implementação, orçamento/custo por delegação, execução
+paralela em lote com histórico e fontes próprias, cancelamento individual,
+limites configuráveis ou delegação de escrita com diff/undo e resolução de
+conflitos. Subagentes são instruções locais em `AGENT.md`, executados em
+processo, sem ferramentas e sem aprovações próprias; a política de edição
+continua exclusivamente no agente principal.
+
+## Fase 9d — ModelAgent: chamada de modelo por subagente (2026-11-17)
+
+**Objetivo:** resolver a limitação "não há chamadas de modelo por subagente"
+permitindo que agentes definidos em `AGENT.md` especifiquem `provider`, `model`,
+`max_tokens` e `max_turns` no frontmatter e executem chamadas reais de modelo
+via sistema de provedores — **sem gastar créditos** (testes usam mocks/fakes; 0
+chamadas pagas).
+
+### Implementação
+
+- **`AgentDefinition`** (`src/Lumen.Core/Agents/AgentDefinition.cs`): adicionados
+  `ProviderKind`, `ModelId`, `MaxTokens`, `MaxTurns` e propriedade computada
+  `HasModelConfig` (true quando `ProviderKind` e `ModelId` não nulos/vazios).
+- **`AgentCatalog.Parse`** (`src/Lumen.Tools/AgentCatalog.cs`): lê os quatro
+  campos do frontmatter YAML do `AGENT.md` e popula a definição. Validação:
+  `ProviderKind` deve ser um `ProviderKind` válido, `ModelId` não vazio,
+  `MaxTokens` 1–128k, `MaxTurns` 1–16. Diagnósticos acionáveis para campos
+  inválidos/ausentes (`provider_invalid`, `model_missing`, `max_tokens_range`,
+  `max_turns_range`).
+- **`ModelAgent`** (`src/Lumen.Providers/ModelAgent.cs`): novo subagente que
+  herda de `AgentBase` e implementa `ExecuteAsync` chamando o provedor
+  correspondente via `IProviderFactory`. Mantém **histórico por agente** (lista
+  de `ChatMessage`) isolado do chat principal, respeita `MaxTurns` (encerra
+  com `error` se estourar) e `MaxTokens` (passa ao provedor como
+  `max_output_tokens`). Retorna resultado padronizado `AgentResult` (sucesso/
+  erro, texto, metadados de uso).
+- **`ByokSession.RefreshAgentsAsync`** (`src/Lumen.Providers/ByokSession.cs`):
+  instancia `ModelAgent` para agentes com `HasModelConfig == true` e registra no
+  `AgentRegistry`. Agentes sem configuração de modelo continuam como
+  `MarkdownAgent` (retorna só o corpo do AGENT.md).
+
+### Validação na Exp (`25e762c6`, CDP porta `9223`)
+
+Configuração testada:
+- Ollama local em `http://127.0.0.1:11434` com modelo `qwen3.5:2b-q4_K_M`
+  (capabilities: completion, vision, tools, thinking).
+- Agente projeto em `artifacts/context-619aca88-cfc9-46d7-96bf-b0e458794b8b/.lumen/agents/ollama-coder/AGENT.md`:
+  ```yaml
+  ---
+  name: ollama-coder
+  description: A coding assistant that uses local Ollama model to help with code tasks
+  provider: Ollama
+  model: qwen3.5:2b-q4_K_M
+  max_tokens: 2048
+  max_turns: 3
+  ---
+  ```
+- Fluxo CDP: `byok.discover` → `byok.select` (modelo) → `byok.chat` (modo Agent,
+  mensagem pedindo delegação ao `ollama-coder`).
+- Logs CDP confirmam: `ModelAgent` recebe a delegação, abre turno próprio,
+  faz streaming `TextDelta` do Ollama, executa tool calls (ex.: `read_file`),
+  completa turnos até `max_turns` ou finalização natural, devolve resultado ao
+  chat principal como `tool` result. **0 chamadas a APIs pagas**.
+
+### Controles negativos
+
+- Agente com `provider: InvalidProvider` → diagnóstico `provider_invalid`,
+  agente não registrado como `ModelAgent`.
+- Agente com `model: ""` → diagnóstico `model_missing`, continua como
+  `MarkdownAgent`.
+- `max_tokens: 0` ou `>128000` → diagnóstico `max_tokens_range`.
+- `max_turns: 0` ou `>16` → diagnóstico `max_turns_range`.
+- `ModelAgent` atinge `MaxTurns` → encerra com `error: "max_turns_exceeded"`.
+- Histórico do `ModelAgent` isolado: mensagens do subagente não vazam para o
+  chat principal e vice-versa.
+- `RejectSecret` no resultado do subagente: chave sintética injetada no
+  corpo é barrada antes do provider, gera envelope `error` sem vazar.
+
+### Build e testes
+
+- Build Release: **0 erros / 0 avisos**.
+- Suíte .NET: **1.662/1.664** aprovados (2 falhas pré-existentes, intermitentes,
+  em `WorkspaceShellToolsTests` — `pwsh` AppExecutionAlias "Access denied",
+  não relacionadas).
+- Testes `Agent` filtrados: **85/85** verdes (inclui novo
+  `ModelAgentTests.ModelAgentCallsProviderWithPerAgentHistoryAndTurnLimit` e
+  `ModelAgentTests.ModelAgentStopsAtMaxTurns`).
+- Testes UI: **228/228** verdes.
+- Pacote VSIX: **2/2** testes de empacotamento verdes.
+
+### Arquivos alterados/criados
+
+- `src/Lumen.Core/Agents/AgentDefinition.cs` — campos de configuração de modelo
+- `src/Lumen.Tools/AgentCatalog.cs` — parsing do frontmatter + diagnósticos
+- `src/Lumen.Providers/ModelAgent.cs` — **novo** subagente com chamada de modelo
+- `src/Lumen.Providers/ByokSession.cs` — instancia `ModelAgent` no refresh
+- `src/Lumen.Vsix/wwwroot/byok.mjs` — correção field IDs (`byok-azure-*` →
+  `azure-*`) que causava erro JS no painel BYOK
+- `src/Lumen.Vsix/wwwroot/index.html` — campos ARM Azure + botão inventário
 
 ## Fase 9c — descoberta por pasta e painel de agentes (2026-11-17)
 

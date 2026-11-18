@@ -49,6 +49,7 @@ const codes = new Set(['invalid_message', 'invalid_response', 'bridge_unavailabl
   'output_too_large', 'file_too_large', 'binary_file', 'workspace_unavailable', 'tool_budget_exceeded',
   'file_exists', 'undo_failed', 'undo_conflict', 'edit_conflict', 'journal_limit', 'mode_denied',
   'approval_denied', 'command_blocked', 'command_timeout', 'command_failed', 'skill_unavailable', 'invalid_configuration',
+  'invalid_azure_app_registration', 'azure_auth_failed', 'azure_rbac_denied',
   'agent_unavailable', 'unknown_agent', 'invalid_task', 'invalid_agent_name', 'duplicate_agent', 'depth_exceeded',
   'registry_disposed', 'delegation_failed', 'invalid_result', 'missing_frontmatter', 'name_mismatch', 'invalid_field']);
 const execution = value => ['Running', 'Completed', 'Failed', 'Cancelled'].includes(value.status)
@@ -274,6 +275,10 @@ export function isByokEnvelope(value) {
     case 'byok.tool.write.result': return writeToolResult(p);
     case 'byok.tool.write.status.result': return fields(p, ['pending']) && pendingWrites(p.pending);
     case 'byok.tool.write.undo.result': return fields(p, ['undone', 'pending']) && p.undone === true && pendingWrites(p.pending);
+    case 'byok.azure.arm.list.result': return fields(p, ['deployments', 'arm'])
+      && list(p.deployments, 256, name => typeof name === 'string' && name.length <= 64)
+      && fields(p.arm, ['subscriptionId', 'resourceGroup', 'accountName'])
+      && typeof p.arm.subscriptionId === 'string' && typeof p.arm.resourceGroup === 'string' && typeof p.arm.accountName === 'string';
     case 'byok.agents.list.result': return fields(p, ['agents', 'diagnostics'])
       && list(p.agents, 64, value => fields(value, ['name', 'description', 'source', 'scope'])
         && typeof value.name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) && value.name.length <= 64
@@ -308,6 +313,9 @@ function validRequest(type, p) {
     case 'byok.tool.write.undo': case 'byok.tool.write.status': return fields(p, []);
     case 'byok.theme.get': case 'byok.theme.reset': case 'byok.agents.list':
     case 'byok.log.get': case 'byok.log.open': return fields(p, []);
+    case 'byok.azure.arm.list': return fields(p, ['configurationId', 'tenantId', 'clientId', 'subscriptionId', 'resourceGroup', 'accountName'])
+      && guid(p.configurationId) && typeof p.tenantId === 'string' && typeof p.clientId === 'string'
+      && typeof p.subscriptionId === 'string' && typeof p.resourceGroup === 'string' && typeof p.accountName === 'string';
     case 'byok.log.set': return fields(p, ['level']) && typeof p.level === 'string' && ['Error', 'Warning', 'Info', 'Debug'].includes(p.level);
     case 'byok.agents.delegate': return fields(p, ['name', 'task', 'mode']) && typeof p.name === 'string' && p.name.length <= 64
       && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(p.name) && string(p.task, 4096) && p.mode === 'Agent';
@@ -317,9 +325,12 @@ function validRequest(type, p) {
       && Number.isInteger(p.offset) && p.offset >= 0 && p.offset <= 10000 && Number.isInteger(p.limit) && p.limit >= 1 && p.limit <= 10;
     case 'byok.history.rename': return fields(p, ['conversationId', 'title']) && guid(p.conversationId) && string(p.title, 160);
     case 'byok.history.delete': return fields(p, ['conversationId', 'confirm']) && guid(p.conversationId) && p.confirm === true;
-    case 'byok.configure': return fields(p, ['id', 'providerId', 'kind', 'baseUrl', 'key'], ['deploymentNames'])
+    case 'byok.configure': return fields(p, ['id', 'providerId', 'kind', 'baseUrl', 'key'], ['deploymentNames', 'arm'])
       && guid(p.id) && string(p.providerId, 64) && PROVIDER_KINDS.includes(p.kind) && validUrl(p.baseUrl)
-      && string(p.key, 4096, true) && !/[\r\n]/.test(p.key) && (!Object.hasOwn(p, 'deploymentNames') || deployments(p.deploymentNames));
+      && string(p.key, 4096, true) && !/[\r\n]/.test(p.key)
+      && (!Object.hasOwn(p, 'deploymentNames') || deployments(p.deploymentNames))
+      && (!Object.hasOwn(p, 'arm') || (p.arm === null || (fields(p.arm, ['subscriptionId', 'resourceGroup', 'accountName'])
+        && guid(p.arm.subscriptionId) && string(p.arm.resourceGroup, 90) && string(p.arm.accountName, 64))));
     case 'byok.discover': return fields(p, ['configurationId']) && guid(p.configurationId);
     case 'byok.probe': return fields(p, ['configurationId', 'capability', 'consent']) && guid(p.configurationId)
       && PROBE_CAPABILITIES.includes(p.capability) && p.consent === true;
@@ -367,7 +378,7 @@ export class ByokBridge {
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
       'byok.skills.list', 'byok.skills.set', 'byok.skills.write', 'byok.skills.undo', 'byok.skills.open',
       'byok.theme.get', 'byok.theme.set', 'byok.theme.reset', 'byok.agents.list', 'byok.agents.delegate',
-      'byok.log.get', 'byok.log.set', 'byok.log.open',
+      'byok.log.get', 'byok.log.set', 'byok.log.open', 'byok.azure.arm.list',
       'byok.approval.respond'].includes(type)) return Promise.reject(new ByokError('unsupported_type'));
     if (!validRequest(type, payload) || (type === 'byok.probe' && expectedModelId !== undefined && !string(expectedModelId, 512))) return Promise.reject(new ByokError('invalid_message'));
     if (this.pending.size) {

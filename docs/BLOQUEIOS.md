@@ -14,15 +14,27 @@ Display name, descrição e tags já estão no manifesto, mas `Icon` e
 `PreviewImage` não foram criados. Decisão do usuário em 2026-11-17: adiar;
 não gerar imagem por IA nesta fatia. Não bloqueia build, testes ou instalação.
 
-### B8 - Azure: inventory de deployments requer Entra/RBAC
+### B8 - Azure: inventory de deployments requer Entra/RBAC — **RESOLVIDO 2026-11-17**
 
 A rota data-plane prevista não foi confirmada pela documentação oficial.
 `GET /openai/v1/models` valida a chave, mas lista ofertas, não nomes de deployments.
 A listagem ARM exige token Entra/RBAC; chave BYOK do recurso é insuficiente.
-O adapter exige nomes informados e retorna `deployment_required` se faltarem.
-Fontes e rota ARM exata em `PESQUISA.md` §1.1; descoberta automática permanece limitada.
-**Status:** aceito como limitação pelo usuário em 2026-11-07 ao instruir o avanço
-para a Fase 3; deployments manuais funcionam. Não bloqueia as próximas fases.
+
+**Resolução implementada (duas vias):**
+1. **Manual seguro** — campos ARM (Subscription ID, Resource Group, Account Name) na configuração BYOK Azure; validação de segmentos, dedupe, persistência junto ao provider. O adapter continua a exigir `deploymentNames` informados; sem eles retorna `deployment_required`.
+2. **OAuth Device Code opt-in** — botão "Sign in and list deployments" abre fluxo Device Code (MSAL `PublicClientApplicationBuilder`, scope `https://management.azure.com/.default`), autenticação silenciosa com fallback a Device Code, token Bearer no `Authorization` header ARM, listagem `GET /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{account}/deployments?api-version=2025-06-01`, preenche `deploymentNames` na UI. Credencial OAuth **não persiste** (apenas token em memória, contas MSAL no cache do usuário).
+
+**Testes de controle negativo:**
+- `AzureArmInventoryTests.ArmConfigurationRejectsUnsafeSegmentsAndTenantIds` — segmentos ARM rejeitam `../`, `?`, `#`, `@`, espaço, controles.
+- `AzureArmInventoryTests.DeviceCodeInventoryRejectsMalformedAppRegistration` — tenant/client malformados → `invalid_azure_app_registration`.
+- `AzureArmInventoryTests.ArmInventoryIsAHostedFeatureOnlyAndNeverUsesApiKey` — chamada sem tenant/client válidos falha antes de rede.
+- `CatalogProviderTests` existentes: `AzureOfferingsValidateKeyButNeverPretendToBeDeploymentInventory`, `AzureReturnsOnlyConfiguredNamesAndUsesDeploymentInPayloadAndV1Path`, `AzureRejectsModelOfferingsOrUnconfiguredDeploymentBeforeChat` — continuam verdes.
+
+**UI:** painel BYOK Azure mostra Subscription ID, Resource Group, Account, Tenant ID, Client ID; botão habilita só quando Azure + todos os 5 campos preenchidos; status ARIA live region. Sem `Icon`/`PreviewImage` (B12).
+
+**Sem chamada paga:** todos os testes usam mocks/fakes; zero custo Azure. OAuth real só com credencial de teste fornecida pelo usuário e autorização por escrito (AGENTS.md §2).
+
+**Não bloqueia mais as próximas fases.**
 
 ### B2 — Disco com pouco espaço
 

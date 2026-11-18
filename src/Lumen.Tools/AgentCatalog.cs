@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Lumen.Core.Agents;
+using Lumen.Core.Domain;
 
 namespace Lumen.Tools;
 
@@ -74,13 +76,13 @@ public static class AgentCatalog
                 {
                     string text;
                     using (var stream = guard.OpenRead(name + "\\AGENT.md")) text = SkillText.Read(stream, MaxFileChars);
-                    var (description, body) = Parse(text, name);
+                    var (description, body, providerKind, modelId, maxTokens, maxTurns) = Parse(text, name);
                     if (agents.Any(agent => agent.Name == name))
                     {
                         diagnostics.Add(new AgentDiagnostic(label, "duplicate_name", "An agent with this name is already defined in a higher-precedence location."));
                         continue;
                     }
-                    agents.Add(new AgentDefinition(name, description, body, location.Source, location.Scope, guard.Root + "\\" + name));
+                    agents.Add(new AgentDefinition(name, description, body, location.Source, location.Scope, guard.Root + "\\" + name, providerKind, modelId, maxTokens, maxTurns));
                 }
                 catch (AgentValidationException exception) { diagnostics.Add(new AgentDiagnostic(label, exception.Code, exception.Message)); }
                 catch (ToolException) { diagnostics.Add(new AgentDiagnostic(label, "missing_agent_file", "AGENT.md is missing or unreadable.")); }
@@ -93,7 +95,7 @@ public static class AgentCatalog
         return new AgentSnapshot(agents, diagnostics);
     }
 
-    private static (string Description, string Body) Parse(string text, string folder)
+    private static (string Description, string Body, string? ProviderKind, string? ModelId, int? MaxTokens, int? MaxTurns) Parse(string text, string folder)
     {
         if (text.Length > 0 && text[0] == '\uFEFF') text = text.Substring(1);
         for (var index = 0; index < text.Length; index++)
@@ -106,7 +108,8 @@ public static class AgentCatalog
         if (lines.Length == 0 || lines[0].TrimEnd() != "---") throw new AgentValidationException("missing_frontmatter", "AGENT.md must start with '---'.");
         var end = Array.FindIndex(lines, 1, value => value.TrimEnd() == "---");
         if (end < 0) throw new AgentValidationException("unterminated_frontmatter", "AGENT.md has no closing '---' line.");
-        string? name = null, description = null;
+        string? name = null, description = null, providerKind = null, modelId = null;
+        int? maxTokens = null, maxTurns = null;
         for (var index = 1; index < end; index++)
         {
             var line = lines[index].Trim();
@@ -117,15 +120,21 @@ public static class AgentCatalog
             var value = line.Substring(colon + 1).Trim().Trim('"');
             if (key == "name") name = value;
             else if (key == "description") description = value;
+            else if (key == "provider") providerKind = value;
+            else if (key == "model") modelId = value;
+            else if (key == "max_tokens" && int.TryParse(value, out var mt)) maxTokens = mt;
+            else if (key == "max_turns" && int.TryParse(value, out var mtr)) maxTurns = mtr;
             else throw new AgentValidationException("invalid_field", "Unknown field '" + key + "' in AGENT.md.");
         }
         if (!AgentRegistry.IsValidName(name ?? string.Empty)) throw new AgentValidationException("invalid_name", "Agent name must be lowercase letters, digits and single hyphens.");
         if (!string.Equals(name, folder, StringComparison.Ordinal)) throw new AgentValidationException("name_mismatch", "name '" + name + "' must match folder '" + folder + "'.");
         if (string.IsNullOrWhiteSpace(description) || description!.Length > MaxDescriptionChars)
             throw new AgentValidationException("invalid_description", "description must have 1-" + MaxDescriptionChars + " characters.");
+        if ((providerKind is null) != (modelId is null))
+            throw new AgentValidationException("invalid_model_config", "Both 'provider' and 'model' must be specified together, or neither.");
         var body = string.Join("\n", lines.Skip(end + 1)).Trim();
         if (body.Length == 0) throw new AgentValidationException("missing_body", "AGENT.md needs instructions after the frontmatter.");
-        return (description!, body);
+        return (description!, body, providerKind, modelId, maxTokens, maxTurns);
     }
 }
 

@@ -156,6 +156,18 @@
                   <label for="byok-deployments" data-i18n="byokDeployments"></label>
                   <textarea id="byok-deployments" rows="2" maxlength="8192" spellcheck="false" aria-describedby="byok-deployments-help"></textarea>
                   <p id="byok-deployments-help" class="secondary" data-i18n="byokDeploymentsHelp"></p>
+                  <label for="byok-azure-subscription" data-i18n="byokAzureSubscription"></label>
+                  <input id="byok-azure-subscription" type="text" maxlength="36" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000">
+                  <label for="byok-azure-resource-group" data-i18n="byokAzureResourceGroup"></label>
+                  <input id="byok-azure-resource-group" type="text" maxlength="90" spellcheck="false">
+                  <label for="byok-azure-account" data-i18n="byokAzureAccount"></label>
+                  <input id="byok-azure-account" type="text" maxlength="64" spellcheck="false">
+                  <label for="byok-azure-tenant" data-i18n="byokAzureTenant"></label>
+                  <input id="byok-azure-tenant" type="text" maxlength="36" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000">
+                  <label for="byok-azure-client" data-i18n="byokAzureClient"></label>
+                  <input id="byok-azure-client" type="text" maxlength="36" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000">
+                  <button id="byok-azure-inventory" type="button" class="text-button" data-i18n="byokAzureInventory" disabled></button>
+                  <p id="byok-azure-inventory-status" class="secondary" role="status" aria-live="polite"></p>
                 </div>
                 <p class="secondary" data-i18n="byokListingNote"></p>
                 <button id="byok-configure-button" type="submit" class="text-button" data-i18n="byokConfigure" disabled></button>

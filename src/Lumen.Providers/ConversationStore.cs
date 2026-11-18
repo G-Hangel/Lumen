@@ -72,7 +72,7 @@ public sealed class StoredConversation
                 }
             }
         }
-        if (TurnStates.Any(state => state != "completed" && state != "cancelled" && state != "failed"))
+        if (TurnStates.Any(state => state != "completed" && state != "cancelled" && state != "failed" && state != "paused"))
             throw new ProviderException("history_corrupt");
     }
 

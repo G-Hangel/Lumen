@@ -136,7 +136,7 @@ export function isByokEvent(value) {
     case 'Done': return fields(value, ['kind', 'reason']) && ['Stop', 'MaxTokens', 'ToolUse', 'ContentFiltered', 'Cancelled', 'Other'].includes(value.reason);
     case 'Error': return fields(value, ['kind', 'code'], ['retryAfter']) && errorCode(value.code)
       && (!Object.hasOwn(value, 'retryAfter') || value.retryAfter === null || (Number.isSafeInteger(value.retryAfter) && value.retryAfter >= 0));
-    case 'Notice': return fields(value, ['kind', 'code']) && ['history_compacted', 'retrying'].includes(value.code);
+    case 'Notice': return fields(value, ['kind', 'code']) && ['history_compacted', 'retrying', 'tool_budget_paused'].includes(value.code);
     default: return false;
   }
 }
@@ -151,7 +151,7 @@ const historyTurn = value => fields(value, ['index', 'userText', 'hasImage', 'te
   && string(value.userText, 4096, true) && typeof value.hasImage === 'boolean'
   && string(value.text, MAX_WIRE_SIZE, true) && string(value.reasoning, MAX_WIRE_SIZE, true)
   && list(value.tools, 128, historyTool)
-  && unique(value.tools, call => call.id) && ['completed', 'cancelled', 'failed'].includes(value.status);
+  && unique(value.tools, call => call.id) && ['completed', 'cancelled', 'failed', 'paused'].includes(value.status);
 
 const toolText = (value, limit) => typeof value === 'string' && value.length >= 1 && value.length <= limit
   && !value.includes('\0') && value.isWellFormed();
@@ -271,7 +271,7 @@ export function isByokEnvelope(value) {
     case 'byok.history.rename.result': return fields(p, ['conversation']) && summary(p.conversation);
     case 'byok.history.new.result': return fields(p, ['created']) && p.created === true;
     case 'byok.history.delete.result': return fields(p, ['deleted']) && p.deleted === true;
-    case 'byok.chat.result': return fields(p, ['completed', 'conversation']) && typeof p.completed === 'boolean' && summary(p.conversation);
+    case 'byok.chat.result': return fields(p, ['completed', 'conversation'], ['paused']) && typeof p.completed === 'boolean' && (!Object.hasOwn(p, 'paused') || typeof p.paused === 'boolean') && summary(p.conversation);
     case 'byok.cancel.result': return fields(p, ['cancelled']) && p.cancelled === true;
     case 'byok.approval.respond.result': return fields(p, ['accepted']) && p.accepted === true;
     case 'byok.context.capture.result': return fields(p, ['context']) && context(p.context);
@@ -349,9 +349,9 @@ function validRequest(type, p) {
       && (!Object.hasOwn(p, 'writeTools') || typeof p.writeTools === 'boolean')
       && (!Object.hasOwn(p, 'terminal') || typeof p.terminal === 'boolean')
       && (!Object.hasOwn(p, 'budget') || (fields(p.budget, ['maxRounds', 'maxOutputTokens', 'maxInvocations'])
-        && Number.isSafeInteger(p.budget.maxRounds) && p.budget.maxRounds >= 1 && p.budget.maxRounds <= 8
-        && Number.isSafeInteger(p.budget.maxOutputTokens) && p.budget.maxOutputTokens >= 1024 && p.budget.maxOutputTokens <= 32768
-        && Number.isSafeInteger(p.budget.maxInvocations) && p.budget.maxInvocations >= 1 && p.budget.maxInvocations <= 32))
+        && Number.isSafeInteger(p.budget.maxRounds) && p.budget.maxRounds >= 1 && p.budget.maxRounds <= 64
+        && Number.isSafeInteger(p.budget.maxOutputTokens) && p.budget.maxOutputTokens >= 1024 && p.budget.maxOutputTokens <= 262144
+        && Number.isSafeInteger(p.budget.maxInvocations) && p.budget.maxInvocations >= 1 && p.budget.maxInvocations <= 256))
       && (!Object.hasOwn(p, 'contextIds') || contextIds(p.contextIds))
       && string(p.text, 4096) && EFFORTS.includes(p.effort) && (!Object.hasOwn(p, 'image') || (fields(p.image, ['mediaType', 'base64Data'])
         && IMAGE_TYPES.includes(p.image.mediaType) && string(p.image.base64Data, Math.ceil(MAX_IMAGE_BYTES / 3) * 4)

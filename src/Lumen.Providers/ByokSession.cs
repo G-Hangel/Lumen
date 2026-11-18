@@ -36,6 +36,7 @@ public sealed class ByokSession : IDisposable
     private StoredConversation? conversation;
     private readonly object activeGate = new object();
     private CancellationTokenSource? active;
+    private bool userCancelled;
     private bool loaded;
     private readonly HashSet<string> requestIds = new HashSet<string>();
     private readonly object approvalGate = new object();
@@ -99,7 +100,7 @@ public sealed class ByokSession : IDisposable
         if (type == "byok.cancel")
         {
             if (!Fields(payload, Array.Empty<string>())) { await Reply(send, id, "error", new { code = "invalid_message" }).ConfigureAwait(false); return true; }
-            lock (activeGate) active?.Cancel();
+            lock (activeGate) { userCancelled = true; active?.Cancel(); }
             await Reply(send, id, type + ".result", new { cancelled = true }).ConfigureAwait(false);
             return true;
         }
@@ -123,10 +124,11 @@ public sealed class ByokSession : IDisposable
             return true;
         }
         if (!await gate.WaitAsync(0, cancellationToken).ConfigureAwait(false)) { await Reply(send, id, "error", new { code = "bridge_busy" }).ConfigureAwait(false); return true; }
+        var callerToken = cancellationToken;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromMinutes(2));
+        deadline.CancelAfter(TimeSpan.FromMinutes(10));
         cancellationToken = deadline.Token;
-        lock (activeGate) active = deadline;
+        lock (activeGate) { userCancelled = false; active = deadline; }
         try
         {
             if (type == "byok.tool.read")
@@ -651,15 +653,23 @@ public sealed class ByokSession : IDisposable
                     if (!ReferenceEquals(input, pending)) await EmitChatEvent(new { kind = "Notice", code = "history_compacted" }).ConfigureAwait(false);
                     try
                     {
-                        if (await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
+                        var finished = await loop.RunAsync(providers.Chat(chatConfiguration.Kind), chatConfiguration, chatModel, input, effort, mode, capturedTools, toolSpecs, chatSecret,
                             streamEvent => EmitChatEvent(EventView(streamEvent)),
-                            EmitChatEvent, cancellationToken, budget, skillCatalog: skillCatalog).ConfigureAwait(false)) turnState = "completed";
+                            EmitChatEvent, cancellationToken, budget, skillCatalog: skillCatalog).ConfigureAwait(false);
+                        turnState = loop.Paused ? "paused" : finished ? "completed" : "failed";
+                        if (loop.Paused) await EmitChatEvent(new { kind = "Notice", code = "tool_budget_paused" }).ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException) { turnState = "cancelled"; throw; }
+                    catch (OperationCanceledException)
+                    {
+                        if (callerToken.IsCancellationRequested || userCancelled) { turnState = "cancelled"; throw; }
+                        turnState = "paused";
+                        await EmitChatEvent(new { kind = "Notice", code = "tool_budget_paused" }).ConfigureAwait(false);
+                    }
                     finally
                     {
                         if (loop.UnsafeResponse) throw new ProviderException("invalid_response");
                         var assistant = loop.Parts.ToList();
+                        if (turnState == "paused") assistant = Resumable(assistant);
                         if (assistant.Count == 0) assistant.Add(new TextPart(string.Empty));
                         var domain = currentConversation.Conversation;
                         var updated = new Conversation(domain.Id, mode,
@@ -676,7 +686,7 @@ public sealed class ByokSession : IDisposable
                         conversation = stored;
                     }
                     foreach (var selectedContext in selectedContexts) contexts.Remove(selectedContext);
-                    await Reply(send, id, type + ".result", new { completed = turnState == "completed", conversation = ConversationView(conversation!) }).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { completed = turnState == "completed", paused = turnState == "paused", conversation = ConversationView(conversation!) }).ConfigureAwait(false);
                     break;
                 }
                 default: throw new ProviderException("invalid_message");
@@ -832,6 +842,16 @@ public sealed class ByokSession : IDisposable
         id = value.Conversation.Id, title = value.Conversation.Title ?? string.Empty, configurationId = value.ConfigurationId,
         modelId = value.Conversation.ModelId, updatedAtUtc = value.Conversation.UpdatedAtUtc.ToString("O"), turnCount = value.TurnStates.Count
     };
+
+    // A paused turn is replayed on the next send, so every archived tool call needs a result.
+    private static List<ContentPart> Resumable(IReadOnlyList<ContentPart> source)
+    {
+        var parts = source.Where(part => !(part is UnknownPart unknown && unknown.Kind == "incompleteToolCall")).ToList();
+        var answered = new HashSet<string>(parts.OfType<ToolResultPart>().Select(result => result.InvocationId), StringComparer.Ordinal);
+        foreach (var call in parts.OfType<ToolCallPart>().Where(call => answered.Add(call.Id)))
+            parts.Add(new ToolResultPart(call.Id, true, JsonWire.Serialize(new { code = "deferred" })));
+        return parts;
+    }
 
     private static object TurnView(StoredConversation value, int index)
     {

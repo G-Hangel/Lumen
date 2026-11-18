@@ -212,7 +212,8 @@ public sealed class ReadToolChatLoopTests
         var fixture = new Fixture { Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools, maxOutputTokens: 512) };
         var executor = new Executor();
         fixture.Provider.Run = async (round, emit, _) => { for (var index = 0; index < (round == 1 ? 8 : 1); index++) await Call(emit, "r" + round + "c" + index); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(8, 32768, 8)))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(64, 32768, 8)));
+        Assert.True(fixture.Loop.Paused);
         Assert.Equal(8, executor.Calls);
         Assert.Equal(2, fixture.Provider.Requests.Count);
         Assert.All(fixture.Provider.Requests, request => Assert.Equal(512, request.MaxOutputTokens));
@@ -220,11 +221,11 @@ public sealed class ReadToolChatLoopTests
 
     [Theory]
     [InlineData(0, 8192, 8)]
-    [InlineData(9, 8192, 8)]
+    [InlineData(65, 8192, 8)]
     [InlineData(4, 1023, 8)]
-    [InlineData(4, 32769, 8)]
+    [InlineData(4, 262145, 8)]
     [InlineData(4, 8192, 0)]
-    [InlineData(4, 8192, 33)]
+    [InlineData(4, 8192, 257)]
     public void ToolBudgetRejectsOutOfRangeValues(int rounds, int tokens, int invocations)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new ToolBudget(rounds, tokens, invocations));
@@ -233,14 +234,14 @@ public sealed class ReadToolChatLoopTests
     [Fact]
     public void ToolBudgetAcceptsBoundariesAndDefaultUsesFullHeadroom()
     {
-        Assert.Equal(8, ToolBudget.Default.MaxRounds);
-        Assert.Equal(32768, ToolBudget.Default.MaxOutputTokens);
-        Assert.Equal(32, ToolBudget.Default.MaxInvocations);
+        Assert.Equal(64, ToolBudget.Default.MaxRounds);
+        Assert.Equal(262144, ToolBudget.Default.MaxOutputTokens);
+        Assert.Equal(256, ToolBudget.Default.MaxInvocations);
         var low = new ToolBudget(1, 1024, 1);
-        var high = new ToolBudget(8, 32768, 32);
+        var high = new ToolBudget(64, 262144, 256);
         Assert.Equal(1, low.MaxRounds);
-        Assert.Equal(32768, high.MaxOutputTokens);
-        Assert.Equal(32, high.MaxInvocations);
+        Assert.Equal(262144, high.MaxOutputTokens);
+        Assert.Equal(256, high.MaxInvocations);
     }
 
     [Fact]
@@ -249,7 +250,8 @@ public sealed class ReadToolChatLoopTests
         var executor = new Executor();
         var fixture = new Fixture();
         fixture.Provider.Run = async (_, emit, _) => { await Call(emit); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(1, 8192, 8)))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(1, 8192, 8)));
+        Assert.True(fixture.Loop.Paused);
         Assert.Single(fixture.Provider.Requests);
         Assert.Equal(0, executor.Calls);
         var allowed = new Fixture();
@@ -260,6 +262,7 @@ public sealed class ReadToolChatLoopTests
             else await Answer(emit);
         };
         Assert.True(await allowed.Run(allowedExecutor, budget: new ToolBudget(2, 8192, 8)));
+        Assert.False(allowed.Loop.Paused);
         Assert.Equal(2, allowed.Provider.Requests.Count);
         Assert.Equal(1, allowedExecutor.Calls);
     }
@@ -270,7 +273,8 @@ public sealed class ReadToolChatLoopTests
         var fixture = new Fixture();
         var executor = new Executor();
         fixture.Provider.Run = async (_, emit, _) => { await Call(emit); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 1024, 8)))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(4, 1024, 8)));
+        Assert.True(fixture.Loop.Paused);
         Assert.Single(fixture.Provider.Requests);
         Assert.Equal(0, executor.Calls);
     }
@@ -281,7 +285,8 @@ public sealed class ReadToolChatLoopTests
         var fixture = new Fixture();
         var executor = new Executor();
         fixture.Provider.Run = async (round, emit, _) => { await Call(emit, "r" + round); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)));
+        Assert.True(fixture.Loop.Paused);
         Assert.Equal(3, fixture.Provider.Requests.Count);
         Assert.Equal(2, executor.Calls);
     }
@@ -567,7 +572,8 @@ public sealed class ReadToolChatLoopTests
             await Call(emit, "call1"); await Call(emit, "call2"); await Call(emit, "call3");
             await emit(new Done(FinishReason.ToolUse));
         };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(4, 8192, 2)));
+        Assert.True(fixture.Loop.Paused);
         Assert.Equal(0, executor.Calls);
         Assert.Single(fixture.Provider.Requests);
     }
@@ -654,7 +660,8 @@ public sealed class ReadToolChatLoopTests
         if (reasoning) fixture.Model = new ModelInfo("fixture", "model", ModelCapabilities.Text | ModelCapabilities.Tools | ModelCapabilities.Reasoning, reasoning: new ReasoningSupport(ReasoningKind.BudgetTokens, new[] { ReasoningIntent.Low }));
         var executor = new Executor();
         fixture.Provider.Run = async (round, emit, _) => { for (var index = 0; index < batchSize; index++) await Call(emit, "r" + round + "c" + index); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor, budget: new ToolBudget(4, 8192, 8), effort: reasoning ? ReasoningIntent.Low : ReasoningIntent.Off))).Code);
+        Assert.True(await fixture.Run(executor, budget: new ToolBudget(4, 8192, 8), effort: reasoning ? ReasoningIntent.Low : ReasoningIntent.Off));
+        Assert.True(fixture.Loop.Paused);
         Assert.Equal(requests, fixture.Provider.Requests.Count);
         Assert.Equal(executions, executor.Calls);
         Assert.True(fixture.Provider.Requests.Sum(request => request.MaxOutputTokens) <= 8192);
@@ -742,12 +749,13 @@ public sealed class ReadToolChatLoopTests
     }
 
     [Fact]
-    public async Task CumulativeResultBudgetStopsWithoutReinjectingExcess()
+    public async Task CumulativeResultSafetyLimitPausesWithoutReinjectingExcess()
     {
         var fixture = new Fixture();
         var executor = new Executor { Run = (call, _) => Task.FromResult(new ToolResult(call.Id, false, new string('x', 65536))) };
-        fixture.Provider.Run = async (_, emit, _) => { await Call(emit, "a"); await Call(emit, "b"); await Call(emit, "c"); await emit(new Done(FinishReason.ToolUse)); };
-        Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor))).Code);
+        fixture.Provider.Run = async (round, emit, _) => { await Call(emit, "r" + round + "a"); await Call(emit, "r" + round + "b"); await Call(emit, "r" + round + "c"); await emit(new Done(FinishReason.ToolUse)); };
+        Assert.True(await fixture.Run(executor));
+        Assert.True(fixture.Loop.Paused);
         Assert.Equal(2, executor.Calls);
         Assert.Single(fixture.Provider.Requests);
     }
@@ -817,18 +825,16 @@ public sealed class ReadToolChatLoopTests
     }
 
     [Theory]
-    [InlineData(32768, true, "edit_file")]
-    [InlineData(65533, false, "edit_file")]
-    [InlineData(32768, true, "apply_diff")]
-    [InlineData(65533, false, "apply_diff")]
-    public async Task WriteReservesResultBudgetBeforeIo(int readSize, bool writeAllowed, string name)
+    [InlineData("edit_file")]
+    [InlineData("apply_diff")]
+    public async Task WriteReservesResultBudgetBeforeIo(string name)
     {
         var fixture = new Fixture { Mode = ChatMode.Agent };
         var writes = 0;
         var executor = new Executor { Specs = AgentSpecs, Run = (call, _) =>
         {
             if (call.Name == name) { writes++; return Task.FromResult(new ToolResult(call.Id, false, "visible diff")); }
-            return Task.FromResult(new ToolResult(call.Id, false, new string('x', readSize)));
+            return Task.FromResult(new ToolResult(call.Id, false, new string('x', 32768)));
         } };
         fixture.Provider.Run = async (round, emit, _) =>
         {
@@ -841,10 +847,42 @@ public sealed class ReadToolChatLoopTests
             }
             else await Answer(emit);
         };
-        if (writeAllowed) Assert.True(await fixture.Run(executor));
-        else Assert.Equal("tool_budget_exceeded", (await Assert.ThrowsAsync<ProviderException>(() => fixture.Run(executor))).Code);
-        Assert.Equal(writeAllowed ? 1 : 0, writes);
-        Assert.Equal(writeAllowed ? 3 : 2, executor.Calls);
+        Assert.True(await fixture.Run(executor));
+        Assert.False(fixture.Loop.Paused);
+        Assert.Equal(1, writes);
+        Assert.Equal(3, executor.Calls);
+    }
+
+    [Theory]
+    [InlineData("edit_file")]
+    [InlineData("apply_diff")]
+    public async Task WritePausesBeforeIoWhenTheRemainingResultBudgetCannotHoldTheDiff(string name)
+    {
+        var fixture = new Fixture { Mode = ChatMode.Agent };
+        var writes = 0;
+        var executor = new Executor { Specs = AgentSpecs, Run = (call, _) =>
+        {
+            if (call.Name == name) { writes++; return Task.FromResult(new ToolResult(call.Id, false, "visible diff")); }
+            return Task.FromResult(new ToolResult(call.Id, false, new string('x', 65533)));
+        } };
+        fixture.Provider.Run = async (round, emit, _) =>
+        {
+            if (round == 1)
+            {
+                await Call(emit, "read-one"); await Call(emit, "read-two");
+                var args = name == "edit_file" ? "{\"path\":\"Sample.cs\",\"content\":\"x\"}" : JsonSerializer.Serialize(new { path = "Sample.cs", base_sha256 = new string('a', 64), replacements = new[] { new { old = "x", @new = "y" } } });
+                await Call(emit, "write", name, args);
+                await emit(new Done(FinishReason.ToolUse));
+            }
+            else await Answer(emit);
+        };
+        Assert.True(await fixture.Run(executor));
+        Assert.True(fixture.Loop.Paused);
+        Assert.Equal(0, writes);
+        Assert.Equal(2, executor.Calls);
+        var deferred = Assert.Single(fixture.Loop.Parts.OfType<ToolResultPart>(), part => part.InvocationId == "write");
+        Assert.True(deferred.IsError);
+        Assert.Contains("deferred", deferred.Content);
     }
 
     [Theory]

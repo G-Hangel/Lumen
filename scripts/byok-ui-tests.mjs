@@ -147,7 +147,7 @@ const approvalEvent = (category = 'ExecuteCommand', extra = {}) => ({ kind: 'App
   arguments: { command: 'cmd', args: ['echo', 'hi'] }, targetPath: category === 'ExecuteCommand' ? null : 'C:/outside/target.cs',
   canAllowSession: category === 'ExecuteCommand', ...extra });
 const agentChat = { configurationId, text: 'Edit and run', effort: 'Off', mode: 'Agent', readTools: true, writeTools: true, terminal: true };
-const defaultBudget = { maxRounds: 8, maxOutputTokens: 32768, maxInvocations: 32 };
+const defaultBudget = { maxRounds: 64, maxOutputTokens: 262144, maxInvocations: 256 };
 const approvalCards = f => f.node('live').querySelectorAll('section').filter(item => item.className === 'byok-approval');
 
 test('automatic chat request accepts optional booleans only; omits declarations and browser authority', async t => {
@@ -170,9 +170,9 @@ test('automatic chat request accepts optional booleans only; omits declarations 
 test('chat budget is optional, exact-shape and range-checked before posting', async t => {
   const f = fixture(t);
   for (const value of [null, 1, 'large', [], { ...defaultBudget, extra: 1 }, { maxRounds: 4 },
-    { ...defaultBudget, maxRounds: 0 }, { ...defaultBudget, maxRounds: 9 }, { ...defaultBudget, maxRounds: 4.5 }, { ...defaultBudget, maxRounds: '4' },
-    { ...defaultBudget, maxOutputTokens: 1023 }, { ...defaultBudget, maxOutputTokens: 32769 }, { ...defaultBudget, maxOutputTokens: 8192.5 },
-    { ...defaultBudget, maxInvocations: 0 }, { ...defaultBudget, maxInvocations: 33 }, { ...defaultBudget, maxInvocations: null }]) {
+    { ...defaultBudget, maxRounds: 0 }, { ...defaultBudget, maxRounds: 65 }, { ...defaultBudget, maxRounds: 4.5 }, { ...defaultBudget, maxRounds: '4' },
+    { ...defaultBudget, maxOutputTokens: 1023 }, { ...defaultBudget, maxOutputTokens: 262145 }, { ...defaultBudget, maxOutputTokens: 8192.5 },
+    { ...defaultBudget, maxInvocations: 0 }, { ...defaultBudget, maxInvocations: 257 }, { ...defaultBudget, maxInvocations: null }]) {
     await rejects(f.bridge.request('byok.chat', { ...autoChat, budget: value }), 'invalid_message');
   }
   assert.equal(f.transport.messages.length, 0);
@@ -397,7 +397,7 @@ test('automatic consent has accessible native compact labels and explicit privac
   assert.match(en.byokAutoReadHelp, /selected provider may receive file contents/);
   assert.match(en.byokAutoReadHelp, /including unsaved editor buffers through get_edit_snapshot/);
   assert.match(pt.byokAutoReadHelp, /inclusive buffers não salvos do editor por get_edit_snapshot/);
-  assert.match(en.byokAutoReadHelp, /paid tokens/); assert.match(en.byokAutoReadHelp, /4 provider calls.*8 tools.*8,192.*2-minute/);
+  assert.match(en.byokAutoReadHelp, /paid tokens/); assert.match(en.byokAutoReadHelp, /64 rounds.*256 tools.*1 MB.*10 minutes/);
   assert.match(css, /\.byok-tool \.byok-tool-result\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
   for (const [id, help] of [['auto-write-tools', 'auto-write-help'], ['auto-terminal', 'auto-terminal-help']]) {
     assert.match(html, new RegExp(`id="byok-${id}"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-${help}"`));
@@ -524,28 +524,45 @@ test('apply plan appears only in Plan, switches to Agent without requests and pr
   f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }, busySent); await busy;
 });
 
-test('budget inputs gate sending, travel per-send and reject out-of-range values locally', async t => {
+test('budget is automatic: no budget fields in the composer and sends omit it', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  for (const [id, value] of [['budget-rounds', '8'], ['budget-tokens', '32768'], ['budget-tools', '32']]) assert.equal(f.node(id).value, value);
+  for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) {
+    assert.equal(f.node(id), undefined, `${id} is not part of the composer`);
+    assert.equal(f.document.getElementById(`byok-${id}`), undefined);
+  }
+  assert.doesNotMatch(html, /byok-budget/);
+  assert.doesNotMatch(html, /data-i18n="byokBudget/);
   f.node('message').value = 'hello'; await f.node('message').emit('input');
   assert.equal(f.node('send').disabled, false);
   const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
-  assert.deepEqual(sent.payload.budget, defaultBudget);
+  assert.equal(Object.hasOwn(sent.payload, 'budget'), false);
   f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
-  f.node('message').value = 'hello'; await f.node('message').emit('input');
-  for (const [id, bad] of [['budget-rounds', '0'], ['budget-rounds', '9'], ['budget-rounds', '2.5'], ['budget-rounds', ''],
-    ['budget-tokens', '1023'], ['budget-tokens', '32769'], ['budget-tools', '0'], ['budget-tools', '33']]) {
-    f.node(id).value = bad; await f.node(id).emit('input');
-    assert.equal(f.node('send').disabled, true, `${id}=${bad}`);
-    await f.node('chat-form').emit('submit');
-    assert.equal(f.transport.messages.filter(item => item.type === 'byok.chat').length, 1, 'invalid budget never posts');
-  }
-  f.node('budget-rounds').value = '2'; f.node('budget-tokens').value = '2048'; f.node('budget-tools').value = '3';
-  for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) await f.node(id).emit('input');
-  assert.equal(f.node('send').disabled, false);
-  const custom = f.node('chat-form').emit('submit'); const customSent = f.transport.messages.at(-1);
-  assert.deepEqual(customSent.payload.budget, { maxRounds: 2, maxOutputTokens: 2048, maxInvocations: 3 });
-  f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }, customSent); await custom;
+});
+
+test('paused turn is announced, kept in history with its consents and resumes with one click', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
+  f.node('message').value = 'long task'; await f.node('message').emit('input');
+  f.node('auto-read-tools').checked = true;
+  const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
+  f.transport.emit(envelope('byok.event', { kind: 'Notice', code: 'tool_budget_paused' }, sent.id));
+  const live = f.node('live').children[0], notices = live.children.at(-1);
+  assert.equal(notices.children[0].textContent, en.byokNoticePaused);
+  assert.equal(notices.children[1].textContent, en.byokContinue);
+  f.transport.reply({ completed: false, paused: true, conversation: summary }, sent); await pending; f.flushFrames();
+  assert.equal(f.node('status').textContent, en.byokPaused);
+  assert.equal(f.node('message').value, '');
+  f.locale(); assert.equal(f.node('status').textContent, pt.byokPaused);
+  const archived = f.node('history-items').children.find(row => row.textContent.includes(pt.historyPausedTurn));
+  assert.ok(archived, 'the paused turn stays visible in history');
+  const resume = archived.querySelectorAll('button').find(button => button.textContent === pt.byokContinue);
+  assert.ok(resume, 'history offers Continue for the paused turn');
+  const resumed = resume.emit('click');
+  const next = f.transport.messages.at(-1);
+  assert.equal(next.type, 'byok.chat');
+  assert.equal(next.payload.text, pt.byokContinueMessage);
+  assert.equal(next.payload.readTools, true, 'the click restores that turn consents');
+  f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }, next); await resumed;
 });
 
 test('write and terminal consent default off, travel per-send and reset on disconnect', async t => {
@@ -1856,7 +1873,7 @@ for (const completed of [true, false]) {
     await attachContext(f, 'file', first); await attachContext(f, 'solution', second);
     f.node('message').value = 'prompt'; await f.node('message').emit('input');
     const sending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
-    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', mode: 'Ask', effort: 'Low', budget: defaultBudget, contextIds: [first.id, second.id] });
+    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', mode: 'Ask', effort: 'Low', contextIds: [first.id, second.id] });
     const joined = `[Context: ${first.label}]\n${first.text}\n\n[Context: ${second.label}]\n${second.text}`;
     const turn = f.node('live').children[0], details = turn.querySelector('details');
     assert.equal(details.open, false); assert.equal(details.querySelector('pre').textContent, joined);

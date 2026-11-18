@@ -95,13 +95,13 @@ public sealed class ToolResult
 
 public sealed class ToolBudget
 {
-    public static ToolBudget Default { get; } = new(8, 32768, 32);
+    public static ToolBudget Default { get; } = new(64, 262144, 256);
 
     public ToolBudget(int maxRounds, int maxOutputTokens, int maxInvocations)
     {
-        if (maxRounds < 1 || maxRounds > 8) throw new ArgumentOutOfRangeException(nameof(maxRounds));
-        if (maxOutputTokens < 1024 || maxOutputTokens > 32768) throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
-        if (maxInvocations < 1 || maxInvocations > 32) throw new ArgumentOutOfRangeException(nameof(maxInvocations));
+        if (maxRounds < 1 || maxRounds > 64) throw new ArgumentOutOfRangeException(nameof(maxRounds));
+        if (maxOutputTokens < 1024 || maxOutputTokens > 262144) throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+        if (maxInvocations < 1 || maxInvocations > 256) throw new ArgumentOutOfRangeException(nameof(maxInvocations));
         MaxRounds = maxRounds;
         MaxOutputTokens = maxOutputTokens;
         MaxInvocations = maxInvocations;

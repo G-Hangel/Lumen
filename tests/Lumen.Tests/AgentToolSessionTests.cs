@@ -323,12 +323,12 @@ public sealed class AgentToolSessionTests
     [InlineData("missing")]
     [InlineData("extra")]
     [InlineData("rounds_zero")]
-    [InlineData("rounds_nine")]
+    [InlineData("rounds_above")]
     [InlineData("fractional")]
     [InlineData("tokens_low")]
-    [InlineData("tokens_high")]
+    [InlineData("tokens_above")]
     [InlineData("tools_zero")]
-    [InlineData("tools_high")]
+    [InlineData("tools_above")]
     [InlineData("rounds_text")]
     public async Task InvalidBudgetIsRejectedBeforeCaptureCredentialsOrHttp(string kind)
     {
@@ -341,12 +341,12 @@ public sealed class AgentToolSessionTests
             "missing" => new { maxRounds = 4 },
             "extra" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 8, extra = 1 },
             "rounds_zero" => new { maxRounds = 0, maxOutputTokens = 8192, maxInvocations = 8 },
-            "rounds_nine" => new { maxRounds = 9, maxOutputTokens = 8192, maxInvocations = 8 },
+            "rounds_above" => new { maxRounds = 65, maxOutputTokens = 8192, maxInvocations = 8 },
             "fractional" => new { maxRounds = 4.5, maxOutputTokens = 8192, maxInvocations = 8 },
             "tokens_low" => new { maxRounds = 4, maxOutputTokens = 1023, maxInvocations = 8 },
-            "tokens_high" => new { maxRounds = 4, maxOutputTokens = 32769, maxInvocations = 8 },
+            "tokens_above" => new { maxRounds = 4, maxOutputTokens = 262145, maxInvocations = 8 },
             "tools_zero" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 0 },
-            "tools_high" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 33 },
+            "tools_above" => new { maxRounds = 4, maxOutputTokens = 8192, maxInvocations = 257 },
             _ => new { maxRounds = "4", maxOutputTokens = 8192, maxInvocations = 8 }
         };
         await fixture.Chat(new Dictionary<string, object> { ["readTools"] = true, ["budget"] = budget });
@@ -368,12 +368,43 @@ public sealed class AgentToolSessionTests
         Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
         Assert.Equal(2, fixture.Handler.Bodies.Count);
         await fixture.Chat(new { readTools = true, budget = new { maxRounds = 1, maxOutputTokens = 8192, maxInvocations = 8 } });
-        Assert.Equal("tool_budget_exceeded", fixture.Error);
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.False(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("paused").GetBoolean());
         Assert.Equal(3, fixture.Handler.Bodies.Count);
     }
 
+    [Fact]
+    public async Task PausedTurnIsArchivedAndReplayedOnTheNextSend()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.ToolName = "read_file";
+        fixture.Handler.Arguments = "{\"path\":\"Sample.cs\"}";
+        await fixture.Chat(new { readTools = true, budget = new { maxRounds = 1, maxOutputTokens = 8192, maxInvocations = 8 } });
+        var paused = fixture.Last.GetProperty("payload");
+        var conversationId = paused.GetProperty("conversation").GetProperty("id").GetString()!;
+        Assert.False(paused.GetProperty("completed").GetBoolean());
+        Assert.True(paused.GetProperty("paused").GetBoolean());
+        Assert.Equal(0, fixture.Reader.Calls);
+        Assert.Contains(fixture.Replies, reply => reply.GetProperty("type").GetString() == "byok.event"
+            && reply.GetProperty("payload").TryGetProperty("code", out var code) && code.GetString() == "tool_budget_paused");
+
+        await fixture.Send("byok.history.open", new { conversationId, offset = 0, limit = 10 });
+        var turns = fixture.Last.GetProperty("payload").GetProperty("turns");
+        Assert.Equal("paused", turns[0].GetProperty("status").GetString());
+        Assert.Contains("deferred", turns[0].GetProperty("tools")[0].GetProperty("content").GetString());
+
+        await fixture.Chat(new { readTools = true });
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
+        Assert.Equal(conversationId, fixture.Last.GetProperty("payload").GetProperty("conversation").GetProperty("id").GetString());
+        Assert.Equal(2, fixture.Handler.Bodies.Count);
+        Assert.Contains("deferred", fixture.Handler.Bodies[1]);
+        Assert.Equal(0, fixture.Reader.Calls);
+    }
+
     [Theory]
-    [InlineData("Ask", "edit_file")]
     [InlineData("Plan", "edit_file")]
     [InlineData("Ask", "run_command")]
     [InlineData("Plan", "run_command")]

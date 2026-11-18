@@ -420,9 +420,8 @@ try {
     } else if (stage === 'plan-budget') {
       const pt = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/pt-BR.json', import.meta.url), 'utf8'));
       const en = JSON.parse(await readFile(new URL('../src/Lumen.Vsix/wwwroot/locales/en.json', import.meta.url), 'utf8'));
-      const setBudget = (rounds, tokens, tools) => evaluate(`(()=>{for(const [id,value] of [['budget-rounds',${rounds}],['budget-tokens',${tokens}],['budget-tools',${tools}]]){const input=document.querySelector('#byok-'+id);input.value=String(value);input.dispatchEvent(new Event('input'));}})()`);
-      const initial = await evaluate("({mode:document.querySelector('#byok-mode').value,applyHidden:document.querySelector('#byok-apply-plan').hidden,rounds:document.querySelector('#byok-budget-rounds').value,tokens:document.querySelector('#byok-budget-tokens').value,tools:document.querySelector('#byok-budget-tools').value})");
-      assert.deepEqual(initial, { mode: 'Ask', applyHidden: true, rounds: '8', tokens: '32768', tools: '32' });
+      const initial = await evaluate("({mode:document.querySelector('#byok-mode').value,applyHidden:document.querySelector('#byok-apply-plan').hidden,budgetInputs:document.querySelectorAll('#byok-budget,#byok-budget-rounds,#byok-budget-tokens,#byok-budget-tools').length})");
+      assert.deepEqual(initial, { mode: 'Ask', applyHidden: true, budgetInputs: 0 }, 'the composer must not expose a tool budget');
       await evaluate("(()=>{const mode=document.querySelector('#byok-mode');mode.value='Agent';mode.dispatchEvent(new Event('change'));})()");
       assert.equal(await evaluate("document.querySelector('#byok-apply-plan').hidden"), true, 'apply plan must stay hidden outside Plan');
       const plan = await agentChat('fixture-plan-budget-plan', ['auto-read-tools'], 'none', 'Plan');
@@ -437,30 +436,34 @@ try {
       assert.equal(requests.length, beforeApply, 'apply plan must not call the provider');
       assert.ok([pt.byokApplyPlanDone, en.byokApplyPlanDone].includes(await evaluate("document.querySelector('#announcement').textContent")));
       report.applyPlanSwitchWithoutRequests = true;
-      await setBudget(1, 8192, 8);
-      const bounded = await agentChat('fixture-plan-budget-loop', ['auto-read-tools'], 'none', 'Agent');
-      assert.equal(bounded.type, 'error', JSON.stringify(bounded));
-      assert.equal(bounded.payload.code, 'tool_budget_exceeded');
+      // The automatic budget defaults to the safety ceiling; a tighter explicit budget pauses instead of failing.
+      const paused = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'fixture-plan-budget-loop', effort: 'Off', mode: 'Agent', readTools: true,
+        budget: { maxRounds: 1, maxOutputTokens: 8192, maxInvocations: 8 } });
+      assert.equal(paused.payload.completed, false);
+      assert.equal(paused.payload.paused, true);
+      assert.ok(paused.events.some(event => event.kind === 'Notice' && event.code === 'tool_budget_paused'), JSON.stringify(paused.events));
+      assert.equal(paused.payload.conversation.id, planId, 'a paused turn must preserve the conversation');
       assert.equal(requests.length, beforeApply + 1, 'rounds=1 must stop after a single provider request');
-      report.roundBudgetEnforced = true;
-      for (const budget of [{ maxRounds: 99, maxOutputTokens: 8192, maxInvocations: 8 }, { maxRounds: 4, maxOutputTokens: 8192.5, maxInvocations: 8 }]) {
+      report.roundBudgetPausesWithWorkPreserved = true;
+      for (const budget of [{ maxRounds: 65, maxOutputTokens: 8192, maxInvocations: 8 }, { maxRounds: 4, maxOutputTokens: 262145, maxInvocations: 8 },
+        { maxRounds: 4, maxOutputTokens: 8192, maxInvocations: 257 }, { maxRounds: 4, maxOutputTokens: 8192.5, maxInvocations: 8 }]) {
         const forged = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'forged-budget', effort: 'Off', mode: 'Ask', readTools: true, budget });
         assert.equal(forged.type, 'error'); assert.equal(forged.payload.code, 'invalid_message');
       }
       assert.equal(requests.length, beforeApply + 1, 'forged budgets must never reach the provider');
       report.forgedBudgetRejected = true;
-      await setBudget(0, 8192, 8);
-      await evaluate("(()=>{const input=document.querySelector('#byok-message');input.value='blocked';input.dispatchEvent(new Event('input'));})()");
-      assert.equal(await evaluate("document.querySelector('#byok-send').disabled"), true, 'out-of-range budget must block sending');
-      await evaluate("document.querySelector('#byok-send').click()");
-      assert.equal(requests.length, beforeApply + 1);
-      await setBudget(2, 2048, 8);
-      const done = await agentChat('fixture-plan-budget-done', ['auto-read-tools'], 'none', 'Agent');
-      assert.equal(done.type, 'byok.chat.result', JSON.stringify(done));
-      assert.equal(done.payload.completed, true);
-      assert.equal(done.payload.conversation.id, planId, 'apply plan and failed turns must preserve the conversation');
-      assert.equal(requests.length, beforeApply + 3);
-      report.customBudgetCompletesAndHistoryPreserved = true;
+      const opened = await rpc('byok.history.open', { conversationId: planId, offset: 0, limit: 10 });
+      assert.equal(opened.type, 'byok.history.open.result', JSON.stringify(opened));
+      assert.equal(opened.payload.turns.at(-1).status, 'paused', 'history must retain the paused turn');
+      assert.equal(opened.payload.turns.at(-1).tools.at(-1).isError, true);
+      assert.ok(opened.payload.turns.at(-1).tools.at(-1).content.includes('deferred'));
+      const resumed = await rpc('byok.chat', { configurationId: manifest.configurationId, text: 'Continue from where you stopped.', effort: 'Off', mode: 'Agent', readTools: true });
+      assert.equal(resumed.type, 'byok.chat.result', JSON.stringify(resumed));
+      assert.equal(resumed.payload.completed, true);
+      assert.equal(resumed.payload.conversation.id, planId, 'resume must continue the same conversation');
+      assert.equal(requests.length, beforeApply + 2, 'resume replays the paused turn without re-running it');
+      assert.ok(JSON.stringify(requests.at(-1).messages).includes('deferred'), 'the archived deferred result must reach the provider on resume');
+      report.pausedTurnResumed = true;
       await command_('Emulation.setDeviceMetricsOverride', { width: 203, height: 900, deviceScaleFactor: 1, mobile: false });
       assert.equal(await evaluate('document.documentElement.scrollWidth>innerWidth'), false);
       assert.equal(await evaluate("(()=>{const app=document.querySelector('.app');app.style.minWidth='240px';const rejected=document.documentElement.scrollWidth>innerWidth;app.style.removeProperty('min-width');return rejected})()"), true);

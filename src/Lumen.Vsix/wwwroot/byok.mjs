@@ -323,13 +323,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('probe-budget').textContent = text('byokProbeBudget', { remaining: remainingBudget ?? text('byokUnknown'), max: MAX_PROBE_BUDGET });
   }
   function clearToolConsent() { for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).checked = false; }
-  function readBudget() {
-    const rounds = Number(node('budget-rounds').value), tokens = Number(node('budget-tokens').value), tools = Number(node('budget-tools').value);
-    return Number.isSafeInteger(rounds) && rounds >= 1 && rounds <= 8
-      && Number.isSafeInteger(tokens) && tokens >= 1024 && tokens <= 32768
-      && Number.isSafeInteger(tools) && tools >= 1 && tools <= 32
-      ? { maxRounds: rounds, maxOutputTokens: tokens, maxInvocations: tools } : null;
-  }
   function clearProbeConsent() { node('probe-consent').checked = false; }
   function probeEligible() {
     const config = configurations.find(item => item.id === configurationId);
@@ -460,7 +453,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
     const matchesHistory = !activeConversation || (activeConversation.configurationId === configurationId && activeConversation.modelId === selectedModelId);
     node('mode').disabled = !enabled || locked;
-    for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) node(id).disabled = !enabled || locked;
     node('apply-plan').hidden = node('mode').value !== 'Plan';
     node('apply-plan').disabled = !enabled || locked;
     node('auto-read-tools').disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
@@ -472,7 +464,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     for (const id of ['context-file', 'context-solution', 'context-selection', 'context-output', 'context-reference']) node(id).disabled = !canCapture();
     for (const remove of node('context-list').querySelectorAll('button')) remove.disabled = !enabled || locked;
     node('context').setAttribute('aria-busy', String(contextBusy && busy));
-    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !readBudget() || !node('message').value.trim() || node('message').value.length > 4096;
+    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096;
     for (const id of ['history-query', 'history-search', 'history-new']) node(id).disabled = !enabled || locked;
     node('history-list').disabled = !enabled || locked || !savedConversations.length;
     for (const id of ['history-name', 'history-rename', 'history-delete']) node(id).disabled = !enabled || locked || !node('history-list').value;
@@ -1088,10 +1080,19 @@ export function startByok({ transport, connected = () => false, text, renderMark
     } else if (event.kind === 'Usage') {
       turn.usage.replaceChildren(localized('span', 'byokUsage'), document.createTextNode(`: ${event.input} / ${event.output}`));
     } else if (event.kind === 'Notice') {
-      const line = localized('p', event.code === 'history_compacted' ? 'byokNoticeCompacted' : 'byokNoticeRetrying', 'secondary');
-      turn.notices.append(line);
-      const announcement = document.getElementById('announcement');
-      if (announcement) announcement.textContent = line.textContent;
+      if (event.code === 'tool_budget_paused') {
+        const line = localized('p', 'byokNoticePaused', 'secondary');
+        const resume = localized('button', 'byokContinue', 'text-button'); resume.type = 'button';
+        resume.addEventListener('click', () => continuePaused(turn));
+        turn.notices.append(line, resume);
+        const announcement = document.getElementById('announcement');
+        if (announcement) announcement.textContent = line.textContent;
+      } else {
+        const line = localized('p', event.code === 'history_compacted' ? 'byokNoticeCompacted' : 'byokNoticeRetrying', 'secondary');
+        turn.notices.append(line);
+        const announcement = document.getElementById('announcement');
+        if (announcement) announcement.textContent = line.textContent;
+      }
     } else if (event.kind === 'Error') showError(event.code, event.retryAfter);
     if (pinned) node('output').scrollTop = node('output').scrollHeight;
   }
@@ -1133,13 +1134,31 @@ export function startByok({ transport, connected = () => false, text, renderMark
       renderEvent(turn, { kind: 'ToolCallEnd', id: call.id, arguments: call.arguments });
       if (call.status) renderEvent(turn, { kind: 'ToolExecution', id: call.id, status: call.status, isError: call.isError, content: call.content });
     }
-    if (record.status !== 'completed') turn.article.append(localized('p', record.status === 'cancelled' ? 'historyCancelledTurn' : 'historyFailedTurn', 'secondary'));
+    if (record.status === 'paused') {
+      turn.article.append(localized('p', 'historyPausedTurn', 'secondary'));
+      if (record.consents) {
+        const resume = localized('button', 'byokContinue', 'text-button'); resume.type = 'button';
+        resume.addEventListener('click', () => continuePaused(record));
+        turn.article.append(resume);
+      }
+    } else if (record.status !== 'completed') turn.article.append(localized('p', record.status === 'cancelled' ? 'historyCancelledTurn' : 'historyFailedTurn', 'secondary'));
     finishMarkdown(turn); return turn.article;
+  }
+  function continuePaused(source) {
+    const consents = source?.consents;
+    if (!consents || busy || !online() || !selectedModel() || !configurationId || node('message').value.trim()) return;
+    // The click is the explicit per-send consent for the same tools the paused turn used.
+    node('auto-read-tools').checked = consents.readTools === true && !node('auto-read-tools').disabled;
+    node('auto-write-tools').checked = consents.writeTools === true && !node('auto-write-tools').disabled;
+    node('auto-terminal').checked = consents.terminal === true && !node('auto-terminal').disabled;
+    node('message').value = text('byokContinueMessage');
+    updateControls();
+    if (!node('send').disabled) node('chat-form').requestSubmit();
   }
   async function submitChat(event) {
     event.preventDefault();
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
-      || !contextWithinBounds() || !readBudget() || !node('message').value.trim() || node('message').value.length > 4096
+      || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096
       || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
     const readTools = node('auto-read-tools').checked === true && !node('auto-read-tools').disabled && selectedModel().tools;
     const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
@@ -1164,9 +1183,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
       streaming = true; setStatus('byokStreaming'); updateControls();
       const contextText = contexts.map(item => `[Context: ${item.label}]\n${item.text}`).join('\n\n');
       turn = createTurn(value, contextText); turn.record.hasImage = Boolean(attachment);
+      turn.consents = { readTools, writeTools, terminal };
       liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
       node('output').scrollTop = node('output').scrollHeight;
-      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value, budget: readBudget(),
+      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value,
         ...(readTools ? { readTools: true } : {}),
         ...(writeTools ? { writeTools: true } : {}),
         ...(terminal ? { terminal: true } : {}),
@@ -1179,12 +1199,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const result = await request;
       if (disposed) return;
       contexts = []; renderContexts();
-      turn.record.text = turn.text; turn.record.status = result.completed ? 'completed' : 'failed';
+      turn.record.text = turn.text; turn.record.status = result.completed ? 'completed' : result.paused ? 'paused' : 'failed';
+      turn.record.consents = turn.consents;
       rememberSummary(result.conversation);
       records.length = result.conversation.turnCount;
       cacheTurns([{ ...turn.record, index: result.conversation.turnCount - 1 }]);
       liveTurn = null; node('live').replaceChildren(); history.items = records; history.invalidate(); history.jump(true);
       if (result.completed) { node('message').value = ''; selectedSkills.clear(); renderSkills(); setStatus('byokCompleted'); }
+      else if (result.paused) { node('message').value = ''; setStatus('byokPaused'); }
       else if (!errorCode) showError('provider_error');
     } catch (error) {
       if (!disposed) {
@@ -1328,7 +1350,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (announcement) announcement.textContent = text('byokApplyPlanDone');
     if (!node('message').disabled) node('message').focus({ preventScroll: true });
   });
-  for (const id of ['budget-rounds', 'budget-tokens', 'budget-tools']) listen(node(id), 'input', updateControls);
   for (const id of ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']) listen(node(id), 'input', updateControls);
   listen(node('auto-read-tools'), 'change', updateControls);
   listen(node('auto-write-tools'), 'change', updateControls);

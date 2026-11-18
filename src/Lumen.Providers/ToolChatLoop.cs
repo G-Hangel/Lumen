@@ -18,9 +18,12 @@ public sealed class ToolChatLoop
     private static readonly string[] ReadonlyAllowed = { "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot", "get_errors", "get_output_logs", "detect_shells", "load_skill" };
     private static readonly string[] AgentAllowed = { "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot", "get_errors", "get_output_logs", "detect_shells", "load_skill", "delegate_agent", "create_file", "edit_file", "apply_diff", "run_command", "run_build", "run_tests" };
     private static string[] AllowedFor(ChatMode mode) => mode == ChatMode.Agent ? AgentAllowed : ReadonlyAllowed;
+    private const int MaxSingleResultChars = 65536;
+    private const int MaxResultChars = 131072;
     private readonly List<ContentPart> parts = new List<ContentPart>();
     public IReadOnlyList<ContentPart> Parts => parts;
     public bool UnsafeResponse { get; private set; }
+    public bool Paused { get; private set; }
 
     public static IReadOnlyList<ToolSpec> SpecsFor(ChatMode mode, IReadToolExecutor executor)
     {
@@ -92,7 +95,7 @@ public sealed class ToolChatLoop
         var messages = new List<Message>();
         for (var index = 0; index < stored.TurnStates.Count; index++)
         {
-            if (stored.TurnStates[index] != "completed") continue;
+            if (stored.TurnStates[index] != "completed" && stored.TurnStates[index] != "paused") continue;
             var assistant = stored.Conversation.Messages[index * 2 + 1];
             var expanded = Expand(assistant);
             // Legacy completed tool cards had no result and cannot form a valid provider exchange.
@@ -169,6 +172,16 @@ public sealed class ToolChatLoop
         var cap = model.Reasoning?.Kind == ReasoningKind.BudgetTokens && effort != ReasoningIntent.Off ? 4096 : 1024;
         cap = Math.Min(cap, model.MaxOutputTokens ?? cap);
         var compactionNotified = false;
+        async Task DeferAsync(IEnumerable<ToolCallPart> deferred)
+        {
+            foreach (var call in deferred)
+            {
+                pendingUi.Remove(call.Id);
+                var content = JsonWire.Serialize(new { code = "deferred" });
+                parts.Add(new ToolResultPart(call.Id, true, content));
+                await execution(Execution(call.Id, "Failed", true, content)).ConfigureAwait(false);
+            }
+        }
         try
         {
             for (var round = 0; round < budget.MaxRounds; round++)
@@ -184,7 +197,7 @@ public sealed class ToolChatLoop
                         await execution(Notice("history_compacted")).ConfigureAwait(false);
                     }
                 }
-                if (allocated + cap > budget.MaxOutputTokens) throw new ProviderException("tool_budget_exceeded");
+                if (allocated + cap > budget.MaxOutputTokens) throw new ProviderException("tool_budget_paused");
                 ValidateInput(messages, specs, model, cap);
                 RejectSecret(JsonSerializer.SerializeToElement(messages, ConversationSerializer.Options), secret);
                 foreach (var spec in specs) RejectSecret(JsonSerializer.SerializeToElement(spec), secret);
@@ -335,7 +348,11 @@ public sealed class ToolChatLoop
                     if (executor is null) return batch.Count > 0 && (calls.Length == 0 || done.FinishReason == FinishReason.ToolUse);
                     if (calls.Length == 0) return batch.Count > 0 && done.FinishReason != FinishReason.ToolUse && done.FinishReason != FinishReason.Cancelled;
                     if (done.FinishReason != FinishReason.ToolUse) return false;
-                    if (round == budget.MaxRounds - 1 || allocated + cap > budget.MaxOutputTokens || invocations + calls.Length > budget.MaxInvocations) throw new ProviderException("tool_budget_exceeded");
+                    if (round == budget.MaxRounds - 1 || allocated + cap > budget.MaxOutputTokens || invocations + calls.Length > budget.MaxInvocations || resultSize >= MaxResultChars)
+                    {
+                        await DeferAsync(calls).ConfigureAwait(false);
+                        throw new ProviderException("tool_budget_paused");
+                    }
                     messages.Add(new Message(MessageRole.Assistant, batch.ToArray(), model.ModelId));
                     ValidateInput(messages, specs, model, cap);
                     var results = new List<ContentPart>();
@@ -362,12 +379,28 @@ public sealed class ToolChatLoop
                             if (outcomes[index].Failure is ProviderException) throw new ProviderException("context_stale");
                             if (outcomes[index].Failure is not null) throw new ProviderException("invalid_response");
                             var result = outcomes[index].Result!;
-                            if (result.InvocationId != call.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                            if (result.InvocationId != call.Id || result.Content.Length > MaxSingleResultChars) throw new ProviderException("invalid_response");
                             ValidateUnicode(result.Content);
                             RejectText(result.Content, secret);
                             CheckJsonText(result.Content, secret);
                             if (result.IsError && Stale(result.Content)) throw new ProviderException("context_stale");
-                            if (resultSize + result.Content.Length > 131072) throw new ProviderException("tool_budget_exceeded");
+                            if (resultSize + result.Content.Length > MaxResultChars)
+                            {
+                                // Every call in the batch already ran; keep all outcomes visible before pausing.
+                                for (var rest = index; rest < calls.Length; rest++)
+                                {
+                                    if (outcomes[rest].Failure is not null) continue;
+                                    var extra = outcomes[rest].Result!;
+                                    if (extra.InvocationId != calls[rest].Id || extra.Content.Length > MaxSingleResultChars) continue;
+                                    ValidateUnicode(extra.Content);
+                                    RejectText(extra.Content, secret);
+                                    CheckJsonText(extra.Content, secret);
+                                    parts.Add(extra.ToContentPart());
+                                    pendingUi.Remove(calls[rest].Id);
+                                    await execution(Execution(calls[rest].Id, extra.IsError ? "Failed" : "Completed", extra.IsError, extra.Content)).ConfigureAwait(false);
+                                }
+                                throw new ProviderException("tool_budget_paused");
+                            }
                             resultSize += result.Content.Length;
                             var part = result.ToContentPart();
                             results.Add(part);
@@ -379,10 +412,15 @@ public sealed class ToolChatLoop
                     }
                     else
                     {
-                    foreach (var call in calls)
+                    for (var index = 0; index < calls.Length; index++)
                     {
+                        var call = calls[index];
                         token.ThrowIfCancellationRequested();
-                        if (invocations >= budget.MaxInvocations || resultSize >= 131072) throw new ProviderException("tool_budget_exceeded");
+                        if (invocations >= budget.MaxInvocations || resultSize >= MaxResultChars)
+                        {
+                            await DeferAsync(calls.Skip(index)).ConfigureAwait(false);
+                            throw new ProviderException("tool_budget_paused");
+                        }
                         if (results.Count > 0) ValidateInput(messages.Concat(new[] { new Message(MessageRole.Tool, results.ToArray()) }).ToArray(), specs, model, cap);
                         invocations++;
                         ToolResult result;
@@ -392,8 +430,11 @@ public sealed class ToolChatLoop
                         else
                         {
                             // Reserve the maximum diff before an irreversible write can consume the budget.
-                            if ((call.Name == "create_file" || call.Name == "edit_file" || call.Name == "apply_diff") && resultSize > 65536)
-                                throw new ProviderException("tool_budget_exceeded");
+                            if ((call.Name == "create_file" || call.Name == "edit_file" || call.Name == "apply_diff") && resultSize > MaxResultChars - MaxSingleResultChars)
+                            {
+                                await DeferAsync(calls.Skip(index)).ConfigureAwait(false);
+                                throw new ProviderException("tool_budget_paused");
+                            }
                             await execution(Execution(call.Id, "Running", false, string.Empty)).ConfigureAwait(false);
                             token.ThrowIfCancellationRequested();
                             try { result = await executor.ExecuteAsync(new ToolInvocation(call.Id, call.Name, call.Arguments), token).ConfigureAwait(false); }
@@ -403,12 +444,21 @@ public sealed class ToolChatLoop
                         }
                         // A committed write must retain its diff even if cancellation arrives after I/O.
                         if (result.IsError || (call.Name != "create_file" && call.Name != "edit_file" && call.Name != "apply_diff")) token.ThrowIfCancellationRequested();
-                        if (result.InvocationId != call.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
+                        if (result.InvocationId != call.Id || result.Content.Length > MaxSingleResultChars) throw new ProviderException("invalid_response");
                         ValidateUnicode(result.Content);
                         RejectText(result.Content, secret);
                         CheckJsonText(result.Content, secret);
                         if (result.IsError && Stale(result.Content)) throw new ProviderException("context_stale");
-                        if (resultSize + result.Content.Length > 131072) throw new ProviderException("tool_budget_exceeded");
+                        if (resultSize + result.Content.Length > MaxResultChars)
+                        {
+                            // The call already ran; keep its outcome visible before pausing the rest.
+                            var executedPart = result.ToContentPart();
+                            parts.Add(executedPart);
+                            pendingUi.Remove(call.Id);
+                            await execution(Execution(call.Id, result.IsError ? "Failed" : "Completed", result.IsError, result.Content)).ConfigureAwait(false);
+                            await DeferAsync(calls.Skip(index + 1)).ConfigureAwait(false);
+                            throw new ProviderException("tool_budget_paused");
+                        }
                         resultSize += result.Content.Length;
                         var part = result.ToContentPart();
                         results.Add(part);
@@ -436,6 +486,11 @@ public sealed class ToolChatLoop
                 }
             }
             throw new ProviderException("tool_budget_exceeded");
+        }
+        catch (ProviderException exception) when (exception.Code == "tool_budget_paused")
+        {
+            Paused = true;
+            return true;
         }
         catch (ProviderException exception)
         {

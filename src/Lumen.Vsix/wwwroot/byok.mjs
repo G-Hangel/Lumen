@@ -999,7 +999,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const content = document.createElement('pre'); content.className = 'byok-plain'; content.tabIndex = 0; content.textContent = contextText;
       details.append(localized('summary', 'contextHistory'), content); article.append(details);
     }
-    article.append(assistant, response, reasoning, tools, usage, notices);
+    article.append(assistant, reasoning, response, tools, usage, notices);
     return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, notices, record: { userText: value,
       ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], status: 'failed' } };
   }

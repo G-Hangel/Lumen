@@ -1,6 +1,6 @@
 # STATUS — Lumen
 
-Atualizado em **2026-11-17**.
+Atualizado em **2026-11-18**.
 
 ## Estado atual
 
@@ -43,6 +43,28 @@ persistir credencial OAuth). Nesta fatia não houve chamadas pagas.
 | Fase 7 — Personalização visual | **concluído (fatias 7a–7c; ACs verificados 2026-11-16)** |
 | Fase 8 — Hardening, empacotamento e entrega | **concluído (8a–8d; imagem pendente por decisão)** |
 | Fase 9 — Subagentes e delegação | **concluído (9a–9d; ModelAgent com chamada de modelo via provedor)** |
+
+## Hotfix BYOK — configuração de provedor rejeitada (2026-11-18)
+
+Ao clicar em **Salvar / testar listagem**, a UI exibia `byokErrorFormat`
+imediatamente, mesmo com a ponte conectada. Causa: `ByokSession.ConfigurationView`
+serializa sempre o campo `arm` (`null` para provedores não-Azure), mas
+`configuration()` em `byok-bridge.mjs` usava `fields()` com conjunto exato e não
+aceitava `arm`. Consequentemente **toda** resposta com configuração
+(`byok.configure.result`, `byok.list.result`, `byok.select.result`) falhava em
+`isByokEnvelope` e chegava à UI como `invalid_response`.
+
+Correção: `arm` passou a ser campo opcional e validado no contrato JS, reaproveitado
+pela validação do request `byok.configure`. Novo teste cobre o formato real do host
+com `arm: null` e com objeto ARM válido; controles negativos rejeitam campo extra,
+GUID inválido, campo faltante e tipo inválido. `npm run check:ui`: **231/231**.
+
+Verificação na Exp (`25e762c6`) via CDP, **0 chamadas pagas**: `byok.configure`
+com Ollama local retornou `credentialValid: true` e listou `qwen3.5:2b-q4_K_M`;
+`byok.select` e `byok.list` também passaram. As 29 duplicatas de Ollama criadas
+durante o debug foram removidas, restando uma configuração com modelo selecionado.
+Build Release **0 erros/0 avisos**, pacote **3/3**; suíte .NET **1.663/1.664**, com a
+falha ambiental pré-existente de `pwsh` AppExecutionAlias reproduzida isoladamente.
 
 ## Fase 9 — fechamento (2026-11-17)
 

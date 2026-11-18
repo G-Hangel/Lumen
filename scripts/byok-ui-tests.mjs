@@ -1146,6 +1146,29 @@ test('negative envelopes reject malformed, secret-bearing, oversized and unknown
   assert.equal(isByokEnvelope(envelope('byok.discover.result', catalog(config, [model, model]))), false);
 });
 
+test('configuration replies accept the host arm field and reject malformed arm values', async t => {
+  const { bridge, transport } = fixture(t);
+  const arm = { subscriptionId: approvalId, resourceGroup: 'rg-lumen', accountName: 'lumen-account' };
+  const azureConfig = { ...config, providerId: 'azure', kind: 'Azure', baseUrl: 'https://example.openai.azure.com/' };
+  const request = { id: configurationId, providerId: 'azure', kind: 'Azure', baseUrl: azureConfig.baseUrl, key: '' };
+
+  const withArm = bridge.request('byok.configure', { ...request, arm });
+  transport.reply(catalog({ ...azureConfig, arm }));
+  assert.equal((await withArm).configuration.arm.subscriptionId, arm.subscriptionId);
+
+  const withoutArm = bridge.request('byok.configure', { ...request, arm: null });
+  transport.reply(catalog({ ...azureConfig, arm: null }));
+  assert.equal((await withoutArm).configuration.arm, null);
+  assert.equal(isByokEnvelope(envelope('byok.list.result', { configurations: [{ ...azureConfig, arm }], remainingBudget: 5 })), true);
+
+  for (const value of [{}, { ...arm, extra: 1 }, { ...arm, subscriptionId: 'x' }]) {
+    await assert.rejects(bridge.request('byok.configure', { ...request, arm: value }), error => error.code === 'invalid_message');
+  }
+  for (const value of [{}, { ...arm, extra: 1 }, { ...arm, subscriptionId: 'x' }, 'arm']) {
+    assert.equal(isByokEnvelope(envelope('byok.configure.result', catalog({ ...azureConfig, arm: value }))), false, JSON.stringify(value));
+  }
+});
+
 test('history and chat summaries require every exact field, bounded values and no credential/unknown fields', () => {
   const valid = value => ['byok.chat.result', 'byok.history.rename.result', 'byok.history.list.result'].map(type =>
     envelope(type, type === 'byok.chat.result' ? { completed: true, conversation: value } : type === 'byok.history.list.result' ? { conversations: [value] } : { conversation: value }));

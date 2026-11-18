@@ -83,9 +83,14 @@ export function normalizeBaseUrl(value) {
 }
 const validUrl = value => { try { normalizeBaseUrl(value); return true; } catch { return false; } };
 const deployments = value => list(value, 256, name => string(name, 512)) && unique(value);
-const configuration = value => fields(value, ['id', 'providerId', 'kind', 'baseUrl', 'selectedModelId', 'deploymentNames'])
+const armConfiguration = value => value === null || (fields(value, ['subscriptionId', 'resourceGroup', 'accountName'])
+  && guid(value.subscriptionId) && string(value.resourceGroup, 90) && string(value.accountName, 64));
+// The host always serializes `arm` (null for non-Azure configurations), so accepting it is required for
+// every configuration-bearing reply — not just Azure ones.
+const configuration = value => fields(value, ['id', 'providerId', 'kind', 'baseUrl', 'selectedModelId', 'deploymentNames'], ['arm'])
   && guid(value.id) && string(value.providerId, 64) && PROVIDER_KINDS.includes(value.kind) && validUrl(value.baseUrl)
-  && (value.selectedModelId === null || string(value.selectedModelId, 512)) && deployments(value.deploymentNames);
+  && (value.selectedModelId === null || string(value.selectedModelId, 512)) && deployments(value.deploymentNames)
+  && (!Object.hasOwn(value, 'arm') || armConfiguration(value.arm));
 const origin = value => fields(value, ['capability', 'source', 'confidence']) && string(value.capability, 64)
   && ['Native', 'Registry', 'Heuristic', 'Probe', 'UserOverride'].includes(value.source)
   && ['Low', 'Medium', 'High'].includes(value.confidence);
@@ -329,8 +334,7 @@ function validRequest(type, p) {
       && guid(p.id) && string(p.providerId, 64) && PROVIDER_KINDS.includes(p.kind) && validUrl(p.baseUrl)
       && string(p.key, 4096, true) && !/[\r\n]/.test(p.key)
       && (!Object.hasOwn(p, 'deploymentNames') || deployments(p.deploymentNames))
-      && (!Object.hasOwn(p, 'arm') || (p.arm === null || (fields(p.arm, ['subscriptionId', 'resourceGroup', 'accountName'])
-        && guid(p.arm.subscriptionId) && string(p.arm.resourceGroup, 90) && string(p.arm.accountName, 64))));
+      && (!Object.hasOwn(p, 'arm') || armConfiguration(p.arm));
     case 'byok.discover': return fields(p, ['configurationId']) && guid(p.configurationId);
     case 'byok.probe': return fields(p, ['configurationId', 'capability', 'consent']) && guid(p.configurationId)
       && PROBE_CAPABILITIES.includes(p.capability) && p.consent === true;

@@ -25,7 +25,7 @@ internal sealed class LumenControl : UserControl, IDisposable
     private readonly JoinableTaskFactory taskFactory;
     private readonly WebView2 browser;
     private readonly TextBlock status;
-    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(2) };
+    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
     private readonly CancellationTokenSource lifetime = new();
     private readonly Lazy<ByokSession> byok;
     private readonly VisualStudioWriteTools writeTools;

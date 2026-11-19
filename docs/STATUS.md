@@ -12,8 +12,18 @@ inclui o `.cto` via `VSIXSourceItem` num target `IncludeVsctBinary`
 entradas e `View.Lumen` passou a executar sem exceção; `ActivityLog.xml` mostra
 `End package load [LumenPackage]`.
 
-A verificação visual na instância Experimental continua bloqueada — ver **B13**
-em `BLOQUEIOS.md`. O build, os testes e a instalação nos dois hives estão verdes.
+## Correção do erro de correlação (2026-11-19)
+
+Resposta parcial seguida de "Mensagem ou correlação da ponte inválida" não era
+falha de provedor nem de correlação: `byok.mjs` gravava
+`textNode.dataset.timestamp` num **Text node**, que não tem `dataset` no
+Chromium. O `TypeError` no primeiro chunk derrubava a promessa como
+`invalid_response`, e todos os chunks seguintes eram descartados (o host já os
+havia enviado). Os chunks agora vão em `<span>` inerte. O adapter de DOM dos
+testes passou a criar Text nodes sem `dataset`/`attributes`, como o navegador —
+controle negativo: revertendo a correção a suíte volta a falhar.
+Evidência em execução real: 2 turnos na mesma conversa, 2 tool calls,
+3 `ToolExecution`, 0 eventos de erro, ambos `completed:true`.
 
 ## Estado atual
 

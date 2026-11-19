@@ -8,20 +8,23 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
-### B13 - Tool window não é realizado na instância Experimental (verificação de UI bloqueada)
+### B13 - Tool window não é realizado quando o VS é iniciado por automação - **RESOLVIDO 2026-11-19**
 
-Nesta sessão o pacote carrega e o comando existe, mas a janela não aparece:
+Sintoma: iniciado por `Start-Process` a partir do agente, o VS nasce com a janela
+principal `IsWindowVisible = false` e nenhum tool window é realizado, mesmo com
+`FindToolWindow`/`Show()` retornando S_OK e `IsVisible()` = 0.
+
+**Resolução:** é limitação do contexto de automação, não do pacote. Em sessão
+interativa normal a janela abre normalmente (confirmado pelo usuário). A
+verificação automatizada de UI não substitui esse passo.
+
+### B13-antigo - Evidência coletada durante a investigação
 
 - `ActivityLog.xml`: `Begin package load [LumenPackage]` + `End package load [LumenPackage]`, sem erro.
 - `View.Lumen` via DTE executa sem exceção (comando registrado: GUID `{96A71C4A-F4CB-4711-80DE-38E40B2E6AD8}`, ID 256).
 - Com instrumentação temporária: `toolwindow-initialize` é gravado, ou seja, `LumenToolWindow.Initialize()` e o `LumenControl` são construídos.
-- `IVsUIShell.FindToolWindow(FTW_fForceCreate)` = `0x00000000`, `IVsWindowFrame.SetProperty(VSFPROPID_FrameMode, VSFM_Float)` = `0x00000000`, `IVsWindowFrame.Show()` = `0x00000000`, porém `IVsWindowFrame.IsVisible()` = **0**.
-- Consequência: `UserControl.Loaded` nunca dispara, `EnsureCoreWebView2Async` nunca roda; não há processo `msedgewebview2` filho do `devenv.exe` nem porta 9223.
-- `UIAutomation` na janela principal retorna `Descendants=0` (a árvore do VS não é exposta), então não há como inspecionar a UI por esse caminho.
-
-Sintoma correlato: ao iniciar via `Start-Process`, a janela principal do VS nasce com `IsWindowVisible = false` e só fica visível chamando `ShowWindow`. Isso indica que a instância é iniciada em contexto sem ativação normal (automação/headless), o que impede a realização de tool windows.
-
-**Não resolvido.** Nenhuma solução inventada. A verificação real da UI em WebView2 segue pendente de uma sessão interativa.
+- `IVsUIShell.FindToolWindow(FTW_fForceCreate)` = `0x00000000`, `IVsUIWindowFrame.Show()` = `0x00000000`, porém `IsVisible()` = **0**.
+- `UIAutomation` na janela principal retorna `Descendants=0` (a árvore do VS não é exposta em automação).
 
 ### B12 - Ícone e preview image do marketplace adiados
 
@@ -399,6 +402,10 @@ completa na Exp (429 surfaced `retryAfter:90`, 3 tentativas, 0 exceções).
 - **`obj\...\extension.vsixmanifest` obsoleto** pode ser empacotado no lugar do
   novo. Limpe `obj/` ao mudar o manifesto.
 - **WebView2 renderiza em branco** sem `UserDataFolder` explícito.
+- **Text node não tem `dataset` nem `attributes`.** O adapter de DOM dos testes
+  criava Text nodes como elementos completos e escondeu por muito tempo um
+  `textNode.dataset` que só quebrava no Chromium real (`invalid_response`). Ao
+  adicionar conveniências ao adapter, mantenha o que o navegador não tem.
 - **Deadlock na UI thread** com `.Result` / `.Wait()` em código in-process.
   Usar `async`/`await` + `JoinableTaskFactory`.
 - **Não existe API pública de terminal no VS.** Usar `Process` + output pane.

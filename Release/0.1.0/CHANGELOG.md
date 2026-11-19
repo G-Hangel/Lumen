@@ -27,6 +27,9 @@ Versões seguem `MAJOR.MINOR.PATCH` do manifesto do VSIX.
 
 - O command set agora é empacotado no VSIX (`Menus.cto`); sem ele o comando
   `View.Lumen` não era registrado e a janela nunca abria.
+- Respostas em streaming apareciam truncadas seguidas do aviso de correlação
+  inválida: o chunk de texto era gravado como Text node com `dataset`, o que
+  lança `TypeError` no Chromium. Os chunks agora usam `<span>` inerte.
 
 ### Limitações conhecidas
 

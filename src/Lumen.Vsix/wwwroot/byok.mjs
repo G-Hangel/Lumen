@@ -1042,15 +1042,18 @@ export function startByok({ transport, connected = () => false, text, renderMark
     turn.record.steps.push(step);
     if (event.kind === 'TextDelta') {
       turn.text += event.text;
-      const textNode = document.createTextNode(event.text);
-      textNode.dataset.timestamp = timestamp;
-      turn.response.append(textNode);
+      // Chromium Text nodes have no dataset; a span keeps the chunk inert and timestamped.
+      const chunk = document.createElement('span');
+      chunk.textContent = event.text;
+      chunk.dataset.timestamp = timestamp;
+      turn.response.append(chunk);
     } else if (event.kind === 'ReasoningDelta') {
       turn.record.reasoning += event.text;
       turn.reasoning.hidden = false;
-      const textNode = document.createTextNode(event.text);
-      textNode.dataset.timestamp = timestamp;
-      turn.thoughts.append(textNode);
+      const chunk = document.createElement('span');
+      chunk.textContent = event.text;
+      chunk.dataset.timestamp = timestamp;
+      turn.thoughts.append(chunk);
     } else if (event.kind === 'ToolCallStart') {
       const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true; card.dataset.timestamp = timestamp;
       const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = event.name;

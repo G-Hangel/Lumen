@@ -1627,6 +1627,7 @@ class Element {
     const tag = attribute ? null : selector.toUpperCase();
     const results = [];
     const visit = target => {
+      if (target.tagName === '#TEXT') return;
       const matches = attribute ? Object.hasOwn(target.attributes, attribute) || (attribute === 'data-byok-text' && target.dataset.byokText) : target.tagName === tag;
       if (matches) results.push(target);
       for (const child of target.children) visit(child);
@@ -1680,7 +1681,16 @@ function makeDocument() {
     querySelectorAll(sel) { return this.body?.querySelectorAll(sel) || []; },
     createElement(tag) { return new Element(tag, this); },
     createDocumentFragment() { return this.createElement('#fragment'); },
-    createTextNode(value) { const node = this.createElement('#text'); node.textContent = value; return node; },
+    // A browser Text node has no dataset, attributes or children. Keeping those off the
+    // adapter node makes a stray textNode.dataset write fail here instead of only in Chromium.
+    createTextNode(value) {
+      return {
+        tagName: '#TEXT', nodeType: 3, children: [], parent: null, _text: String(value),
+        get textContent() { return this._text; },
+        set textContent(next) { this._text = String(next); },
+        remove() { if (this.parent) { this.parent.children = this.parent.children.filter(child => child !== this); this.parent = null; } }
+      };
+    },
     getElementById(id) { return this.ids.get(id); },
     execCommand: () => false
   };

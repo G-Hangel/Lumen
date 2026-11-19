@@ -229,7 +229,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   const canCapture = () => online() && !busy && !imageLoading && !needsCancel && !cancelling
     && contexts.length < MAX_CONTEXTS && contextSize() < MAX_CONTEXT_TOTAL;
   let activeConversation = null, savedConversations = [], records = [], liveTurn = null, historyLoaded = false;
-  let visible = { start: 0, end: 0 }, deleteTarget = '', historyGeneration = 0;
+  let visible = { start: 0, end: 0 }, deleteTarget = '', historyGeneration = 0, removeTarget = '';
   const failedPages = new Set(), cached = new Map();
   const bridge = new ByokBridge(transport, { connected: () => connectedState && Boolean(connected()) && !disposed });
   const online = () => bridge.available && connectedState && Boolean(connected()) && !disposed;
@@ -446,6 +446,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('list').disabled = !enabled || locked;
     node('providers').disabled = !enabled || locked || !configurations.length;
     node('discover').disabled = !enabled || locked || !configurationId;
+    node('remove').disabled = !enabled || locked || !configurationId;
+    for (const id of ['remove-confirm', 'remove-keep']) node(id).disabled = !enabled || locked;
     node('models').disabled = !enabled || locked || !models.length || !configurationId;
     const model = selectedModel();
     for (const capability of Object.keys(capabilityNames)) node(capability).disabled = !enabled || locked || !model;
@@ -804,7 +806,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const result = await bridge.request('byok.list', {});
       if (disposed) return;
       configurations = result.configurations; remainingBudget = result.remainingBudget; renderProbeBudget();
-      loaded = true; configurationId = ''; resetSelection(); renderProviders();
+      loaded = true; configurationId = ''; resetSelection(); cancelRemoveProvider(false); renderProviders();
       setStatus(configurations.length ? 'byokReady' : 'byokEmptyProviders');
     });
   }
@@ -816,6 +818,35 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const result = await bridge.request('byok.discover', { configurationId: id });
       if (!disposed && configurationId === id) applyCatalog(result);
     }, node('models'));
+  }
+  function requestRemoveProvider() {
+    if (node('remove').disabled || !configurationId) return;
+    removeTarget = configurationId;
+    node('remove-confirmation').hidden = false;
+    node('remove-keep').focus();
+  }
+  function cancelRemoveProvider(focus = true) {
+    if (!removeTarget && node('remove-confirmation').hidden) return;
+    const hadTarget = Boolean(removeTarget);
+    removeTarget = '';
+    node('remove-confirmation').hidden = true;
+    if (focus && hadTarget) node('remove').focus({ preventScroll: true });
+  }
+  async function deleteProvider() {
+    if (!removeTarget || node('remove-confirmation').hidden) return;
+    const id = removeTarget;
+    await operate(async () => {
+      await bridge.request('byok.remove', { configurationId: id });
+      if (disposed) return;
+      configurations = configurations.filter(config => config.id !== id);
+      cancelRemoveProvider(false);
+      if (configurationId === id) {
+        configurationId = ''; resetSelection();
+        if (activeConversation?.configurationId === id) resetHistory();
+      }
+      renderProviders(); syncEmpty();
+      setStatus(configurations.length ? 'byokReady' : 'byokEmptyProviders');
+    }, node('providers'));
   }
   async function requestAzureInventory() {
     if (!configurationId || node('kind').value !== 'Azure') return;
@@ -1290,7 +1321,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const wasConnected = connectedState;
     connectedState = Boolean(value) && Boolean(connected()) && bridge.available;
     if (!connectedState) {
-      bridge.disconnect(); node('key').value = ''; loaded = false; configurationId = ''; configurations = []; resetSelection(); renderProviders();
+      bridge.disconnect(); node('key').value = ''; loaded = false; configurationId = ''; configurations = []; resetSelection(); cancelRemoveProvider(false); renderProviders();
       needsCancel = false; remainingBudget = null; renderProbeBudget(); setStatus('byokDisconnected');
       skillItems = []; skillDiagnostics = []; skillsLoaded = false; skillRefreshRequested = false; selectedSkills.clear(); renderSkills();
       agentItems = []; agentDiagnostics = []; agentsLoaded = false; agentRefreshRequested = false; renderAgents();
@@ -1364,8 +1395,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('auto-write-tools'), 'change', updateControls);
   listen(node('auto-terminal'), 'change', updateControls);
   listen(node('list'), 'click', listProviders);
-  listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
+  listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); cancelRemoveProvider(false); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
   listen(node('discover'), 'click', discover);
+  listen(node('remove'), 'click', requestRemoveProvider);
+  listen(node('remove-confirm'), 'click', deleteProvider);
+  listen(node('remove-keep'), 'click', () => cancelRemoveProvider());
   listen(node('azure-inventory'), 'click', requestAzureInventory);
   listen(node('models'), 'change', chooseModel);
   listen(node('apply-override'), 'click', override);
@@ -1407,6 +1441,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
       deleteTarget = '';
       node('history-confirmation').hidden = true;
       node('history-delete').focus({ preventScroll: true });
+    } else if (event.key === 'Escape' && !node('remove-confirmation').hidden) {
+      event.preventDefault();
+      cancelRemoveProvider();
     }
   });
   listen(node('context-reference'), 'click', attachReference);

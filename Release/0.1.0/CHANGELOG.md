@@ -20,6 +20,13 @@ Versões seguem `MAJOR.MINOR.PATCH` do manifesto do VSIX.
   painel de acompanhamento e validação de modo.
 - Verificadores automatizados na instância experimental com provedor loopback,
   sem chamadas pagas.
+- Exclusão de provedores salvos, com confirmação explícita e remoção da
+  credencial correspondente; o histórico de conversas é preservado.
+
+### Corrigido
+
+- O command set agora é empacotado no VSIX (`Menus.cto`); sem ele o comando
+  `View.Lumen` não era registrado e a janela nunca abria.
 
 ### Limitações conhecidas
 

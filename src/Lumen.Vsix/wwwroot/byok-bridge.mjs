@@ -260,6 +260,7 @@ export function isByokEnvelope(value) {
         && (p.credentialValid === null || typeof p.credentialValid === 'boolean') && (p.code === null || errorCode(p.code))
         && (!Object.hasOwn(p, 'retryAfter') || p.retryAfter === null || (Number.isSafeInteger(p.retryAfter) && p.retryAfter >= 0));
     case 'byok.select.result': return fields(p, ['configuration']) && configuration(p.configuration);
+    case 'byok.remove.result': return fields(p, ['removed']) && p.removed === true;
     case 'byok.override.result': return fields(p, ['model']) && isModel(p.model);
     case 'byok.probe.result': return fields(p, ['model', 'supported', 'remainingBudget'], ['retryAfter']) && isModel(p.model)
       && (p.supported === null || typeof p.supported === 'boolean') && probeBudget(p.remainingBudget)
@@ -339,6 +340,7 @@ function validRequest(type, p) {
     case 'byok.probe': return fields(p, ['configurationId', 'capability', 'consent']) && guid(p.configurationId)
       && PROBE_CAPABILITIES.includes(p.capability) && p.consent === true;
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
+    case 'byok.remove': return fields(p, ['configurationId']) && guid(p.configurationId);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
     case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'budget', 'skills']) && guid(p.configurationId)
@@ -377,7 +379,7 @@ export class ByokBridge {
 
   request(type, payload = {}, { onEvent = () => {}, expectedModelId } = {}) {
     if (!this.available || !this.isConnected()) return Promise.reject(new ByokError('bridge_unavailable'));
-    if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel',
+    if (!['byok.list', 'byok.configure', 'byok.discover', 'byok.select', 'byok.remove', 'byok.override', 'byok.probe', 'byok.chat', 'byok.cancel',
       'byok.history.list', 'byok.history.open', 'byok.history.new', 'byok.history.rename', 'byok.history.delete',
       'byok.context.capture', 'byok.context.release', 'byok.tool.read', 'byok.tool.write', 'byok.tool.write.undo', 'byok.tool.write.status',
       'byok.skills.list', 'byok.skills.set', 'byok.skills.write', 'byok.skills.undo', 'byok.skills.open',

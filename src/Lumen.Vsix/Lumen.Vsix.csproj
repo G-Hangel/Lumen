@@ -35,7 +35,16 @@
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- The VSCT compiler emits the binary .cto next to the source; the pkgdef
+         references it as Menus.ctmenu, so it must be packaged explicitly. -->
   </ItemGroup>
+  <Target Name="IncludeVsctBinary" BeforeTargets="GetVsixSourceItems">
+    <ItemGroup>
+      <VSIXSourceItem Include="$(IntermediateOutputPath)%(VSCTCompile.FileName).cto" Condition="Exists('$(IntermediateOutputPath)%(VSCTCompile.FileName).cto')">
+        <VSIXSubPath></VSIXSubPath>
+      </VSIXSourceItem>
+    </ItemGroup>
+  </Target>
   <!-- VSSDK stamps source timestamps into the zip; normalize them so Release VSIX bytes are reproducible. -->
   <Target Name="NormalizeVsixTimestamps" AfterTargets="CreateVsixContainer" Condition="'$(Configuration)' == 'Release' and Exists('$(TargetVsixContainer)')">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)/../../scripts/normalize-vsix.ps1&quot; &quot;$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(TargetVsixContainer)'))&quot;" />

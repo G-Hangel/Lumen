@@ -585,6 +585,41 @@ public sealed class ByokSessionTests
         Assert.Equal(JsonValueKind.Null, reply.RootElement.GetProperty("payload").GetProperty("supported").ValueKind);
     }
 
+    [Fact]
+    public async Task RemovingAProviderDeletesCredentialAndConfigurationButKeepsOtherProviders()
+    {
+        using var owned = new Folder();
+        var path = Path.Combine(owned.Path, "providers.json");
+        var credentials = new Credentials();
+        using var client = new HttpClient(new Handler());
+        using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()), credentials, new SettingsStore(path));
+        var replies = new List<string>();
+        Task Send(string json) { replies.Add(json); return Task.CompletedTask; }
+        var removedId = Guid.NewGuid().ToString("D");
+        var keptId = Guid.NewGuid().ToString("D");
+        foreach (var id in new[] { removedId, keptId })
+            await session.HandleAsync("https://lumen.local/index.html", Request("byok.configure", new { id, providerId = "fixture", kind = "OpenAI", baseUrl = "https://provider.test/v1/", key = Secret }), Send, CancellationToken.None);
+        await session.HandleAsync("https://lumen.local/index.html", Request("byok.remove", new { configurationId = removedId }), Send, CancellationToken.None);
+        using (var result = JsonDocument.Parse(replies.Last()))
+        {
+            Assert.Equal("byok.remove.result", result.RootElement.GetProperty("type").GetString());
+            Assert.True(result.RootElement.GetProperty("payload").GetProperty("removed").GetBoolean());
+        }
+        Assert.False(credentials.Values.ContainsKey(removedId));
+        Assert.Contains(keptId, credentials.Values.Keys);
+        Assert.Equal(keptId, Assert.Single(await new SettingsStore(path).ReadAsync(CancellationToken.None)).Id);
+        await session.HandleAsync("https://lumen.local/index.html", Request("byok.list", new { }), Send, CancellationToken.None);
+        using (var list = JsonDocument.Parse(replies.Last()))
+            Assert.Equal(keptId, Assert.Single(list.RootElement.GetProperty("payload").GetProperty("configurations").EnumerateArray().ToArray()).GetProperty("id").GetString());
+        await session.HandleAsync("https://lumen.local/index.html", Request("byok.remove", new { configurationId = removedId }), Send, CancellationToken.None);
+        using (var missing = JsonDocument.Parse(replies.Last()))
+            Assert.Equal("provider_not_found", missing.RootElement.GetProperty("payload").GetProperty("code").GetString());
+        await session.HandleAsync("https://lumen.local/index.html", Request("byok.remove", new { configurationId = "not-a-guid" }), Send, CancellationToken.None);
+        using (var invalid = JsonDocument.Parse(replies.Last()))
+            Assert.Equal("invalid_message", invalid.RootElement.GetProperty("payload").GetProperty("code").GetString());
+        AssertSecretAbsent(replies.Concat(new[] { await File.ReadAllTextAsync(path) }));
+    }
+
     private static string Request(string type, object payload) => JsonSerializer.Serialize(new { version = 1, id = Guid.NewGuid().ToString("D"), type, payload });
     private static void AssertSecretAbsent(IEnumerable<string> values)
     {

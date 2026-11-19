@@ -1520,6 +1520,62 @@ test('negative image checks reject disallowed MIME, spoofed files and >4 MB; val
   }
 });
 
+test('provider removal bridge validates requests and rejects forged results', async t => {
+  const f = fixture(t);
+  for (const payload of [{}, { configurationId: 'not-a-guid' }, { configurationId, confirm: true },
+    { configurationId: '00000000-0000-0000-0000-000000000000' }])
+    await rejects(f.bridge.request('byok.remove', payload), 'invalid_message');
+  assert.equal(isByokEnvelope(envelope('byok.remove.result', { removed: true })), true);
+  for (const bad of [{ removed: false }, { removed: 1 }, { removed: true, extra: 1 }, {}])
+    assert.equal(isByokEnvelope(envelope('byok.remove.result', bad)), false, JSON.stringify(bad));
+  const request = f.bridge.request('byok.remove', { configurationId });
+  assert.deepEqual(f.transport.messages.at(-1).payload, { configurationId });
+  f.transport.reply({ removed: false }); await rejects(request, 'invalid_response');
+  const accepted = f.bridge.request('byok.remove', { configurationId });
+  f.transport.reply({ removed: true }); assert.equal((await accepted).removed, true);
+});
+
+test('provider removal requires confirmation and clears the deleted provider selection', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f, model, { otherConfigurations: [{ ...config, id: otherId, providerId: 'second' }] });
+  assert.equal(f.node('remove').disabled, false);
+  await f.node('remove').emit('click');
+  assert.equal(f.node('remove-confirmation').hidden, false);
+  assert.equal(f.transport.messages.at(-1).type, 'byok.select');
+  await f.node('remove-keep').emit('click');
+  assert.equal(f.node('remove-confirmation').hidden, true);
+  assert.equal(f.node('remove').disabled, false);
+  await f.node('remove').emit('click');
+  const removal = f.node('remove-confirm').emit('click');
+  const sent = f.transport.messages.at(-1);
+  assert.equal(sent.type, 'byok.remove');
+  assert.deepEqual(sent.payload, { configurationId });
+  f.transport.reply({ removed: true }, sent); await removal; await tick();
+  assert.deepEqual(f.node('providers').children.map(option => option.value), ['', otherId]);
+  assert.equal(f.node('providers').value, '');
+  assert.equal(f.node('remove').disabled, true);
+  assert.equal(f.node('remove-confirmation').hidden, true);
+  assert.equal(f.node('models').children.length, 1);
+  assert.equal(f.node('status').textContent, en.byokReady);
+});
+
+test('removing the provider that owns the open conversation clears the live chat', async t => {
+  const f = uiFixture(t);
+  await openWithModel(f);
+  f.node('message').value = 'hello'; await f.node('message').emit('input');
+  const chat = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
+  assert.equal(sent.type, 'byok.chat');
+  f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Stop' }, sent.id));
+  f.transport.reply({ completed: true, conversation: summary }, sent); await chat; await tick();
+  assert.equal(f.node('empty').hidden, true);
+  await f.node('remove').emit('click');
+  const removal = f.node('remove-confirm').emit('click');
+  f.transport.reply({ removed: true }); await removal; await tick();
+  assert.equal(f.node('empty').hidden, false);
+  assert.equal(f.node('message').disabled, true);
+  assert.equal(f.node('send').disabled, true);
+});
+
 // A minimal DOM adapter, not a browser/product validation. No network or synthetic preview host is installed.
 class Element {
   constructor(tag, document) {

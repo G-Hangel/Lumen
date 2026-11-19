@@ -1,6 +1,19 @@
-# STATUS — Lumen
+# STATUS - Lumen
 
-Atualizado em **2026-11-18**.
+Atualizado em **2026-11-19**.
+
+## Correção de build/pacote (2026-11-19)
+
+`Menus.cto` (saída binária do VSCT) não estava sendo empacotado, embora o pkgdef
+referencie `Menus.ctmenu`. Sem ele o command set nunca era registrado e
+`View.Lumen` era inválido (`O comando "View.Lumen" não é válido`). O csproj agora
+inclui o `.cto` via `VSIXSourceItem` num target `IncludeVsctBinary`
+(`src/Lumen.Vsix/Lumen.Vsix.csproj:41-47`). Evidência: VSIX passou de 57 para 58
+entradas e `View.Lumen` passou a executar sem exceção; `ActivityLog.xml` mostra
+`End package load [LumenPackage]`.
+
+A verificação visual na instância Experimental continua bloqueada — ver **B13**
+em `BLOQUEIOS.md`. O build, os testes e a instalação nos dois hives estão verdes.
 
 ## Estado atual
 

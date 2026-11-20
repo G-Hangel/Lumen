@@ -1018,79 +1018,56 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const article = document.createElement('article'); article.className = 'byok-turn';
     const user = localized('h3', 'byokUser'); const userText = document.createElement('p'); userText.className = 'byok-plain'; userText.textContent = value;
     const assistant = localized('h3', 'byokAssistant');
-    const response = document.createElement('div'); response.className = 'byok-plain';
-    const reasoning = document.createElement('details'); reasoning.hidden = true; reasoning.append(localized('summary', 'byokReasoning'));
-    const thoughts = document.createElement('p'); thoughts.className = 'byok-plain'; reasoning.append(thoughts);
-    const tools = document.createElement('div');
+    const content = document.createElement('div'); content.className = 'byok-blocks';
     const usage = document.createElement('p'); usage.className = 'secondary';
     const notices = document.createElement('div');
     article.append(user, userText);
     if (contextText) {
       const details = document.createElement('details'); details.className = 'context-history';
-      const content = document.createElement('pre'); content.className = 'byok-plain'; content.tabIndex = 0; content.textContent = contextText;
-      details.append(localized('summary', 'contextHistory'), content); article.append(details);
+      const body = document.createElement('pre'); body.className = 'byok-plain'; body.tabIndex = 0; body.textContent = contextText;
+      details.append(localized('summary', 'contextHistory'), body); article.append(details);
     }
-    article.append(assistant, reasoning, response, tools, usage, notices);
-    return { article, response, text: '', reasoning, thoughts, tools, calls: new Map(), approvals: new Map(), usage, notices, record: { userText: value,
-      ...(contextText ? { contextText } : {}), hasImage: false, text: '', reasoning: '', tools: [], steps: [], status: 'failed' } };
+    article.append(assistant, content, usage, notices);
+    return { article, content, usage, notices, calls: new Map(), approvals: new Map(), blocks: [], record: { userText: value,
+      ...(contextText ? { contextText } : {}), hasImage: false, blocks: [], steps: [], status: 'failed' } };
   }
-  function renderEvent(turn, event) {
-    if (disposed) return;
-    const pinned = !turn.archived && scrollPinned();
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const step = { kind: event.kind, timestamp, ...event };
-    turn.record.steps.push(step);
-    if (event.kind === 'TextDelta') {
-      turn.text += event.text;
-      // Chromium Text nodes have no dataset; a span keeps the chunk inert and timestamped.
-      const chunk = document.createElement('span');
-      chunk.textContent = event.text;
-      chunk.dataset.timestamp = timestamp;
-      turn.response.append(chunk);
-    } else if (event.kind === 'ReasoningDelta') {
-      turn.record.reasoning += event.text;
-      turn.reasoning.hidden = false;
-      const chunk = document.createElement('span');
-      chunk.textContent = event.text;
-      chunk.dataset.timestamp = timestamp;
-      turn.thoughts.append(chunk);
-    } else if (event.kind === 'ToolCallStart') {
-      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true; card.dataset.timestamp = timestamp;
-      const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = event.name;
-      const state = localized('p', 'byokToolPending', 'secondary'); const args = document.createElement('pre'); args.tabIndex = 0;
+  // A turn is an ordered timeline: every reasoning/text/tool step becomes its own block appended
+  // in arrival order, so think -> tool -> think -> answer renders exactly as it happened.
+  function appendBlock(turn, type, data = {}) {
+    data.type = type;
+    const block = { type, data };
+    if (type === 'reasoning' || type === 'text') {
+      data.text ??= '';
+      const body = document.createElement(type === 'reasoning' ? 'p' : 'div'); body.className = 'byok-plain';
+      if (type === 'reasoning') {
+        const details = document.createElement('details'); details.className = 'byok-reasoning';
+        details.append(localized('summary', 'byokReasoning'), body);
+        block.el = details;
+      } else block.el = body;
+      block.body = body;
+    } else if (type === 'tool') {
+      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true; card.dataset.timestamp = data.timestamp ?? '';
+      const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = data.name ?? '';
+      const state = localized('p', 'byokToolPending', 'secondary');
       state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
+      const args = document.createElement('pre'); args.tabIndex = 0;
       args.className = 'byok-plain'; args.dataset.i18nLabel = 'byokToolArguments'; args.setAttribute('aria-label', text('byokToolArguments'));
       const result = document.createElement('pre'); result.className = 'byok-plain byok-tool-result'; result.tabIndex = 0; result.hidden = true;
       result.dataset.i18nLabel = 'byokToolResult'; result.setAttribute('aria-label', text('byokToolResult'));
-      card.append(title, name, state, args, result); turn.tools.append(card); turn.calls.set(event.id, { args, state, title, result, name: event.name });
-    } else if (event.kind === 'ToolCallArgsDelta') turn.calls.get(event.id).args.append(document.createTextNode(event.chunk));
-    else if (event.kind === 'ToolCallEnd') {
-      const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2); call.args.dataset.timestamp = timestamp;
-      call.state.dataset.byokText = 'byokToolEnded'; call.state.textContent = text('byokToolEnded');
-      turn.record.tools.push({ id: event.id, name: call.name, arguments: event.arguments });
-    } else if (event.kind === 'ToolExecution') {
-      const call = turn.calls.get(event.id);
-      if (event.status === 'Running' || event.status === 'Completed') {
-        call.title.dataset.byokText = 'byokToolExecutedNotice'; call.title.textContent = text('byokToolExecutedNotice');
-      }
-      call.state.dataset.byokText = `byokTool${event.status}`; call.state.textContent = text(`byokTool${event.status}`);
-      call.state.className = event.isError ? 'error' : 'secondary';
-      call.result.textContent = event.content; call.result.hidden = event.status === 'Running'; call.result.dataset.timestamp = timestamp;
-      if (event.status !== 'Running') {
-        Object.assign(turn.record.tools.find(item => item.id === event.id), { status: event.status, isError: event.isError, content: event.content });
-      }
-    } else if (event.kind === 'ApprovalRequest') {
+      card.append(title, name, state, args, result);
+      block.el = card; block.title = title; block.state = state; block.args = args; block.result = result;
+    } else if (type === 'approval') {
       const card = document.createElement('section'); card.className = 'byok-approval';
-      const name = document.createElement('p'); name.className = 'byok-plain'; name.textContent = event.toolName;
+      const name = document.createElement('p'); name.className = 'byok-plain'; name.textContent = data.toolName;
       card.append(localized('h4', 'approvalTitle'), name);
-      if (event.targetPath !== null) {
+      if (data.targetPath !== null) {
         const target = document.createElement('p'); target.className = 'byok-plain';
-        target.textContent = `${text('approvalTarget')}: ${event.targetPath}`; card.append(target);
+        target.textContent = `${text('approvalTarget')}: ${data.targetPath}`; card.append(target);
       }
       const args = document.createElement('pre'); args.className = 'byok-plain'; args.tabIndex = 0;
       args.dataset.i18nLabel = 'approvalArguments'; args.setAttribute('aria-label', text('approvalArguments'));
       // Model-supplied arguments stay inert text, never Markdown.
-      args.textContent = JSON.stringify(event.arguments, null, 2);
+      args.textContent = JSON.stringify(data.arguments, null, 2);
       const state = localized('p', 'approvalPending', 'secondary');
       state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
       const actions = document.createElement('div'); actions.className = 'byok-actions';
@@ -1103,23 +1080,75 @@ export function startByok({ transport, connected = () => false, text, renderMark
       };
       entry.expire = () => settle('approvalExpired');
       const choices = [['deny', 'approvalDeny'], ['allow_once', 'approvalAllowOnce'],
-        ...(event.canAllowSession ? [['allow_session', 'approvalAllowSession']] : [])];
+        ...(data.canAllowSession ? [['allow_session', 'approvalAllowSession']] : [])];
       for (const [decision, key] of choices) {
         const button = localized('button', key, decision === 'deny' ? 'primary-button' : 'text-button'); button.type = 'button';
         button.addEventListener('click', async () => {
           if (entry.answered || disposed) return;
           for (const item of buttons) item.disabled = true;
           try {
-            await bridge.request('byok.approval.respond', { requestId: event.id, decision });
+            await bridge.request('byok.approval.respond', { requestId: data.id, decision });
             settle(decision === 'deny' ? 'approvalDenied' : decision === 'allow_once' ? 'approvalAllowedOnce' : 'approvalAllowedSession');
           } catch { if (!disposed) settle('approvalExpired'); }
         });
         buttons.push(button); actions.append(button);
       }
-      card.append(args, state, actions); turn.tools.append(card); turn.approvals.set(event.id, entry);
+      card.append(args, state, actions);
+      block.el = card; block.state = state;
+      turn.approvals.set(data.id, entry);
       const announcement = document.getElementById('announcement');
-      if (announcement) announcement.textContent = `${text('approvalTitle')}: ${event.toolName}`;
+      if (announcement) announcement.textContent = `${text('approvalTitle')}: ${data.toolName}`;
       buttons[0].focus({ preventScroll: true });
+    }
+    turn.blocks.push(block);
+    if (type !== 'approval') turn.record.blocks.push(block.data);
+    turn.content.append(block.el);
+    return block;
+  }
+  function renderEvent(turn, event) {
+    if (disposed) return;
+    const pinned = !turn.archived && scrollPinned();
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const step = { kind: event.kind, timestamp, ...event };
+    turn.record.steps.push(step);
+    if (event.kind === 'TextDelta') {
+      const last = turn.blocks.at(-1);
+      const block = last?.type === 'text' ? last : appendBlock(turn, 'text');
+      // Chromium Text nodes have no dataset; a span keeps the chunk inert and timestamped.
+      const chunk = document.createElement('span');
+      chunk.textContent = event.text;
+      chunk.dataset.timestamp = timestamp;
+      block.body.append(chunk);
+      block.data.text += event.text;
+    } else if (event.kind === 'ReasoningDelta') {
+      const last = turn.blocks.at(-1);
+      const block = last?.type === 'reasoning' ? last : appendBlock(turn, 'reasoning');
+      const chunk = document.createElement('span');
+      chunk.textContent = event.text;
+      chunk.dataset.timestamp = timestamp;
+      block.body.append(chunk);
+      block.data.text += event.text;
+    } else if (event.kind === 'ToolCallStart') {
+      const block = appendBlock(turn, 'tool', { id: event.id, name: event.name });
+      turn.calls.set(event.id, { block, args: block.args, state: block.state, title: block.title, result: block.result, name: event.name });
+    } else if (event.kind === 'ToolCallArgsDelta') turn.calls.get(event.id).args.append(document.createTextNode(event.chunk));
+    else if (event.kind === 'ToolCallEnd') {
+      const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2); call.args.dataset.timestamp = timestamp;
+      call.state.dataset.byokText = 'byokToolEnded'; call.state.textContent = text('byokToolEnded');
+      call.block.data.arguments = event.arguments;
+    } else if (event.kind === 'ToolExecution') {
+      const call = turn.calls.get(event.id);
+      if (event.status === 'Running' || event.status === 'Completed') {
+        call.title.dataset.byokText = 'byokToolExecutedNotice'; call.title.textContent = text('byokToolExecutedNotice');
+      }
+      call.state.dataset.byokText = `byokTool${event.status}`; call.state.textContent = text(`byokTool${event.status}`);
+      call.state.className = event.isError ? 'error' : 'secondary';
+      call.result.textContent = event.content; call.result.hidden = event.status === 'Running'; call.result.dataset.timestamp = timestamp;
+      if (event.status !== 'Running') {
+        Object.assign(call.block.data, { status: event.status, isError: event.isError, content: event.content });
+      }
+    } else if (event.kind === 'ApprovalRequest') {
+      appendBlock(turn, 'approval', event);
     } else if (event.kind === 'Usage') {
       turn.usage.replaceChildren(localized('span', 'byokUsage'), document.createTextNode(`: ${event.input} / ${event.output}`));
     } else if (event.kind === 'Notice') {
@@ -1140,29 +1169,32 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (pinned) node('output').scrollTop = node('output').scrollHeight;
   }
   function finishMarkdown(turn) {
-    if (typeof renderMarkdown !== 'function' || !turn.text) return;
+    if (typeof renderMarkdown !== 'function') return;
     // Only the main's sanitized renderer may return HTML; streaming is always text nodes.
     try {
-      const html = renderMarkdown(turn.text);
-      if (typeof html !== 'string') return;
-      turn.response.innerHTML = html; turn.response.className = 'markdown';
-      for (const block of turn.response.querySelectorAll('pre')) {
-        block.tabIndex = 0; block.setAttribute('aria-label', text('byokCodeBlock'));
-        const wrapper = document.createElement('div'); wrapper.className = 'code-block';
-        const copy = localized('button', 'byokCopy', 'code-copy'); copy.type = 'button';
-        block.replaceWith(wrapper); wrapper.append(block, copy);
-        copy.addEventListener('click', async () => {
-          const value = (block.querySelector('code') || block).textContent;
-          let copied = false;
-          try { await navigator.clipboard.writeText(value); copied = true; }
-          catch {
-            const scratch = document.createElement('textarea'); scratch.value = value; scratch.className = 'sr-only'; scratch.setAttribute('readonly', '');
-            document.body.append(scratch); scratch.select();
-            try { copied = document.execCommand('copy'); } finally { scratch.remove(); }
-          }
-          copy.textContent = text(copied ? 'byokCopied' : 'byokCopyFailed');
-          setTimeout(() => { copy.textContent = text('byokCopy'); }, 2000);
-        });
+      for (const block of turn.blocks) {
+        if (block.type !== 'text' || !block.data.text) continue;
+        const html = renderMarkdown(block.data.text);
+        if (typeof html !== 'string') continue;
+        block.el.innerHTML = html; block.el.className = 'markdown';
+        for (const pre of block.el.querySelectorAll('pre')) {
+          pre.tabIndex = 0; pre.setAttribute('aria-label', text('byokCodeBlock'));
+          const wrapper = document.createElement('div'); wrapper.className = 'code-block';
+          const copy = localized('button', 'byokCopy', 'code-copy'); copy.type = 'button';
+          pre.replaceWith(wrapper); wrapper.append(pre, copy);
+          copy.addEventListener('click', async () => {
+            const value = (pre.querySelector('code') || pre).textContent;
+            let copied = false;
+            try { await navigator.clipboard.writeText(value); copied = true; }
+            catch {
+              const scratch = document.createElement('textarea'); scratch.value = value; scratch.className = 'sr-only'; scratch.setAttribute('readonly', '');
+              document.body.append(scratch); scratch.select();
+              try { copied = document.execCommand('copy'); } finally { scratch.remove(); }
+            }
+            copy.textContent = text(copied ? 'byokCopied' : 'byokCopyFailed');
+            setTimeout(() => { copy.textContent = text('byokCopy'); }, 2000);
+          });
+        }
       }
     } catch { /* A renderer failure must leave already received plain text intact. */ }
   }
@@ -1170,13 +1202,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (!record) return localized('article', 'historyLoading', 'history-placeholder');
     const turn = createTurn(record.userText, record.contextText); turn.archived = true;
     if (record.hasImage) turn.article.append(localized('p', 'byokImageAttached', 'secondary'));
-    renderEvent(turn, { kind: 'TextDelta', text: record.text });
-    if (record.reasoning) renderEvent(turn, { kind: 'ReasoningDelta', text: record.reasoning });
-    for (const call of record.tools) {
-      renderEvent(turn, { kind: 'ToolCallStart', id: call.id, name: call.name });
-      renderEvent(turn, { kind: 'ToolCallEnd', id: call.id, arguments: call.arguments });
-      if (call.status) renderEvent(turn, { kind: 'ToolExecution', id: call.id, status: call.status, isError: call.isError, content: call.content });
-    }
+    for (const block of archivedBlocks(record)) renderBlock(turn, block);
     if (record.status === 'paused') {
       turn.article.append(localized('p', 'historyPausedTurn', 'secondary'));
       if (record.consents) {
@@ -1186,6 +1212,34 @@ export function startByok({ transport, connected = () => false, text, renderMark
       }
     } else if (record.status !== 'completed') turn.article.append(localized('p', record.status === 'cancelled' ? 'historyCancelledTurn' : 'historyFailedTurn', 'secondary'));
     finishMarkdown(turn); return turn.article;
+  }
+  function archivedBlocks(record) {
+    if (Array.isArray(record.blocks) && record.blocks.length) return record.blocks;
+    // Flattened records (history saved before ordered blocks) keep their grouped order.
+    const blocks = [];
+    if (record.reasoning) blocks.push({ type: 'reasoning', text: record.reasoning });
+    if (record.text) blocks.push({ type: 'text', text: record.text });
+    for (const call of record.tools ?? []) blocks.push({ type: 'tool', ...call });
+    return blocks;
+  }
+  function renderBlock(turn, block) {
+    if (block.type === 'reasoning' || block.type === 'text') {
+      const created = appendBlock(turn, block.type, { text: block.text ?? '' });
+      created.body.textContent = block.text ?? '';
+    } else if (block.type === 'tool') {
+      const created = appendBlock(turn, 'tool', { id: block.id, name: block.name });
+      created.args.textContent = JSON.stringify(block.arguments, null, 2);
+      if (block.status) {
+        if (block.status === 'Running' || block.status === 'Completed') {
+          created.title.dataset.byokText = 'byokToolExecutedNotice'; created.title.textContent = text('byokToolExecutedNotice');
+        }
+        created.state.dataset.byokText = `byokTool${block.status}`; created.state.textContent = text(`byokTool${block.status}`);
+        created.state.className = block.isError ? 'error' : 'secondary';
+        created.result.textContent = block.content ?? ''; created.result.hidden = block.status === 'Running';
+      } else {
+        created.state.dataset.byokText = 'byokToolEnded'; created.state.textContent = text('byokToolEnded');
+      }
+    }
   }
   function continuePaused(source) {
     const consents = source?.consents;
@@ -1242,7 +1296,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       const result = await request;
       if (disposed) return;
       contexts = []; renderContexts();
-      turn.record.text = turn.text; turn.record.status = result.completed ? 'completed' : result.paused ? 'paused' : 'failed';
+      turn.record.status = result.completed ? 'completed' : result.paused ? 'paused' : 'failed';
       turn.record.consents = turn.consents;
       rememberSummary(result.conversation);
       records.length = result.conversation.turnCount;

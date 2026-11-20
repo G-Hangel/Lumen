@@ -356,6 +356,34 @@ test('automatic UI failed/cancelled cards stay plain and cancellation acknowledg
   assert.ok(f.node('history-items').textContent.includes(en.byokToolCancelled));
 });
 
+test('assistant timeline renders interleaved reasoning, tool and answer blocks in arrival order, live and archived', async t => {
+  const f = uiFixture(t); await openWithModel(f);
+  f.node('message').value = 'read it'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
+  const emit = event => f.transport.emit(envelope('byok.event', event, chat.id));
+  emit({ kind: 'ReasoningDelta', text: 'first plan' });
+  emitReadCall(f, chat);
+  emit(executionEvent());
+  emit(executionEvent('Completed', { content: 'file body' }));
+  emit({ kind: 'ReasoningDelta', text: 'second plan' });
+  emit({ kind: 'TextDelta', text: 'final answer' });
+  const blocksOf = article => article.children.find(child => child.className === 'byok-blocks');
+  const liveBlocks = blocksOf(f.node('live').children[0]);
+  assert.deepEqual(liveBlocks.children.map(child => child.className), ['byok-reasoning', 'byok-tool', 'byok-reasoning', 'byok-plain'],
+    'think -> tool -> think -> answer must stay four blocks in arrival order');
+  assert.match(liveBlocks.children[0].textContent, /first plan/);
+  assert.match(liveBlocks.children[2].textContent, /second plan/);
+  assert.notEqual(liveBlocks.children[0], liveBlocks.children[2], 'each reasoning burst is its own block, never concatenated');
+  assert.match(liveBlocks.children[3].textContent, /final answer/);
+  f.transport.reply({ completed: true, conversation: summary }); await send; f.flushFrames();
+  const row = f.node('history-items').children.at(-1);
+  const archivedBlocks = blocksOf(row);
+  assert.deepEqual(archivedBlocks.children.map(child => child.className), ['byok-reasoning', 'byok-tool', 'byok-reasoning', 'byok-plain'],
+    'archived turn replays the same chronological order from the stored blocks');
+  assert.match(archivedBlocks.children[2].textContent, /second plan/);
+  assert.ok(row.textContent.includes(en.byokToolCompleted));
+});
+
 test('consent resets immediately on provider/kind change and configure attempt without an enabling RPC', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('auto-read-tools').checked = true; f.node('kind').value = 'OpenAI'; await f.node('kind').emit('change');
@@ -1232,6 +1260,19 @@ test('history pages reject offsets, totals, turn order, malformed data and unkno
   const hostile = { ...archiveTurn(0), userText: '<img onerror=attack()>', text: '<script>attack()</script>',
     tools: [{ id: 'call', name: 'run_command', arguments: { args: ['<script>'] } }] };
   assert.equal(isByokEnvelope(envelope('byok.history.open.result', { ...page(summary), turns: [hostile] })), true, 'HTML is inert data, not executable protocol');
+  const ordered = { type: 'reasoning', text: 'plan' }, answered = { type: 'tool', id: 'call', name: 'read_file', arguments: { path: '.' }, status: 'Completed', isError: false, content: 'ok' };
+  const orderedTurn = { ...archiveTurn(0), blocks: [ordered, { type: 'tool', id: 'call', name: 'read_file', arguments: { path: '.' } }, { type: 'text', text: 'answer' }, answered] };
+  assert.equal(isByokEnvelope(envelope('byok.history.open.result', { ...page(summary), turns: [orderedTurn] })), true, 'ordered timeline blocks are valid history');
+  for (const blocks of [null, {}, [{}], [{ type: 'bogus', text: 'x' }], [{ type: 'text' }], [{ type: 'text', text: null }],
+    [{ type: 'reasoning', text: 'x', unknown: true }],
+    [{ type: 'tool', id: 'call', name: 'read_file' }],
+    [{ type: 'tool', id: 'call', name: 'read_file', arguments: 'not-json' }],
+    [{ type: 'tool', id: 'call', name: 'read_file', arguments: {}, status: 'Running', isError: false, content: '' }],
+    [{ type: 'tool', id: 'call', name: 'read_file', arguments: {}, status: 'Completed' }],
+    [{ type: 'tool', id: 'call', name: 'read_file', arguments: {}, status: 'Completed', isError: false, content: 'ok', unknown: true }],
+    Array.from({ length: 129 }, () => ({ type: 'text', text: 'x' }))]) {
+    assert.equal(isByokEnvelope(envelope('byok.history.open.result', { ...page(summary), turns: [{ ...archiveTurn(0), blocks }] })), false, JSON.stringify(blocks).slice(0, 160));
+  }
 });
 
 test('outgoing history protocol rejects missing confirmation, invalid bounds/ids and all unknown fields before posting', async t => {
@@ -2485,10 +2526,11 @@ test('UI archived Markdown, reasoning, images and tool arguments stay inert, loc
     tools: [{ id: 'call', name: 'run_command', arguments: { args: ['</pre><script>tool()</script>'] } }] }));
   f.transport.reply({ conversation: archive, offset: 0, total: 3, turns }, sent); await tick(); f.flushFrames();
   for (const row of f.node('history-items').children) {
-    console.error('DEBUG test loop', 'row children', row.children.length, Array.from(row.children).map(c => c.tagName + '.' + c.className).join(','));
     assert.equal(row.querySelector('script'), null); assert.equal(row.querySelector('img'), null);
-    const response = row.children[4];
-    // assert.match(response.innerHTML, /&lt;script&gt;/);
+    const content = row.children.find(child => child.className === 'byok-blocks');
+    assert.ok(content, `no blocks container, row has ${row.children.length} children`);
+    const response = content.children.find(child => child.className === 'markdown');
+    assert.ok(response, 'archived answer must render through the sanitized Markdown renderer');
     for (const link of response.querySelectorAll('a')) assert.equal(isSafeLink(link.getAttribute('href')), true);
     const reasoning = Array.from(row.querySelectorAll('details')).find(d => d.className !== 'byok-tool') || row.querySelectorAll('details')[0]; assert.ok(reasoning, `no details found, row has ${row.children.length} children`); assert.equal(reasoning.tagName, 'DETAILS'); assert.equal(reasoning.open, false);
     assert.equal(reasoning.hidden, false); assert.match(reasoning.textContent, /<script>reasoning\(\)<\/script>/);

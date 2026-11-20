@@ -23,6 +23,14 @@ Versões seguem `MAJOR.MINOR.PATCH` do manifesto do VSIX.
 - Exclusão de provedores salvos, com confirmação explícita e remoção da
   credencial correspondente; o histórico de conversas é preservado.
 
+### Alterado
+
+- A resposta do assistente renderiza como **linha do tempo ordenada** (pensar →
+  ferramenta → pensar → resposta), em vez de blocos fixos agrupados; cada
+  burst de raciocínio vira seu próprio bloco e o histórico arquivado reproduz
+  a mesma ordem a partir dos blocos armazenados. Os campos agregados do
+  payload continuam presentes para compatibilidade.
+
 ### Corrigido
 
 - O command set agora é empacotado no VSIX (`Menus.cto`); sem ele o comando

@@ -863,28 +863,50 @@ public sealed class ByokSession : IDisposable
             ["index"] = index, ["userText"] = userText.FirstOrDefault()?.Text ?? string.Empty, ["hasImage"] = user.Parts.OfType<ImagePart>().Any(),
             ["text"] = string.Concat(assistant.Parts.OfType<TextPart>().Select(part => part.Text)),
             ["reasoning"] = string.Concat(assistant.Parts.OfType<ReasoningPart>().Select(part => part.Text)),
-            ["tools"] = assistant.Parts.OfType<ToolCallPart>().Select(call =>
+            ["tools"] = assistant.Parts.OfType<ToolCallPart>().Select(call => ToolView(call, assistant, value.TurnStates[index])).ToArray(),
+            ["status"] = value.TurnStates[index],
+            // Ordered timeline: the UI renders the turn from this sequence, not from the grouped fields above.
+            ["blocks"] = assistant.Parts.SelectMany(part => part switch
             {
-                var tool = new Dictionary<string, object> { ["id"] = call.Id, ["name"] = call.Name, ["arguments"] = call.Arguments };
-                var result = assistant.Parts.OfType<ToolResultPart>().FirstOrDefault(part => part.InvocationId == call.Id);
-                if (result is not null)
-                {
-                    tool["status"] = result.IsError ? "Failed" : "Completed";
-                    tool["isError"] = result.IsError;
-                    tool["content"] = result.Content;
-                }
-                else if (value.TurnStates[index] != "completed")
-                {
-                    tool["status"] = value.TurnStates[index] == "cancelled" ? "Cancelled" : "Failed";
-                    tool["isError"] = true;
-                    tool["content"] = string.Empty;
-                }
-                return tool;
-            }).ToArray(),
-            ["status"] = value.TurnStates[index]
+                ReasoningPart reasoning => new object[] { new { type = "reasoning", text = reasoning.Text } },
+                TextPart textPart => new object[] { new { type = "text", text = textPart.Text } },
+                ToolCallPart call => new object[] { ToolBlockView(call, assistant, value.TurnStates[index]) },
+                _ => Array.Empty<object>()
+            }).ToArray()
         };
         if (userText.Length > 1) view["contextText"] = string.Concat(userText.Skip(1).Select(part => part.Text));
         return view;
+    }
+
+    private static object ToolView(ToolCallPart call, Message assistant, string turnState)
+    {
+        var tool = new Dictionary<string, object> { ["id"] = call.Id, ["name"] = call.Name, ["arguments"] = call.Arguments };
+        ApplyToolResult(tool, call.Id, assistant, turnState);
+        return tool;
+    }
+
+    private static object ToolBlockView(ToolCallPart call, Message assistant, string turnState)
+    {
+        var block = new Dictionary<string, object> { ["type"] = "tool", ["id"] = call.Id, ["name"] = call.Name, ["arguments"] = call.Arguments };
+        ApplyToolResult(block, call.Id, assistant, turnState);
+        return block;
+    }
+
+    private static void ApplyToolResult(Dictionary<string, object> target, string invocationId, Message assistant, string turnState)
+    {
+        var result = assistant.Parts.OfType<ToolResultPart>().FirstOrDefault(part => part.InvocationId == invocationId);
+        if (result is not null)
+        {
+            target["status"] = result.IsError ? "Failed" : "Completed";
+            target["isError"] = result.IsError;
+            target["content"] = result.Content;
+        }
+        else if (turnState != "completed")
+        {
+            target["status"] = turnState == "cancelled" ? "Cancelled" : "Failed";
+            target["isError"] = true;
+            target["content"] = string.Empty;
+        }
     }
 
     private CatalogResult ApplyProbeCatalog(ProviderConfiguration configuration, CatalogResult catalog) =>

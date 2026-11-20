@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Lumen.Core.Domain;
 using Lumen.Providers;
+using Lumen.Tools;
 using Xunit;
 
 namespace Lumen.Tests;
@@ -287,6 +288,34 @@ public sealed class ConversationSessionTests
         Assert.DoesNotContain(Image, fixture.Handler.ChatBodies.Last());
         AssertUiPrivate(fixture.Replies);
         AssertSecretAbsent(ReadJsonFiles(fixture.Root));
+    }
+
+    [Fact]
+    public async Task InterleavedReasoningToolTurnKeepsChronologicalOrderInHistoryBlocks()
+    {
+        using var fixture = new Fixture("Gemini", new ReadStub());
+        fixture.Handler.StreamFor = round => round == 1
+            ? GeminiFrame(new object[] { new { text = "first plan", thought = true },
+                new { functionCall = new { id = "plan-call", name = "read_file", args = new { path = "Sample.cs" } } } }, true)
+            : GeminiFrame(new object[] { new { text = "second plan", thought = true }, new { text = "final answer" } }, true);
+        await fixture.ConfigureAndSelect();
+        Assert.Equal("byok.override.result", Type(await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false })));
+        var chat = await fixture.Chat("read Sample.cs", new { readTools = true });
+        var conversationId = ChatSummary(chat, fixture.ConfigurationId, Model, 1).GetProperty("id").GetString()!;
+        Assert.Equal(2, fixture.Handler.ChatBodies.Count);
+        var opened = await fixture.Open(conversationId);
+        var turn = Assert.Single(Payload(opened).GetProperty("turns").EnumerateArray());
+        var blocks = turn.GetProperty("blocks").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "reasoning", "tool", "reasoning", "text" }, blocks.Select(block => block.GetProperty("type").GetString()));
+        Assert.Equal("first plan", blocks[0].GetProperty("text").GetString());
+        Assert.Equal("plan-call", blocks[1].GetProperty("id").GetString());
+        Assert.Equal("read_file", blocks[1].GetProperty("name").GetString());
+        Assert.Equal("Completed", blocks[1].GetProperty("status").GetString());
+        Assert.Equal("second plan", blocks[2].GetProperty("text").GetString());
+        Assert.Equal("final answer", blocks[3].GetProperty("text").GetString());
+        // The grouped fields stay intact for older clients.
+        Assert.Equal("first plansecond plan", turn.GetProperty("reasoning").GetString());
+        Assert.Equal("final answer", turn.GetProperty("text").GetString());
     }
 
     [Theory]
@@ -648,6 +677,7 @@ public sealed class ConversationSessionTests
         public int Requests;
         public string Catalog = "";
         public string Stream = "";
+        public Func<int, string>? StreamFor;
         public BlockingStream? BlockingStream;
         public readonly List<string> ChatBodies = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -660,9 +690,17 @@ public sealed class ConversationSessionTests
             ChatBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = BlockingStream is null ? new StringContent(Stream) : new StreamContent(BlockingStream)
+                Content = BlockingStream is null ? new StringContent(StreamFor?.Invoke(ChatBodies.Count) ?? Stream) : new StreamContent(BlockingStream)
             };
         }
+    }
+
+    private sealed class ReadStub : IReadToolExecutor
+    {
+        public IReadOnlyList<ToolSpec> Specs => ReadToolCatalog.Specs;
+        public Task<IReadToolExecutor> CaptureAsync(CancellationToken token) => Task.FromResult<IReadToolExecutor>(this);
+        public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) =>
+            Task.FromResult(new ToolResult(call.Id, false, "line one"));
     }
     private sealed class BlockingStream : Stream
     {
@@ -711,14 +749,16 @@ public sealed class ConversationSessionTests
         public readonly Handler Handler = new();
         public Action<JsonElement>? OnReply;
         private readonly string kind;
+        private readonly IReadToolExecutor? readTools;
         private readonly HttpClient client;
         private readonly ProviderFactory providers;
         private readonly List<string> replies = new();
         private ByokSession session;
         public string[] Replies { get { lock (replies) return replies.ToArray(); } }
-        public Fixture(string kind = "OpenAI")
+        public Fixture(string kind = "OpenAI", IReadToolExecutor? readTools = null)
         {
             this.kind = kind;
+            this.readTools = readTools;
             Directory.CreateDirectory(Root);
             Handler.Catalog = kind == "Gemini"
                 ? "{\"models\":[{\"name\":\"models/" + Model + "\",\"supportedGenerationMethods\":[\"generateContent\"]}]}"
@@ -728,7 +768,7 @@ public sealed class ConversationSessionTests
             providers = new ProviderFactory(new HttpTransport(client, (_, _) => Task.CompletedTask), new CapabilityResolver());
             session = CreateSession();
         }
-        private ByokSession CreateSession() => new(providers, Credentials, new SettingsStore(Path.Combine(Root, "providers.json")));
+        private ByokSession CreateSession() => new(providers, Credentials, new SettingsStore(Path.Combine(Root, "providers.json")), readTools: readTools);
         public void Restart() { session.Dispose(); session = CreateSession(); }
         public async Task<JsonElement> Send(string type, object payload)
         {
@@ -763,7 +803,13 @@ public sealed class ConversationSessionTests
             Assert.Equal("byok.select.result", Type(result));
         }
         public async Task ConfigureAndSelect() { await Configure(); await Select(); }
-        public Task<JsonElement> Chat(string text) => Send("byok.chat", new { configurationId = ConfigurationId, text, effort = "Off" });
+        public Task<JsonElement> Chat(string text, object? extra = null)
+        {
+            var payload = new Dictionary<string, object> { ["configurationId"] = ConfigurationId, ["text"] = text, ["effort"] = "Off" };
+            if (extra is not null)
+                foreach (var property in JsonSerializer.SerializeToElement(extra).EnumerateObject()) payload[property.Name] = property.Value.Clone();
+            return Send("byok.chat", payload);
+        }
         public Task<JsonElement> List(string query = "") => Send("byok.history.list", new { query });
         public Task<JsonElement> Open(string conversationId, int offset = 0, int limit = 10) => Send("byok.history.open", new { conversationId, offset, limit });
         public void Dispose() { session.Dispose(); client.Dispose(); Directory.Delete(Root, true); }

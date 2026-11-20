@@ -2,6 +2,53 @@
 
 Atualizado em **2026-11-19**.
 
+## Timeline ordenada por blocos (2026-11-19)
+
+A mensagem do assistente deixou de ser agrupada fixamente (reasoning → text →
+tools) e passou a ser uma **lista ordenada `blocks`** (tipos `reasoning` |
+`tool` | `text`) renderizada em ordem de chegada: pensar → tool → pensar →
+resposta aparece exatamente como aconteceu. Um segundo burst de reasoning após
+uma tool vira um bloco novo, nunca é concatenado ao anterior.
+
+- **Host** (`ByokSession.TurnView`): emite `blocks` aditivamente a partir de
+  `assistant.Parts` via `SelectMany`, preservando a ordem de chegada do loop de
+  ferramentas. Os campos agrupados `text`/`reasoning`/`tools` continuam no
+  payload para clientes antigos e testes existentes.
+- **Ponte** (`byok-bridge.mjs`): `blocks` é campo opcional validado por
+  `historyBlock` estrito — `type` conhecido, texto limitado, tool nunca com
+  status `Running`, sem chaves desconhecidas, máximo 128 itens.
+- **UI** (`byok.mjs`): `appendBlock` cria um bloco por mudança de tipo (deltas
+  consecutivos do mesmo tipo mesclam; tool call sempre abre bloco novo);
+  `renderArchived`/`archivedBlocks` reproduz a mesma ordem a partir do registro
+  armazenado; `finishMarkdown` renderiza todos os blocos de texto.
+- **Correções durante o rollout:** container `.byok-blocks` (o DOM de teste não
+  tem `insertBefore`); `data.type` em `appendBlock` (blocos arquivados não
+  renderizavam); `role/aria-live/aria-atomic` restaurados no estado da tool; o
+  teste de links arquivados apontava para `children[4]` (hoje `usage`) e passou
+  a buscar o bloco markdown dentro de `.byok-blocks`.
+
+### Controles negativos
+- 13 payloads `blocks` malformados rejeitados pela ponte (tipo desconhecido,
+  texto ausente/nulo, tool `Running`, campo extra, >128 itens...) e a timeline
+  válida aceita no mesmo teste.
+- UI: teste `assistant timeline renders interleaved reasoning, tool and answer
+  blocks in arrival order, live and archived` — 4 blocos na ordem exata ao vivo
+  e no arquivado.
+- .NET: `InterleavedReasoningToolTurnKeepsChronologicalOrderInHistoryBlocks` —
+  `reasoning → tool → reasoning → text`, status `Completed`, campos agrupados
+  intactos.
+
+### Evidência
+- Build Release **0 erros/0 avisos**; `npm run check:ui` **236/236**; suíte
+  .NET **1666/1666**; `npm run check:package` **3/3**.
+- VSIX reconstruído, normalizado (58 entradas, `Menus.cto`) e instalado nos dois
+  hives (`18.0_25e762c6` e `18.0_25e762c6Exp`), cada um com verificação por
+  SHA-256 de todos os arquivos empacotados (57/57 no hive regular).
+- `deploy-experimental.ps1` corrigido (`..\src` → `..\..\src`,
+  `..\artifacts` → `..\..\artifacts`): os comandos do `INSTALL.md` funcionam
+  como documentado.
+- Nenhuma configuração de provedor real alterada; nenhuma chamada paga.
+
 ## Correção de build/pacote (2026-11-19)
 
 `Menus.cto` (saída binária do VSCT) não estava sendo empacotado, embora o pkgdef

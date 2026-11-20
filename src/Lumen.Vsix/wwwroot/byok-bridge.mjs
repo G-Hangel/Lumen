@@ -145,13 +145,25 @@ const summary = value => fields(value, ['id', 'title', 'configurationId', 'model
   && guid(value.id) && guid(value.configurationId) && string(value.title, 160, true) && string(value.modelId, 512)
   && string(value.updatedAtUtc, 64) && Number.isFinite(Date.parse(value.updatedAtUtc))
   && Number.isInteger(value.turnCount) && value.turnCount >= 0 && value.turnCount <= 10000;
-const historyTurn = value => fields(value, ['index', 'userText', 'hasImage', 'text', 'reasoning', 'tools', 'status'], ['contextText'])
+const historyTurn = value => fields(value, ['index', 'userText', 'hasImage', 'text', 'reasoning', 'tools', 'status'], ['contextText', 'blocks'])
+  && (!Object.hasOwn(value, 'blocks') || list(value.blocks, 128, historyBlock))
   && (!Object.hasOwn(value, 'contextText') || string(value.contextText, 140000, true))
   && Number.isInteger(value.index) && value.index >= 0 && value.index < 10000
   && string(value.userText, 4096, true) && typeof value.hasImage === 'boolean'
   && string(value.text, MAX_WIRE_SIZE, true) && string(value.reasoning, MAX_WIRE_SIZE, true)
   && list(value.tools, 128, historyTool)
   && unique(value.tools, call => call.id) && ['completed', 'cancelled', 'failed', 'paused'].includes(value.status);
+
+// Ordered assistant timeline: reasoning/text blocks stream as they occur and a tool block
+// carries its own result, so a think -> tool -> think -> answer loop keeps its real order.
+const historyBlock = value => value?.type === 'reasoning' || value?.type === 'text'
+  ? fields(value, ['type', 'text']) && string(value.text, MAX_WIRE_SIZE, true)
+  : value?.type === 'tool'
+    ? fields(value, ['type', 'id', 'name', 'arguments'], ['status', 'isError', 'content'])
+      && string(value.id, 512) && /^[a-zA-Z0-9_-]{1,64}$/.test(value.name) && record(value.arguments) && boundedJson(value.arguments)
+      && (['status', 'isError', 'content'].every(key => !Object.hasOwn(value, key))
+        || (['status', 'isError', 'content'].every(key => Object.hasOwn(value, key)) && execution(value) && value.status !== 'Running'))
+    : false;
 
 const toolText = (value, limit) => typeof value === 'string' && value.length >= 1 && value.length <= limit
   && !value.includes('\0') && value.isWellFormed();

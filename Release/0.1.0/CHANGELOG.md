@@ -25,6 +25,7 @@ Versões seguem `MAJOR.MINOR.PATCH` do manifesto do VSIX.
 
 ### Alterado
 
+- O composer ganhou seletor de esforço de raciocínio ao lado do modelo; imagem agora entra por arrastar/colar; Enter envia e Shift+Enter quebra linha; o limite do prompt subiu de 4096 para 262144 caracteres.
 - A resposta do assistente renderiza como **linha do tempo ordenada** (pensar →
   ferramenta → pensar → resposta), em vez de blocos fixos agrupados; cada
   burst de raciocínio vira seu próprio bloco e o histórico arquivado reproduz

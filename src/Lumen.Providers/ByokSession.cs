@@ -501,7 +501,7 @@ public sealed class ByokSession : IDisposable
                     FindModel(selected, modelId);
                     var replacement = new ProviderConfiguration(selected.Id, selected.ProviderId, selected.Kind, selected.BaseUrl, modelId, selected.DeploymentNames);
                     configurations[configurations.IndexOf(selected)] = replacement;
-                    if (conversation is not null && (conversation.ConfigurationId != selected.Id || conversation.Conversation.ModelId != modelId)) conversation = null;
+                    if (conversation is not null && conversation.ConfigurationId != selected.Id) conversation = null;
                     await settings.WriteAsync(configurations, cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { configuration = ConfigurationView(replacement) }).ConfigureAwait(false);
                     break;
@@ -605,7 +605,7 @@ public sealed class ByokSession : IDisposable
                         capturedTools = new AgentToolExecutor(capturedTools, agentRegistry, agentCoordinator);
                     var toolSpecs = capturedTools is null ? Array.Empty<ToolSpec>() : ToolChatLoop.SpecsFor(mode, capturedTools);
                     if (!Enum.TryParse<ReasoningIntent>(RequiredString(payload, "effort", 16), out var effort) || !Enum.IsDefined(typeof(ReasoningIntent), effort)) throw new ProviderException("invalid_message");
-                    var text = RequiredString(payload, "text", 4096);
+                    var text = RequiredString(payload, "text", BridgeProtocol.MaxTextLength);
                     var parts = new List<ContentPart> { new TextPart(text) };
                     var selectedContexts = JsonWire.Get(payload, "contextIds").ValueKind == JsonValueKind.Undefined ? Array.Empty<string>() : ContextIds(payload, "contextIds");
                     var attachedContexts = new List<ContextSnapshot>();
@@ -623,7 +623,7 @@ public sealed class ByokSession : IDisposable
                         Require(image, new[] { "mediaType", "base64Data" });
                         parts.Add(new ImagePart(RequiredString(image, "mediaType", 32), RequiredString(image, "base64Data", 6 * 1024 * 1024)));
                     }
-                    if (conversation is not null && (conversation.ConfigurationId != chatConfiguration.Id || conversation.Conversation.ModelId != chatModel.ModelId)) conversation = null;
+                    if (conversation is not null && conversation.ConfigurationId != chatConfiguration.Id) conversation = null;
                     var userMessage = new Message(MessageRole.User, parts);
                     var titleText = text.Trim();
                     var titleLength = Math.Min(80, titleText.Length);

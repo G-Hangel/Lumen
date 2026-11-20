@@ -1,4 +1,4 @@
-export const MAX_TEXT_LENGTH = 4096;
+export const MAX_TEXT_LENGTH = 262144;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const color = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);

@@ -395,14 +395,19 @@
         <div class="composer-meta">
           <span id="connection-status" class="status-badge" role="status"></span>
           <p id="byok-active-model" class="secondary" role="status"></p>
+          <div class="composer-model-controls">
+            <label for="byok-effort" data-i18n="byokEffort"></label>
+            <select id="byok-effort" disabled aria-describedby="byok-effort-help"></select>
+          </div>
         </div>
+        <p id="byok-effort-help" class="secondary mode-help" data-i18n="byokEffortHelp" hidden></p>
         <div class="attachment-row">
           <p id="byok-attachment" class="secondary" role="status" hidden></p>
           <button id="byok-remove-image" type="button" class="text-button" data-i18n="byokRemoveImage" hidden></button>
         </div>
         <div class="composer-shell">
           <label for="byok-message" class="sr-only" data-i18n="byokMessage"></label>
-          <textarea id="byok-message" rows="3" maxlength="4096" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Control+Enter" aria-controls="byok-skill-suggestions" aria-autocomplete="list"></textarea>
+          <textarea id="byok-message" rows="3" maxlength="262144" disabled data-i18n-placeholder="byokMessagePlaceholder" aria-describedby="byok-chat-hint byok-cost" aria-keyshortcuts="Enter" aria-controls="byok-skill-suggestions" aria-autocomplete="list"></textarea>
           <div id="byok-skill-suggestions" class="skill-suggestions" role="listbox" data-i18n-label="skillsSuggestions" hidden></div>
           <div class="composer-bar" data-i18n-label="composerActions">
             <div class="mode-field">
@@ -430,7 +435,7 @@
             <span id="byok-count" class="secondary"></span>
             <button id="byok-apply-plan" type="button" class="text-button" data-i18n="byokApplyPlan" hidden></button>
             <button id="byok-cancel" type="button" class="text-button" data-i18n="byokCancelAction" disabled></button>
-            <button id="byok-send" type="submit" class="primary-button" data-i18n-label="byokSend" disabled aria-keyshortcuts="Control+Enter">
+            <button id="byok-send" type="submit" class="primary-button" data-i18n-label="byokSend" disabled aria-keyshortcuts="Enter">
               <span data-i18n="byokSendAction"></span>
               <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 12.6V3.8M4.4 7.4 8 3.8l3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
@@ -455,16 +460,7 @@
               <ul id="byok-context-list" class="context-list"></ul>
             </div>
           </details>
-          <details id="byok-send-options" class="send-options">
-            <summary data-i18n="byokSendOptions"></summary>
-            <div class="composer-options">
-              <label for="byok-effort" data-i18n="byokEffort"></label>
-              <select id="byok-effort" disabled></select>
-              <label for="byok-image" data-i18n="byokImage"></label>
-              <input id="byok-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled aria-describedby="byok-image-help">
-            </div>
-            <p id="byok-image-help" class="secondary" data-i18n="byokImageHelp"></p>
-          </details>
+
           <details class="send-options">
             <summary data-i18n="byokAutoToolsDetails"></summary>
             <p id="byok-auto-read-help" class="secondary" data-i18n="byokAutoReadHelp"></p>

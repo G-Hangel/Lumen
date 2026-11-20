@@ -7,7 +7,7 @@ namespace Lumen.Core.Bridge;
 public static class BridgeProtocol
 {
     public const int MaxMessageLength = 65536;
-    public const int MaxTextLength = 4096;
+    public const int MaxTextLength = 262144;
 
     public static bool IsTrustedSource(string source) =>
         Uri.TryCreate(source, UriKind.Absolute, out var uri) &&

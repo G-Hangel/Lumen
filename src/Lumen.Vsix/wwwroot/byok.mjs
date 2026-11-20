@@ -8,6 +8,7 @@ export const DEFAULT_BASE_URLS = Object.freeze({
   Ollama: 'http://127.0.0.1:11434/', Azure: '', LMStudio: 'http://127.0.0.1:1234/'
 });
 const capabilityNames = { vision: 'Vision', tools: 'Tools', reasoning: 'Reasoning' };
+const MAX_PROMPT_LENGTH = 262144;
 const capabilityLabels = { vision: 'byokVision', tools: 'byokTools', reasoning: 'byokReasoning' };
 const errorLabels = {
   invalid_key: 'byokErrorInvalidKey', permission_denied: 'byokErrorPermission', invalid_url: 'byokErrorUrl', unsafe_url: 'byokErrorUrl',
@@ -259,7 +260,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (errorCode === 'cancelled') { clearError(); setStatus('byokCancelled'); }
   }
   function removeAttachment() {
-    attachment = null; attachmentGeneration++; node('image').value = ''; node('attachment').hidden = true;
+    attachment = null; attachmentGeneration++; node('attachment').hidden = true;
     node('attachment').textContent = ''; node('remove-image').hidden = true;
     const announcement = document.getElementById('announcement');
     if (announcement && text) announcement.textContent = text('byokRemoveImage');
@@ -460,13 +461,13 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('auto-read-tools').disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
     for (const id of ['auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory || node('mode').value !== 'Agent';
     node('message').disabled = !enabled || !model || !configurationId || locked || !matchesHistory;
-    node('image').disabled = !enabled || locked || !model?.vision;
+    
     node('remove-image').disabled = locked;
     node('context-path').disabled = !enabled || locked;
     for (const id of ['context-file', 'context-solution', 'context-selection', 'context-output', 'context-reference']) node(id).disabled = !canCapture();
     for (const remove of node('context-list').querySelectorAll('button')) remove.disabled = !enabled || locked;
     node('context').setAttribute('aria-busy', String(contextBusy && busy));
-    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096;
+    node('send').disabled = !enabled || locked || !model || !configurationId || !matchesHistory || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > MAX_PROMPT_LENGTH;
     for (const id of ['history-query', 'history-search', 'history-new']) node(id).disabled = !enabled || locked;
     node('history-list').disabled = !enabled || locked || !savedConversations.length;
     for (const id of ['history-name', 'history-rename', 'history-delete']) node(id).disabled = !enabled || locked || !node('history-list').value;
@@ -496,7 +497,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('azure-inventory').disabled = !enabled || locked || !configurationId || !isAzure || !armFieldsFilled;
     node('configure').setAttribute('aria-busy', String(busy && !streaming));
     node('chat-form').setAttribute('aria-busy', String(streaming || imageLoading || (contextBusy && busy)));
-    node('count').textContent = text('byokCount', { count: node('message').value.length, max: 4096 });
+    node('count').textContent = text('byokCount', { count: node('message').value.length, max: MAX_PROMPT_LENGTH });
     if (!enabled) node('status').textContent = text('byokDisconnected');
   }
 
@@ -924,8 +925,24 @@ export function startByok({ transport, connected = () => false, text, renderMark
       } finally { key = ''; }
     }, node('models'));
   }
+  function modelChangeBlocked(model) {
+    // A model switch replays the whole session; the new model must support every capability the stored turns already use.
+    if (!model || !activeConversation) return false;
+    const usedBlocks = records.filter(item => item && item.blocks).flatMap(item => item.blocks);
+    if (usedBlocks.some(block => block.type === 'tool') && !model.tools) return 'byokErrorTools';
+    if (activeConversation.hasImage && !model.vision) return 'vision_not_supported';
+    return false;
+  }
   async function chooseModel() {
     const modelId = node('models').value;
+    const next = models.find(model => model.id === modelId);
+    const blocked = modelChangeBlocked(next);
+    if (blocked) {
+      showError(blocked);
+      node('models').value = selectedModelId;
+      renderModels();
+      return;
+    }
     selectedModelId = ''; clearProbeConsent(); clearToolConsent(); removeAttachment(); renderCapabilities();
     if (!modelId) return;
     await operate(async () => {
@@ -933,7 +950,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (disposed) return;
       configurations = configurations.map(config => config.id === result.configuration.id ? result.configuration : config);
       selectedModelId = result.configuration.selectedModelId; renderModels(); renderCapabilities(); setStatus('byokSelected');
-      if (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId)) resetHistory();
       syncEmpty();
     }, node('message'));
   }
@@ -1255,7 +1271,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   async function submitChat(event) {
     event.preventDefault();
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
-      || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > 4096
+      || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > MAX_PROMPT_LENGTH
       || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
     const readTools = node('auto-read-tools').checked === true && !node('auto-read-tools').disabled && selectedModel().tools;
     const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
@@ -1478,7 +1494,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (event.key === 'Enter' && !event.ctrlKey) { event.preventDefault(); chooseSkillSuggestion(matches[suggestionIndex].name); return; }
       if (event.key === 'Escape') { event.preventDefault(); node('skill-suggestions').hidden = true; node('message').removeAttribute('aria-activedescendant'); return; }
     }
-    if (event.ctrlKey && event.key === 'Enter') { event.preventDefault(); if (!node('send').disabled) node('chat-form').requestSubmit(); }
+    if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) { event.preventDefault(); if (!node('send').disabled) node('chat-form').requestSubmit(); }
   });
   function openSettingsForError() {
     panel.open = true;
@@ -1506,11 +1522,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('context-reference'), 'click', attachReference);
   listen(node('context-file'), 'click', () => captureContext('file', node('context-path').value.trim().replace(/^@(arquivo|file)(?:\s+|$)/i, '')));
   for (const kind of ['solution', 'selection', 'output']) listen(node(`context-${kind}`), 'click', () => captureContext(kind));
-  async function attachImage() {
-    const file = node('image').files?.[0];
-    await processImageFile(file);
-  }
-  listen(node('image'), 'change', attachImage);
   async function handlePaste(event) {
     const items = event.clipboardData?.items;
     if (!items || !items.length) return;

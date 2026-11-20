@@ -288,6 +288,9 @@ code, pre, .d2h-diff-table { font: 12px/1.65 var(--mono); }
 .composer-panel[data-connected="true"] .connection-note { display: none; }
 .composer-panel > .error { margin-bottom: 8px; }
 .composer-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.composer-model-controls { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; }
+.composer-model-controls label { margin: 0; white-space: nowrap; }
+.composer-model-controls select { max-width: 220px; }
 #byok-active-model { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-badge { display: inline-flex; align-items: center; gap: 5px; flex: none; max-width: 52%; padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1); color: var(--ink-dim); font-size: 10px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status-badge::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); }

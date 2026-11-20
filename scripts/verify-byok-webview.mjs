@@ -91,15 +91,15 @@ try {
   assert.equal(plain.vision, false);
   assert.equal(plain.origins.find(origin => origin.capability === 'Vision').source, 'Native');
   await evaluate(waitForReply('byok.select.result', "const models=document.querySelector('#byok-models');models.value='fixture/plain';models.dispatchEvent(new Event('change',{bubbles:true}));"));
-  report.plain = await evaluate("({imageDisabled:document.querySelector('#byok-image').disabled,effortDisabled:document.querySelector('#byok-effort').disabled,keyCleared:document.querySelector('#byok-key').value==='',badges:document.querySelector('#byok-panel').innerText})");
-  assert.equal(report.plain.imageDisabled, true);
+  report.plain = await evaluate("({effortDisabled:document.querySelector('#byok-effort').disabled,keyCleared:document.querySelector('#byok-key').value==='',badges:document.querySelector('#byok-panel').innerText})");
+
   assert.equal(report.plain.effortDisabled, true);
   assert.equal(report.plain.keyCleared, true);
   assert.ok(!report.plain.badges.includes('synthetic-webview-credential-test'));
   delete report.plain.badges;
   await evaluate(waitForReply('byok.select.result', "const models=document.querySelector('#byok-models');models.value='fixture/vision';models.dispatchEvent(new Event('change',{bubbles:true}));"));
-  report.vision = await evaluate("({imageDisabled:document.querySelector('#byok-image').disabled,efforts:[...document.querySelector('#byok-effort').options].map(option=>option.value)})");
-  assert.equal(report.vision.imageDisabled, false);
+  report.vision = await evaluate("({efforts:[...document.querySelector('#byok-effort').options].map(option=>option.value)})");
+
   assert.ok(report.vision.efforts.includes('Low') && report.vision.efforts.includes('High'));
   report.probe = { before: await evaluate("({consent:document.querySelector('#byok-probe-consent').checked,disabled:document.querySelector('#byok-verify').disabled,budget:document.querySelector('#byok-probe-budget').textContent})") };
   assert.equal(report.probe.before.consent, false);
@@ -157,16 +157,18 @@ try {
   })`);
   assert.equal(await evaluate("document.querySelector('#byok-probe-consent').checked"), false);
   assert.equal(await evaluate("document.querySelector('#byok-verify').disabled"), true);
-  await command('DOM.enable');
-  const documentNode = await command('DOM.getDocument');
-  const imageNode = await command('DOM.querySelector', { nodeId: documentNode.root.nodeId, selector: '#byok-image' });
-  await command('DOM.setFileInputFiles', { nodeId: imageNode.nodeId, files: [fileURLToPath(new URL('../artifacts/webview-offline.png', import.meta.url))] });
+  const pngUrl = new URL('../artifacts/webview-offline.png', import.meta.url);
+  const pngBase64 = Buffer.from(await readFile(pngUrl)).toString('base64');
   report.attachment = await evaluate(`new Promise((resolve,reject)=>{
     const attachment=document.querySelector('#byok-attachment');
     if(!attachment.hidden){resolve(true);return;}
     const timer=setTimeout(()=>{observer.disconnect();reject(new Error('Image attachment missing'));},10000);
     const observer=new MutationObserver(()=>{if(!attachment.hidden){clearTimeout(timer);observer.disconnect();resolve(true);}});
     observer.observe(attachment,{attributes:true});
+    const bytes=Uint8Array.from(atob(${JSON.stringify(pngBase64)}),character=>character.charCodeAt(0));
+    const file=new File([bytes],'webview-offline.png',{type:'image/png'});
+    const transfer=new DataTransfer();transfer.items.add(file);
+    document.querySelector('#byok-chat-form').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
   })`);
   assert.equal(report.attachment,true);
   report.chat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Use the offline fixture only';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
@@ -189,7 +191,7 @@ try {
   assert.equal(report.chatUi.turns, 1);
   assert.ok(report.chatUi.activeModel.includes('Offline'));
   assert.equal(report.chatUi.messageCleared, true);
-  assert.equal(report.chatUi.count, text.byokCount.replace('{count}', '0').replace('{max}', '4096'));
+  assert.equal(report.chatUi.count, text.byokCount.replace('{count}', '0').replace('{max}', '262144'));
   await evaluate(waitForReply('byok.select.result', "const models=document.querySelector('#byok-models');models.value='fixture/code';models.dispatchEvent(new Event('change',{bubbles:true}));"));
   report.codeChat = await evaluate(waitForReply('byok.chat.result', "document.querySelector('#byok-message').value='Show a code block';document.querySelector('#byok-message').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#byok-send').click();"));
   assert.equal(report.codeChat.completed, true); ownedConversations.push(report.codeChat.conversation.id);
@@ -265,8 +267,8 @@ try {
   assert.equal(report.accessibility.historyRole, 'list');
   assert.equal(report.accessibility.announcementLive, 'polite');
   assert.equal(report.accessibility.announcementAtomic, 'true');
-  assert.equal(report.accessibility.messageShortcut, 'Control+Enter');
-  assert.equal(report.accessibility.sendShortcut, 'Control+Enter');
+  assert.equal(report.accessibility.messageShortcut, 'Enter');
+  assert.equal(report.accessibility.sendShortcut, 'Enter');
   report.negative = await evaluate(`new Promise(resolve=>{
     const id=crypto.randomUUID();const handler=e=>{if(e.data.id!==id)return;chrome.webview.removeEventListener('message',handler);resolve(e.data);};
     chrome.webview.addEventListener('message',handler);chrome.webview.postMessage({version:1,id,type:'byok.chat',payload:{text:'unauthorized'}});

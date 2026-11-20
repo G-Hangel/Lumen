@@ -85,7 +85,7 @@ public sealed class ConversationSessionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task SameSelectionRetainsConversationButDifferentModelOrConfigurationClearsIt(bool changeConfiguration)
+    public async Task SameSelectionRetainsConversationButDifferentConfigurationClearsIt(bool changeConfiguration)
     {
         using var fixture = new Fixture();
         await fixture.ConfigureAndSelect();
@@ -109,13 +109,22 @@ public sealed class ConversationSessionTests
         }
         var disk = Snapshot(fixture.Root);
         var archives = Payload(await fixture.List()).GetProperty("conversations");
-        Assert.Equal(originalId, Assert.Single(archives.EnumerateArray()).GetProperty("id").GetString());
+        Assert.Equal(originalId, Assert.Single(archives.EnumerateArray(), item => item.GetProperty("id").GetString() == originalId).GetProperty("id").GetString());
         Assert.Equal(disk, Snapshot(fixture.Root));
-        var freshId = ChatSummary(await fixture.Chat("after different selection"), fixture.ConfigurationId, Model, 1).GetProperty("id").GetString();
-        Assert.NotEqual(originalId, freshId);
-        using var fresh = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
-        AssertWireText(Assert.Single(fresh.RootElement.GetProperty("messages").EnumerateArray(), message => message.GetProperty("role").GetString() == "user"), "user", "after different selection");
-        Assert.Equal(2, Payload(await fixture.List()).GetProperty("conversations").GetArrayLength());
+        // Switching models mid-conversation now replays the same session to the new model.
+        var continued = ChatSummary(await fixture.Chat("after different selection"), fixture.ConfigurationId, Model, changeConfiguration ? 1 : 3);
+        if (changeConfiguration)
+        {
+            Assert.NotEqual(originalId, continued.GetProperty("id").GetString());
+            Assert.Equal(2, Payload(await fixture.List()).GetProperty("conversations").GetArrayLength());
+        }
+        else
+        {
+            Assert.Equal(originalId, continued.GetProperty("id").GetString());
+            Assert.Equal(1, Payload(await fixture.List()).GetProperty("conversations").GetArrayLength());
+        }
+        using var continuedReplay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
+        AssertWireText(continuedReplay.RootElement.GetProperty("messages").EnumerateArray().Last(message => message.GetProperty("role").GetString() == "user"), "user", "after different selection");
     }
 
     [Fact]
@@ -288,6 +297,19 @@ public sealed class ConversationSessionTests
         Assert.DoesNotContain(Image, fixture.Handler.ChatBodies.Last());
         AssertUiPrivate(fixture.Replies);
         AssertSecretAbsent(ReadJsonFiles(fixture.Root));
+    }
+
+    [Fact]
+    public async Task LongPromptsPastLegacyLimitAreAcceptedAndArchived()
+    {
+        using var fixture = new Fixture();
+        await fixture.ConfigureAndSelect();
+        var prompt = string.Concat(Enumerable.Repeat("x", 5600));
+        Assert.Equal(5600, prompt.Length);
+        var turn = await fixture.Chat(prompt);
+        var conversationId = ChatSummary(turn, fixture.ConfigurationId, Model, 1).GetProperty("id").GetString()!;
+        var opened = await fixture.Open(conversationId);
+        Assert.Equal(prompt, Payload(opened).GetProperty("turns")[0].GetProperty("userText").GetString());
     }
 
     [Fact]

@@ -367,7 +367,7 @@ function validRequest(type, p) {
         && Number.isSafeInteger(p.budget.maxOutputTokens) && p.budget.maxOutputTokens >= 1024 && p.budget.maxOutputTokens <= 262144
         && Number.isSafeInteger(p.budget.maxInvocations) && p.budget.maxInvocations >= 1 && p.budget.maxInvocations <= 256))
       && (!Object.hasOwn(p, 'contextIds') || contextIds(p.contextIds))
-      && string(p.text, 4096) && EFFORTS.includes(p.effort) && (!Object.hasOwn(p, 'image') || (fields(p.image, ['mediaType', 'base64Data'])
+      && string(p.text, 262144) && EFFORTS.includes(p.effort) && (!Object.hasOwn(p, 'image') || (fields(p.image, ['mediaType', 'base64Data'])
         && IMAGE_TYPES.includes(p.image.mediaType) && string(p.image.base64Data, Math.ceil(MAX_IMAGE_BYTES / 3) * 4)
         && p.image.base64Data.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(p.image.base64Data)
         && p.image.base64Data.length / 4 * 3 - (p.image.base64Data.endsWith('==') ? 2 : p.image.base64Data.endsWith('=') ? 1 : 0) <= MAX_IMAGE_BYTES));

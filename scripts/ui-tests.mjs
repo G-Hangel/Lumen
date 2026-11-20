@@ -477,7 +477,7 @@ test('context controls remain a collapsed native composer section with labelled 
   assert.doesNotMatch(composer.match(/<details id="byok-context"[^>]*>/)[0], /\bopen\b/);
   assert.match(composer, /<label for="byok-context-path" data-i18n="contextPath">/);
   assert.match(composer, /<input id="byok-context-path" type="text" maxlength="1024"[^>]*disabled/);
-  assert.match(composer, /<textarea id="byok-message"[^>]*maxlength="4096"/);
+  assert.match(composer, /<textarea id="byok-message"[^>]*maxlength="262144"/);
   for (const id of ['reference', 'file', 'solution', 'selection', 'output']) {
     assert.match(composer, new RegExp(`<button id="byok-context-${id}" type="button"[^>]*disabled`));
   }

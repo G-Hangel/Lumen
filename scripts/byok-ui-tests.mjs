@@ -560,7 +560,11 @@ test('budget is automatic: no budget fields in the composer and sends omit it', 
   }
   assert.doesNotMatch(html, /byok-budget/);
   assert.doesNotMatch(html, /data-i18n="byokBudget/);
+  f.node('models').value = model.id; const reselect = f.node('models').emit('change');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.select');
+  f.transport.reply({ configuration: { ...config, selectedModelId: model.id } }); await reselect;
   f.node('message').value = 'hello'; await f.node('message').emit('input');
+
   assert.equal(f.node('send').disabled, false);
   const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
   assert.equal(Object.hasOwn(sent.payload, 'budget'), false);
@@ -1600,10 +1604,11 @@ test('provider removal requires confirmation and clears the deleted provider sel
   assert.equal(f.node('status').textContent, en.byokReady);
 });
 
-test('removing the provider that owns the open conversation clears the live chat', async t => {
+test('removing the provider that owns the open conversation preserves the archive and blocks sending', async t => {
   const f = uiFixture(t);
   await openWithModel(f);
   f.node('message').value = 'hello'; await f.node('message').emit('input');
+
   const chat = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
   assert.equal(sent.type, 'byok.chat');
   f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Stop' }, sent.id));
@@ -2107,14 +2112,14 @@ test('UI preview is closed, never posts, keeps configure/chat disabled and clear
   assert.equal(f.node('panel').open, false); assert.equal(f.node('config-fields').disabled, true); assert.equal(f.node('send').disabled, true);
   f.node('key').value = 'secret'; await f.node('configure').emit('submit'); assert.equal(f.node('key').value, '');
   f.node('panel').open = true; await f.node('panel').emit('toggle'); assert.match(f.node('status').textContent, /not connected/);
-  assert.equal(f.node('effort').disabled, true); assert.equal(f.node('image').disabled, true);
+  assert.equal(f.node('effort').disabled, true);
 });
 
 test('UI listing is lazy/read-only; selection enables actual efforts and negative vision disables attachment', async t => {
   const f = uiFixture(t); assert.equal(f.transport.messages.length, 0);
   await openWithModel(f, { ...model, vision: false, reasoning: false, efforts: [] });
   assert.equal(f.transport.messages.some(message => message.type === 'byok.chat'), false);
-  assert.equal(f.node('image').disabled, true); assert.equal(f.node('effort').disabled, true);
+  assert.equal(f.node('effort').disabled, true);
   assert.match(f.node('capabilities').textContent, /Vision · Not supported · Native metadata/);
   f.node('message').value = 'Hello'; await f.node('message').emit('input');
   const send = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
@@ -2210,7 +2215,7 @@ test('UI unknown capability is visible, manual override requires explicit values
   assert.deepEqual(sent.payload, { configurationId, modelId: model.id, vision: true, tools: false, reasoning: false });
   const overridden = { ...model, reasoning: false, tools: false, efforts: [], origins: model.origins.map(origin => ({ ...origin, source: 'UserOverride' })) };
   f.transport.reply({ model: overridden }); await apply;
-  assert.match(f.node('capabilities').textContent, /Manual override/); assert.equal(f.node('image').disabled, false);
+  assert.match(f.node('capabilities').textContent, /Manual override/);
   f.locale(); assert.match(f.node('capabilities').textContent, /Override manual/); assert.equal(f.node('models').value, model.id);
 });
 
@@ -2591,12 +2596,12 @@ test('UI successful chat appends a live record to the 500-turn virtual list with
   const rendered = [], f = uiFixture(t, { renderMarkdown: value => { rendered.push(value); return '<p>safe archived output</p>'; } });
   await openWithModel(f);
   assert.equal(f.node('active-model').textContent, en.byokActiveModel.replace('{model}', model.name));
-  assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', '0').replace('{max}', '4096'));
+  assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', '0').replace('{max}', '262144'));
   const archive = { ...summary, turnCount: 500 }; await listArchive(f, [archive]); await openArchive(f, archive);
   const consumed = new Set(f.transport.messages.filter(message => message.type === 'byok.history.open').map(message => message.id));
   const listCount = f.transport.messages.filter(message => message.type === 'byok.history.list').length;
   rendered.length = 0; f.node('message').value = 'new live question'; await f.node('message').emit('input');
-  assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', '17').replace('{max}', '4096'));
+  assert.equal(f.node('count').textContent, en.byokCount.replace('{count}', '17').replace('{max}', '262144'));
   const send = f.node('chat-form').emit('submit'), chat = f.transport.messages.at(-1);
   assert.equal(chat.type, 'byok.chat');
   const live = f.node('live').children[0];
@@ -2651,11 +2656,11 @@ test('UI an archive for another model is readable but cannot send until New rese
   assert.equal(f.transport.messages.some(message => message.type === 'byok.chat'), false);
 });
 
-test('UI provider selection of the same identity retains the archive; another selected model resets it', async t => {
+test('UI model selection retains the open archive and replays it to the new model; another provider still resets', async t => {
   const f = uiFixture(t), otherModel = { ...model, id: 'other-model', name: 'Other model' };
   await openWithModel(f, model, { otherModels: [otherModel] });
   await listArchive(f, [summary]); await openArchive(f, summary);
-  const scaffold = [...f.node('output').children], before = f.node('history-items').textContent;
+  const before = f.node('history-items').textContent;
   f.node('providers').value = configurationId; await f.node('providers').emit('change');
   assert.equal(f.transport.messages.at(-1).type, 'byok.discover');
   f.transport.reply(catalog({ ...config, selectedModelId: model.id }, [model, otherModel])); await tick();
@@ -2664,10 +2669,13 @@ test('UI provider selection of the same identity retains the archive; another se
   f.transport.reply({ configuration: { ...config, selectedModelId: model.id } }); await same;
   assert.equal(f.node('history-items').textContent, before); assert.equal(f.node('message').disabled, false);
   f.node('models').value = otherModel.id; const change = f.node('models').emit('change');
-  f.transport.reply({ configuration: { ...config, selectedModelId: otherModel.id } }); await change;
-  assert.equal(f.node('history-items').children.length, 0); assert.equal(f.node('empty').hidden, false);
-  assert.equal(f.node('message').disabled, false); assertScaffold(f, scaffold);
-  assert.equal(f.node('history-list').children.length, 2, 'selection reset must not delete disk history');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.select');
+  f.transport.reply({ configuration: { ...config, selectedModelId: otherModel.id } }, f.transport.messages.at(-1)); await change;
+  f.node('message').value = 'hello'; await f.node('message').emit('input');
+  assert.equal(f.node('history-items').textContent, before, 'switching models keeps the open session');
+  assert.equal(f.node('empty').hidden, true);
+  assert.equal(f.node('message').disabled, true, 'a model change requires a fresh send consent');
+  assert.equal(f.node('history-list').children.length, 2, 'selection change must not delete disk history');
   assert.equal(f.transport.messages.filter(message => message.type === 'byok.history.open').length, 1);
 });
 
@@ -2695,7 +2703,7 @@ test('UI missing visible pages use the shared RPC busy gate and defer fetching u
 
 function assertRpcControlsLocked(f) {
   for (const id of ['config-fields', 'configure-button', 'list', 'providers', 'discover', 'models', 'vision', 'tools', 'reasoning',
-    'apply-override', 'effort', 'message', 'image', 'remove-image', 'send', 'probe-consent', 'probe-capability', 'verify']) {
+    'apply-override', 'effort', 'message', 'remove-image', 'send', 'probe-consent', 'probe-capability', 'verify']) {
     assert.equal(f.node(id).disabled, true, id);
   }
 }
@@ -2814,8 +2822,9 @@ test('negative idle Cancel stays disabled and posts nothing, even if its DOM dis
 test('negative image-only loading never enables or posts native Cancel and locks paid requests until reading finishes', async t => {
   const f = uiFixture(t); await openWithModel(f, model, { configuration: probeConfig });
   let finishImage;
-  f.node('image').files = [{ type: 'image/png', size: 8, arrayBuffer: () => new Promise(resolve => { finishImage = resolve; }) }];
-  const attachment = f.node('image').emit('change'); const count = f.transport.messages.length;
+  const pendingFile = { type: 'image/png', size: 8, arrayBuffer: () => new Promise(resolve => { finishImage = resolve; }) };
+  const pasteItems = () => [{ kind: 'file', type: 'image/png', getAsFile: () => pendingFile }];
+  const attachment = f.node('message').emit('paste', { clipboardData: { items: pasteItems() } }); const count = f.transport.messages.length;
   assert.equal(f.node('chat-form').attributes['aria-busy'], 'true'); assert.equal(f.node('cancel').disabled, true);
   assertRpcControlsLocked(f);
   f.node('cancel').disabled = false; await f.node('cancel').emit('click'); await assertNoNewRequestsWhileLocked(f);
@@ -2837,14 +2846,25 @@ test('UI stream recovery Cancel clears the stale error without starting a second
   assert.equal(f.transport.messages.filter(message => message.type === 'byok.chat').length, 1);
 });
 
-test('UI attachment clears on model changes, bad images are rejected and Ctrl+Enter respects composition', async t => {
+test('UI attachment clears on model changes, bad images are rejected and Enter respects composition and Shift+Enter', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  f.node('image').files = [{ type: 'image/png', size: 8, arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer }];
-  await f.node('image').emit('change'); assert.equal(f.node('attachment').hidden, false); assert.equal(f.node('image').value, '');
-  f.node('models').value = ''; await f.node('models').emit('change'); assert.equal(f.node('attachment').hidden, true); assert.equal(f.node('image').disabled, true);
+  const png = () => ({ type: 'image/png', size: 8, arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer });
+  const items = () => [{ kind: 'file', type: 'image/png', getAsFile: () => png() }];
+  await f.node('message').emit('paste', { clipboardData: { items: items() } }); assert.equal(f.node('attachment').hidden, false);
+  f.node('models').value = ''; await f.node('models').emit('change'); assert.equal(f.node('attachment').hidden, true);
+  f.transport.messages.length = 0;
   let submitted = 0; f.node('chat-form').requestSubmit = () => submitted++;
-  await f.node('message').emit('keydown', { key: 'Enter', ctrlKey: true, isComposing: true }); assert.equal(submitted, 0);
-  await f.node('message').emit('keydown', { key: 'Enter', ctrlKey: true, isComposing: false }); assert.equal(submitted, 0);
+  await f.node('message').emit('keydown', { key: 'Enter', shiftKey: true, isComposing: false }); assert.equal(submitted, 0, 'Shift+Enter never sends');
+  await f.node('message').emit('keydown', { key: 'Enter', isComposing: true }); assert.equal(submitted, 0, 'IME composition never sends');
+  f.node('models').value = model.id; const reselect = f.node('models').emit('change');
+  assert.equal(f.transport.messages.at(-1).type, 'byok.select');
+  f.transport.reply({ configuration: { ...config, selectedModelId: model.id } }); await reselect;
+  f.node('message').value = 'hello'; await f.node('message').emit('input');
+
+  assert.equal(f.node('send').disabled, false, 'composer ready with text');
+  await f.node('message').emit('keydown', { key: 'Enter', isComposing: false }); assert.equal(submitted, 1, 'Enter sends when the composer is ready');
+  f.node('send').disabled = true;
+  await f.node('message').emit('keydown', { key: 'Enter', isComposing: false }); assert.equal(submitted, 1, 'Enter never sends while disabled');
 });
 
 test('UI never probes on render, list, discover, configure, selection, consent or locale refresh; click without consent is denied', async t => {
@@ -2975,12 +2995,13 @@ test('UI inconclusive probes update budget/status only, never flags, origins, at
   const f = uiFixture(t); await openWithModel(f, model, { configuration: probeConfig, remainingBudget: 2 });
   const before = f.node('capabilities').textContent, label = f.node('models').children[1].textContent;
   f.node('vision').value = 'false'; await f.node('vision').emit('change');
-  f.node('image').files = [{ type: 'image/png', size: 8, arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer }];
-  await f.node('image').emit('change'); await consentToProbe(f);
+  const png = () => ({ type: 'image/png', size: 8, arrayBuffer: async () => Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]).buffer });
+  const items = () => [{ kind: 'file', type: 'image/png', getAsFile: () => png() }];
+  await f.node('message').emit('paste', { clipboardData: { items: items() } }); await consentToProbe(f);
   const verify = f.node('verify').emit('click');
   f.transport.reply(probeResult(null, 2, { ...probeModel, origins: [{ capability: 'Vision', source: 'Probe', confidence: 'High' }] })); await verify;
   assert.equal(f.node('capabilities').textContent, before); assert.equal(f.node('models').children[1].textContent, label);
-  assert.equal(f.node('vision').value, 'false'); assert.equal(f.node('image').disabled, false); assert.equal(f.node('attachment').hidden, false);
+  assert.equal(f.node('vision').value, 'false'); assert.equal(f.node('attachment').hidden, false);
   assert.equal(f.node('status').textContent, en.byokProbeInconclusive); assert.match(f.node('probe-budget').textContent, /2 \/ 5/);
   assert.equal(f.node('probe-consent').checked, false); f.locale(); assert.equal(f.node('status').textContent, pt.byokProbeInconclusive);
   assert.match(f.node('probe-budget').textContent, /Orçamento restante da sessão: 2 \/ 5/);
@@ -2993,7 +3014,7 @@ test('UI proven negative renders Probe-origin badges and disables vision, while 
   f.transport.reply(probeResult(false, 4, negative)); await verify;
   assert.match(f.node('capabilities').textContent, /Vision · Not supported · Probe · High confidence/);
   assert.match(f.node('models').children[1].textContent, /Vision · Not supported · Probe/);
-  assert.equal(f.node('image').disabled, true); assert.equal(f.node('vision').value, 'false'); assert.equal(f.node('reasoning').value, 'true');
+  assert.equal(f.node('vision').value, 'false'); assert.equal(f.node('reasoning').value, 'true');
   assert.equal(f.node('status').textContent, en.byokProbeUnsupported);
   await consentToProbe(f, 'Tools'); const stronger = f.node('verify').emit('click');
   f.transport.reply(probeResult(false, 3, negative)); await stronger;
@@ -3123,7 +3144,7 @@ test('workspace navigation presents one selected tool panel beside a direct topi
 
 test('static UI retains unified chat ids/CSP, labels match locales and panel wraps responsively using existing tokens only', async () => {
   assert.match(html, /<details id="byok-panel" class="byok-panel">/); assert.doesNotMatch(html, /<details id="byok-panel"[^>]*\bopen\b/);
-  for (const id of ['byok-output', 'byok-empty', 'byok-chat-form', 'byok-message', 'byok-send', 'byok-cancel', 'byok-active-model', 'byok-count', 'byok-effort', 'byok-image']) assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
+  for (const id of ['byok-output', 'byok-empty', 'byok-chat-form', 'byok-message', 'byok-send', 'byok-cancel', 'byok-active-model', 'byok-count', 'byok-effort']) assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1);
   assert.doesNotMatch(html, /id="(composer|message-input|send|history-viewport|history-spacer|history-items|markdown-sample|diff-sample)"/);
   assert.match(html, /<main[^>]*aria-labelledby="byok-chat-title"/);
   assert.match(html, /img-src 'none'/); assert.match(html, /autocomplete="off"/);
@@ -3160,10 +3181,10 @@ test('accessibility: skip link exists with localized label and focuses composer 
   await skip.emit('click');
 });
 
-test('accessibility: Control+Enter shortcut attribute and Escape key delete cancellation', async t => {
+test('accessibility: Enter shortcut attribute and Escape key delete cancellation', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  assert.equal(f.node('message').getAttribute('aria-keyshortcuts'), 'Control+Enter');
-  assert.equal(f.node('send').getAttribute('aria-keyshortcuts'), 'Control+Enter');
+  assert.equal(f.node('message').getAttribute('aria-keyshortcuts'), 'Enter');
+  assert.equal(f.node('send').getAttribute('aria-keyshortcuts'), 'Enter');
   f.node('history-list').value = 'conv-1';
   f.node('history-delete').disabled = false;
   await f.node('history-delete').emit('click');

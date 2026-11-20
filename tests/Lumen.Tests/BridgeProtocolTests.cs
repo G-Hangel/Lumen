@@ -122,6 +122,7 @@ public sealed class BridgeProtocolTests
     public void OversizedMessagesAndTextAreRejected()
     {
         Assert.Equal("error", BridgeProtocol.Handle(Source, new string('x', BridgeProtocol.MaxMessageLength + 1), Theme)!.Type);
+        Assert.NotNull(BridgeProtocol.Handle(Source, Request("ping", JsonSerializer.Serialize(new { text = new string('x', 5000) })), Theme));
         var payload = JsonSerializer.Serialize(new { text = new string('x', BridgeProtocol.MaxTextLength + 1) });
         Assert.Equal("error", BridgeProtocol.Handle(Source, Request("ping", payload), Theme)!.Type);
     }

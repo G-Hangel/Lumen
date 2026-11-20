@@ -418,19 +418,13 @@
                 <option value="Agent" data-i18n="byokModeAgent"></option>
               </select>
             </div>
-            <div class="consent-row" role="group" data-i18n-label="consentLegend">
-              <div class="byok-auto-consent">
-                <input id="byok-auto-read-tools" type="checkbox" disabled aria-describedby="byok-auto-read-help">
-                <label for="byok-auto-read-tools" data-i18n="consentRead" data-i18n-title="byokAutoReadConsent"></label>
-              </div>
-              <div class="byok-auto-consent">
-                <input id="byok-auto-write-tools" type="checkbox" disabled aria-describedby="byok-auto-write-help">
-                <label for="byok-auto-write-tools" data-i18n="consentWrite" data-i18n-title="byokAutoWriteConsent"></label>
-              </div>
-              <div class="byok-auto-consent">
-                <input id="byok-auto-terminal" type="checkbox" disabled aria-describedby="byok-auto-terminal-help">
-                <label for="byok-auto-terminal" data-i18n="consentTerminal" data-i18n-title="byokAutoTerminalConsent"></label>
-              </div>
+            <div class="mode-field">
+              <label for="byok-permission" class="sr-only" data-i18n="byokPermission"></label>
+              <select id="byok-permission" aria-describedby="byok-permission-help" disabled>
+                <option value="Interactive" data-i18n="byokPermissionInteractive"></option>
+                <option value="Permissive" data-i18n="byokPermissionPermissive"></option>
+                <option value="FullAccess" data-i18n="byokPermissionFull"></option>
+              </select>
             </div>
             <span id="byok-count" class="secondary"></span>
             <button id="byok-apply-plan" type="button" class="text-button" data-i18n="byokApplyPlan" hidden></button>
@@ -442,6 +436,7 @@
           </div>
         </div>
         <p id="byok-mode-help" class="secondary mode-help" data-i18n="byokModeHelp"></p>
+        <p id="byok-permission-help" class="secondary mode-help" data-i18n="byokPermissionHelp"></p>
         <div class="tuning" data-i18n-label="composerTuning">
           <details id="byok-context" class="send-options context-panel" aria-busy="false">
             <summary data-i18n="contextTitle"></summary>
@@ -461,12 +456,7 @@
             </div>
           </details>
 
-          <details class="send-options">
-            <summary data-i18n="byokAutoToolsDetails"></summary>
-            <p id="byok-auto-read-help" class="secondary" data-i18n="byokAutoReadHelp"></p>
-            <p id="byok-auto-write-help" class="secondary" data-i18n="byokAutoWriteHelp"></p>
-            <p id="byok-auto-terminal-help" class="secondary" data-i18n="byokAutoTerminalHelp"></p>
-          </details>
+
           <details id="byok-chat-guidance" class="send-options">
             <summary data-i18n="byokGuidance"></summary>
             <p id="byok-chat-hint" class="secondary" data-i18n="byokChatHint"></p>

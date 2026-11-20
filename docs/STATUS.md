@@ -2,32 +2,33 @@
 
 Atualizado em **2026-11-20**.
 
-## Fatia A — Composer: effort no modelo, imagem por drag/colar, Enter envia (2026-11-20)
+## Fatia B — Permissões por modo e Plan editável (2026-11-20)
 
-1. **Effort junto do modelo.** O seletor `byok-effort` saiu do painel "Opções de envio"
-   (removido) e passou para a linha "Ponte conectada" (`composer-meta`), ao lado do
-   modelo ativo. Opções vêm de `model.efforts`; desabilitado sem reasoning.
-2. **Imagem por arrastar/colar.** Removidos o input de arquivo e o painel "Opções de
-   envio". A imagem entra por drag & drop no composer ou colando no textarea; mantida
-   a validação (PNG/JPEG/GIF/WebP, 4 MB, magic bytes) e o chip "Remover imagem".
-   Drop de não-imagem ou arquivo grande rejeitado com código localizado.
-3. **Prompt e Enter.** Removido o limite de 4096 (textarea, UI, bridge e host — novo
-   teto 262144, `BridgeProtocol.MaxTextLength`); Enter envia, Shift+Enter quebra
-   linha (respeita IME/`isComposing`; com sugestões de skill abertas, Enter escolhe a
-   sugestão). Hint, `aria-keyshortcuts` e contador atualizados.
-4. **Extra (model switch, parte da fatia C).** Trocar de modelo no meio da conversa
-   agora preserva a sessão e faz replay no novo modelo; bloqueia com mensagem clara
-   se a sessão já usou ferramentas e o novo modelo não as suporta. Trocar de provedor
-   continua criando sessão nova.
+1. **Ferramentas derivadas do modo.** Ask = ler/listar; Plan = ler + criar/editar
+   `.txt`/`.md`; Agent = ler, criar, editar e terminal. Os checkboxes
+   "ferramentas automáticas" e o painel de ajuda foram removidos; a UI envia
+   apenas `mode` e `permission`.
+2. **Seletor de permissão** ao lado do modo: Interativo (comportamento atual),
+   Permissivo (só escrita fora do workspace pede aprovação; terminal sempre pede)
+   e Acesso Total (nada pede). Blocklist e confinamento de path permanecem em
+   todos os níveis. A política vive em `ChatModePolicy.Evaluate(mode, category,
+   permission)` e é aplicada no `ApprovalBroker`.
+3. **Plan editável.** `PlanAllowed` inclui `create_file`/`edit_file`; o
+   `WorkspaceWriteTools` e o caminho de buffers do `VisualStudioWriteTools`
+   rejeitam qualquer extensão que não seja `.md`/`.txt` e `apply_diff` em Plan.
+   A instrução do Plan foi atualizada. `AGENTS.md` reflete o novo escopo.
+4. **Host/bridge.** `ByokSession` deriva os executores do modo, aplica
+   `ForMode(mode, permission)` e valida os booleans legados (terminal só em
+   Agent; writeTools não em Ask). A ponte deriva os conjuntos de ferramentas do
+   modo para validar eventos/aprovações.
 
-Controles negativos: Enter não envia com send desabilitado, durante composição IME ou
-com Shift; prompt de 262145 rejeitado na UI e nas fronteiras bridge/host; drop de
-não-imagem e arquivo grande rejeitados; troca de modelo bloqueada sem suporte a tools.
+Controles negativos: ponte rejeita terminal em Ask/Plan; Plan não anuncia
+run_command; Plan rejeita `.cs` e `apply_diff` (disco e buffer); Permissivo ainda
+pede comando; Acesso Total não pede, mas blocklist/paths continuam; Ask continua
+read-only.
 
-Evidência: build Release 0 erros/0 avisos; UI **236/236**; .NET **1667/1667**
-(novo `LongPromptsPastLegacyLimitAreAcceptedAndArchived`); pacote **3/3**. VSIX
-reconstruído e copiado para `Release/0.1.0/Lumen-0.1.0.vsix` (pendente instalar).
-
+Evidência: build Release 0 erros/0 avisos; UI 236/236; .NET 1668/1668; pacote
+3/3. VSIX reconstruído, normalizado e instalado nos dois hives; 57/57 arquivos verificados por SHA-256 em cada um.
 ## Correção de build/pacote (2026-11-19)
 
 `Menus.cto` (saída binária do VSCT) não estava sendo empacotado, embora o pkgdef

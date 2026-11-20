@@ -60,7 +60,8 @@ public sealed class AgentToolSessionTests
         public readonly List<bool> Turns = new();
         public Func<bool, CancellationToken, Task> Begin = (_, _) => Task.CompletedTask;
         public IReadOnlyList<ToolSpec> Specs => WriteToolCatalog.Specs;
-        public Task<IWriteToolExecutor> CaptureAsync(CancellationToken token) { Captures++; return Task.FromResult<IWriteToolExecutor>(this); }
+        public Task<IWriteToolExecutor> CaptureAsync(CancellationToken token)        { Captures++; return Task.FromResult<IWriteToolExecutor>(this); }
+        public IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
         public Task BeginTurnAsync(bool automatic, CancellationToken token) { Turns.Add(automatic); return Begin(automatic, token); }
         public async Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token)
         {
@@ -83,6 +84,7 @@ public sealed class AgentToolSessionTests
         public int Calls;
         public IReadOnlyList<ToolSpec> Specs => CommandToolCatalog.Specs;
         public Task<IShellToolExecutor> CaptureAsync(CancellationToken token) { Captures++; return Task.FromResult<IShellToolExecutor>(this); }
+        public IShellToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
         public async Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token)
         {
             Calls++;
@@ -179,14 +181,15 @@ public sealed class AgentToolSessionTests
         Assert.Contains(approval.GetProperty("sequence").GetInt32(), eventSequence);
         Assert.Equal(1, fixture.Reader.Captures);
         Assert.Equal(1, fixture.Shell.Captures);
-        Assert.Equal(0, fixture.Writer.Captures);
+        Assert.Equal(1, fixture.Writer.Captures);
         using var round = JsonDocument.Parse(fixture.Handler.Bodies[1]);
         Assert.Contains("fixture", round.RootElement.GetProperty("messages")[3].GetProperty("content").GetString());
         var advertised = JsonDocument.Parse(fixture.Handler.Bodies[0]).RootElement.GetProperty("tools").EnumerateArray()
             .Select(tool => tool.GetProperty("function").GetProperty("name").GetString()).ToArray();
-        Assert.Equal(11, advertised.Length);
-        Assert.DoesNotContain("create_file", advertised);
-        Assert.DoesNotContain("edit_file", advertised);
+        Assert.Equal(14, advertised.Length);
+        Assert.Contains("create_file", advertised);
+        Assert.Contains("edit_file", advertised);
+        Assert.Contains("run_command", advertised);
     }
 
     [Fact]
@@ -303,7 +306,6 @@ public sealed class AgentToolSessionTests
 
     [Theory]
     [InlineData("Ask", true, false)]
-    [InlineData("Plan", true, false)]
     [InlineData("Ask", false, true)]
     [InlineData("Plan", false, true)]
     public async Task ReadOnlyModesRejectForgedWriteOrTerminalBeforeCapture(string mode, bool writeTools, bool terminal)
@@ -405,7 +407,6 @@ public sealed class AgentToolSessionTests
     }
 
     [Theory]
-    [InlineData("Plan", "edit_file")]
     [InlineData("Ask", "run_command")]
     [InlineData("Plan", "run_command")]
     public async Task ReadOnlyModesRejectModelToolRequests(string mode, string tool)
@@ -418,6 +419,18 @@ public sealed class AgentToolSessionTests
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         Assert.Equal(0, fixture.Writer.Calls + fixture.Shell.Calls);
         Assert.Contains("unknown_tool", fixture.Handler.Bodies.Last());
+    }
+
+    [Fact]
+    public async Task PlanModeCanCreatePlanDocuments()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        fixture.Handler.ToolName = "create_file";
+        fixture.Handler.Arguments = "{\"path\":\"plan.md\",\"content\":\"# Plan\"}";
+        await fixture.Chat(new { mode = "Plan", readTools = true });
+        Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
+        Assert.Equal(1, fixture.Writer.Calls);
     }
 
     [Fact]
@@ -524,7 +537,7 @@ public sealed class AgentToolSessionTests
     }
 
     [Fact]
-    public async Task AgentChatWithoutTerminalStillAdvertisesOnlyReadAndWriteTools()
+    public async Task AgentChatAlwaysAdvertisesReadWriteAndTerminalTools()
     {
         using var fixture = new Fixture();
         await fixture.Prepare();
@@ -533,11 +546,11 @@ public sealed class AgentToolSessionTests
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
         var tools = body.RootElement.GetProperty("tools").EnumerateArray().Select(tool => tool.GetProperty("function").GetProperty("name").GetString()).ToArray();
-        Assert.Equal(11, tools.Length);
+        Assert.Equal(14, tools.Length);
         Assert.Contains("apply_diff", tools);
-        Assert.DoesNotContain("run_command", tools);
+        Assert.Contains("run_command", tools);
         Assert.Equal(1, fixture.Writer.Captures);
-        Assert.Equal(0, fixture.Shell.Captures);
+        Assert.Equal(1, fixture.Shell.Captures);
     }
 
     private static HttpResponseMessage Sse(string data) => new(HttpStatusCode.OK) { Content = new StringContent("data: " + data + "\n\ndata: [DONE]\n\n") };
@@ -550,12 +563,12 @@ public sealed class AgentToolSessionTests
     public async Task CompactionShrinksReplayedHistoryBeforePost()
     {
         using var fixture = new Fixture();
-        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":6144}]}";
+        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":8192}]}";
         fixture.Handler.RequestTool = false;
         await fixture.Send("byok.configure", new { id = fixture.Id, providerId = "fixture", kind = "OpenRouter", baseUrl = "https://provider.test/v1/", key = "synthetic-agent-key" });
         await fixture.Send("byok.select", new { configurationId = fixture.Id, modelId = "fixture" });
         await fixture.Send("byok.override", new { configurationId = fixture.Id, modelId = "fixture", vision = false, tools = true, reasoning = false });
-        for (var index = 0; index < 20; index++) await fixture.Chat(new { text = new string('a', 200) });
+        for (var index = 0; index < 20; index++) await fixture.Chat(new { text = new string('a', 400) });
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         Assert.True(fixture.Last.GetProperty("payload").GetProperty("completed").GetBoolean());
         Assert.Equal(20, fixture.Handler.Bodies.Count);
@@ -572,7 +585,7 @@ public sealed class AgentToolSessionTests
     public async Task LongConversationWithTwoHundredTwentyTurnsRemainsBounded()
     {
         using var fixture = new Fixture(withWriters: false);
-        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":6144}]}";
+        fixture.Handler.ModelsJson = "{\"data\":[{\"id\":\"fixture\",\"architecture\":{\"input_modalities\":[\"text\"]},\"supported_parameters\":[\"tools\"],\"context_length\":8192}]}";
         fixture.Handler.RequestTool = false;
         await fixture.Prepare();
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

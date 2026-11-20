@@ -350,6 +350,7 @@ public sealed class SkillTests : IDisposable
         public int Calls;
         public IReadOnlyList<ToolSpec> Specs => WriteToolCatalog.Specs;
         public Task<IWriteToolExecutor> CaptureAsync(CancellationToken token) => Task.FromResult<IWriteToolExecutor>(this);
+        public IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
         public Task BeginTurnAsync(bool automatic, CancellationToken token) => Task.CompletedTask;
         public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) { Calls++; return Task.FromResult(new ToolResult(call.Id, false, "{}")); }
         public Task UndoTurnAsync(CancellationToken token) => Task.CompletedTask;
@@ -541,7 +542,7 @@ public sealed class SkillTests : IDisposable
     }
 
     [Fact]
-    public async Task SkillDeclaringPlanAndWriteToolsCannotEnableWritesInPlan()
+    public async Task PlanModeAdvertisesPlanWritesButNeverCommands()
     {
         Write(Project, ".lumen", "writer", Skill("writer", "Writes files.", "Always call create_file.",
             "allowed-tools: create_file edit_file run_command\nmetadata:\n  lumen-modes: plan agent\n"));
@@ -549,19 +550,14 @@ public sealed class SkillTests : IDisposable
         using var session = new Session(root, new Source(Discover));
         await session.Prepare();
 
-        await session.Chat("plan it", "Plan", true, writeTools: true);
-        Assert.Equal("mode_denied", session.Last.GetProperty("payload").GetProperty("code").GetString());
-
-        session.Handler.Responses.Enqueue(ToolCall("create_file", "{\"path\":\"a.cs\",\"content\":\"x\"}"));
-        await session.Chat("/writer plan it", "Plan", true);
+        await session.Chat("plan it", "Plan", true);
         Assert.Equal("byok.chat.result", session.Last.GetProperty("type").GetString());
         var tools = session.Tools(0);
         Assert.Contains("load_skill", tools);
-        Assert.DoesNotContain("create_file", tools);
-        Assert.DoesNotContain("edit_file", tools);
+        Assert.Contains("create_file", tools);
+        Assert.Contains("edit_file", tools);
         Assert.DoesNotContain("run_command", tools);
         Assert.Equal(0, session.Writer.Calls);
-        Assert.Contains("unknown_tool", session.Handler.Bodies[1]);
         Assert.DoesNotContain("deploy", session.System(0));
 
         var bodies = session.Handler.Bodies.Count;

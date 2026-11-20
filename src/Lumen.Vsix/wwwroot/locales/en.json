@@ -203,7 +203,6 @@
   "byokModeAsk": "Ask",
   "byokModePlan": "Plan",
   "byokModeAgent": "Agent",
-  "byokModeHelp": "Ask answers; Plan creates a plan without changing files or running commands; Agent can act with the consent below.",
   "byokApplyPlan": "Apply plan in Agent mode",
   "byokApplyPlanDone": "Agent mode enabled to apply the plan. Review the consents before sending; nothing was executed.",
   "byokAutoReadConsent": "Allow automatic read-only tools for this send",
@@ -379,5 +378,11 @@
   "hintShortcut": "Enter sends · Shift+Enter for a new line",
   "byokEffortHelp": "Reasoning effort for the selected model; unavailable when the model has no reasoning support.",
   "byokErrorTextTooLarge": "The prompt exceeds the 262144-character limit.",
-  "byokErrorTools": "The selected model does not have tool calling enabled. Select another model or review the manual override."
+  "byokErrorTools": "The selected model does not have tool calling enabled. Select another model or review the manual override.",
+  "byokPermission": "Permission level",
+  "byokPermissionInteractive": "Interactive",
+  "byokPermissionPermissive": "Permissive",
+  "byokPermissionFull": "Full access",
+  "byokPermissionHelp": "Interactive asks for approval on writes outside the workspace and on commands. Permissive only asks for commands. Full access never asks; the blocklist and path confinement still apply.",
+  "byokModeHelp": "Ask reads and lists files. Plan reads files and creates or edits .md/.txt documents. Agent reads, writes and runs commands."
 }

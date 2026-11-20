@@ -33,6 +33,8 @@ internal sealed class VisualStudioShellTools : IShellToolExecutor, IApprovalProm
     private long solutionGeneration;
     private readonly long capturedGeneration;
     private bool disposed;
+    private ChatMode mode = ChatMode.Agent;
+    private PermissionLevel permission = PermissionLevel.Interactive;
 
     internal VisualStudioShellTools(JoinableTaskFactory taskFactory, Func<ApprovalRequest, CancellationToken, Task<ApprovalResponse>> prompt)
     {
@@ -51,6 +53,12 @@ internal sealed class VisualStudioShellTools : IShellToolExecutor, IApprovalProm
     }
 
     public IReadOnlyList<ToolSpec> Specs => CommandToolCatalog.Specs;
+    public IShellToolExecutor ForMode(ChatMode mode, PermissionLevel permission)
+    {
+        this.mode = mode;
+        this.permission = permission;
+        return this;
+    }
 
     public async Task<IShellToolExecutor> CaptureAsync(CancellationToken cancellationToken)
     {
@@ -80,7 +88,8 @@ internal sealed class VisualStudioShellTools : IShellToolExecutor, IApprovalProm
         {
             if (root is null)
             {
-                var captured = await CaptureAsync(cancellationToken).ConfigureAwait(false);
+                var captured = (VisualStudioShellTools)await CaptureAsync(cancellationToken).ConfigureAwait(false);
+                captured.ForMode(mode, permission);
                 return await captured.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
             }
             await ValidateAsync(cancellationToken);
@@ -101,7 +110,8 @@ internal sealed class VisualStudioShellTools : IShellToolExecutor, IApprovalProm
                 }
                 approvals = shared.broker;
             }
-            var result = await Task.Run(() => new WorkspaceShellTools(new WorkspaceGuard(root), approvals, ValidateAsync).ExecuteAsync(ChatMode.Agent, invocation, cancellationToken), cancellationToken).ConfigureAwait(false);
+            approvals.Permission = permission;
+            var result = await Task.Run(() => new WorkspaceShellTools(new WorkspaceGuard(root), approvals, ValidateAsync).ExecuteAsync(mode, invocation, cancellationToken), cancellationToken).ConfigureAwait(false);
             await ValidateAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await ShowOutputAsync(invocation, result, cancellationToken).ConfigureAwait(false);

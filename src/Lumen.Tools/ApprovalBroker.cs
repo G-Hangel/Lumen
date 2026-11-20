@@ -43,6 +43,7 @@ public sealed class ApprovalBroker : IDisposable
     private readonly IApprovalPrompt prompt;
     private readonly SemaphoreSlim gate = new(1, 1);
     private bool allowCommands;
+    public PermissionLevel Permission { get; set; } = PermissionLevel.Interactive;
     private bool disposed;
 
     public ApprovalBroker(WorkspaceGuard workspace, IApprovalPrompt prompt)
@@ -54,7 +55,7 @@ public sealed class ApprovalBroker : IDisposable
     public void AuthorizeRead(ChatMode mode, CancellationToken cancellationToken)
     {
         CheckActive(cancellationToken);
-        if (ChatModePolicy.Evaluate(mode, ToolCategory.Read) != ToolPermission.Allow)
+        if (ChatModePolicy.Evaluate(mode, ToolCategory.Read, Permission) != ToolPermission.Allow)
             throw new ToolException("mode_denied");
     }
 
@@ -65,7 +66,9 @@ public sealed class ApprovalBroker : IDisposable
         if (!ChatModePolicy.CanWrite(mode)) throw new ToolException("mode_denied");
         var target = workspace.ResolveWriteTarget(path);
         var category = workspace.Contains(target) ? ToolCategory.WriteInsideWorkspace : ToolCategory.WriteOutsideWorkspace;
-        if (ChatModePolicy.Evaluate(mode, category) == ToolPermission.RequireApproval)
+        var permission = ChatModePolicy.Evaluate(mode, category, Permission);
+        if (permission == ToolPermission.Deny) throw new ToolException("mode_denied");
+        if (permission == ToolPermission.RequireApproval)
             await RequestAsync(invocation, category, target, false, cancellationToken).ConfigureAwait(false);
         CheckActive(cancellationToken);
         return workspace.ResolveWriteTarget(target);
@@ -84,7 +87,7 @@ public sealed class ApprovalBroker : IDisposable
         try
         {
             CheckActive(cancellationToken);
-            if (category == ToolCategory.ExecuteCommand && allowCommands && !explicitApproval) return;
+            if (category == ToolCategory.ExecuteCommand && !explicitApproval && (allowCommands || Permission == PermissionLevel.FullAccess)) return;
             var response = await prompt.RequestAsync(new ApprovalRequest(invocation, category, target), cancellationToken).ConfigureAwait(false);
             CheckActive(cancellationToken);
             if (response == ApprovalResponse.AllowCommandsForSession && category == ToolCategory.ExecuteCommand && !explicitApproval)

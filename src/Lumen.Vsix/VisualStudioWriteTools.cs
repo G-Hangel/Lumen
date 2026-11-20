@@ -27,6 +27,8 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
     private readonly Func<ApprovalRequest, CancellationToken, Task<ApprovalResponse>> prompt;
     private string? root;
     private string? solutionPath;
+    private ChatMode mode = ChatMode.Agent;
+    private PermissionLevel permission = PermissionLevel.Interactive;
     private readonly EditJournal journal;
     private readonly List<BufferChange> buffers = new();
     private readonly List<TurnBoundary> turns = new();
@@ -89,6 +91,14 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
         commit();
     });
     public IReadOnlyList<ToolSpec> Specs => WriteToolCatalog.Specs;
+    private static bool IsPlanDocument(string path) =>
+        path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
+    public IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission)
+    {
+        this.mode = mode;
+        this.permission = permission;
+        return this;
+    }
     public int PendingChanges => journal.Count + buffers.Count;
 
     public async Task<IWriteToolExecutor> CaptureAsync(CancellationToken token)
@@ -143,6 +153,9 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
             var isDiff = invocation.Name == "apply_diff";
             var diffArguments = isDiff ? WriteToolCatalog.ValidateDiff(invocation) : default;
             var arguments = isDiff ? (Path: diffArguments.Path, Content: string.Empty) : WriteToolCatalog.Validate(invocation);
+            // Plan may only create or edit plan documents, including open editor buffers.
+            if (mode == ChatMode.Plan && (isDiff || !IsPlanDocument(arguments.Path)))
+                return Error(invocation, "mode_denied");
             await taskFactory.SwitchToMainThreadAsync(token);
             if (root is null) await CaptureAsync(token);
             await ValidateAsync(token);
@@ -157,7 +170,9 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
                 if (!guard.Contains(path))
                 {
                     // Open buffers can live outside the workspace; those writes need approval too.
-                    await GetApprovals(guard).AuthorizeWriteAsync(ChatMode.Agent, invocation, arguments.Path, token).ConfigureAwait(false);
+                    var bufferApprovals = GetApprovals(guard);
+                    bufferApprovals.Permission = permission;
+                    await bufferApprovals.AuthorizeWriteAsync(mode, invocation, arguments.Path, token).ConfigureAwait(false);
                     await taskFactory.SwitchToMainThreadAsync(token);
                     await ValidateAsync(token);
                     path = guard.ResolveWriteTarget(arguments.Path);
@@ -172,7 +187,8 @@ internal sealed class VisualStudioWriteTools : IWriteToolExecutor, IApprovalProm
             }
             if (buffers.Any(change => string.Equals(change.Path, path, StringComparison.OrdinalIgnoreCase))) return Error(invocation, "edit_conflict");
             var diskApprovals = GetApprovals(guard);
-            return await Task.Run(() => new WorkspaceWriteTools(guard, diskApprovals, journal).ExecuteAsync(ChatMode.Agent, invocation, token), token).ConfigureAwait(false);
+            diskApprovals.Permission = permission;
+            return await Task.Run(() => new WorkspaceWriteTools(guard, diskApprovals, journal).ExecuteAsync(mode, invocation, token), token).ConfigureAwait(false);
         }
         catch (ToolException exception) { return Error(invocation, exception.Code); }
         catch (ProviderException exception) { return Error(invocation, exception.Code); }

@@ -355,13 +355,15 @@ function validRequest(type, p) {
     case 'byok.remove': return fields(p, ['configurationId']) && guid(p.configurationId);
     case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
-    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'budget', 'skills']) && guid(p.configurationId)
+    case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'permission', 'budget', 'skills']) && guid(p.configurationId)
       && (!Object.hasOwn(p, 'skills') || (list(p.skills, 8, skillName) && unique(p.skills)))
       && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))
-      && (p.mode === 'Agent' || (p.writeTools !== true && p.terminal !== true))
+      && (!Object.hasOwn(p, 'permission') || ['Interactive', 'Permissive', 'FullAccess'].includes(p.permission))
       && (!Object.hasOwn(p, 'readTools') || typeof p.readTools === 'boolean')
       && (!Object.hasOwn(p, 'writeTools') || typeof p.writeTools === 'boolean')
       && (!Object.hasOwn(p, 'terminal') || typeof p.terminal === 'boolean')
+      && (p.terminal !== true || p.mode === 'Agent')
+      && (p.writeTools !== true || p.mode !== 'Ask')
       && (!Object.hasOwn(p, 'budget') || (fields(p.budget, ['maxRounds', 'maxOutputTokens', 'maxInvocations'])
         && Number.isSafeInteger(p.budget.maxRounds) && p.budget.maxRounds >= 1 && p.budget.maxRounds <= 64
         && Number.isSafeInteger(p.budget.maxOutputTokens) && p.budget.maxOutputTokens >= 1024 && p.budget.maxOutputTokens <= 262144
@@ -420,12 +422,15 @@ export class ByokBridge {
         conversationId: payload.conversationId, offset: payload.offset, limit: payload.limit, kind: payload.kind, name: payload.name, enabled: payload.enabled };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.finish(id, new ByokError('timeout')), this.timeoutMs);
-      const writeTools = payload.writeTools === true;
-      const terminalTools = payload.terminal === true;
+      const mode = payload.mode ?? 'Ask';
+      const planTools = mode === 'Plan';
+      const writeTools = mode === 'Agent' || planTools;
+      const terminalTools = mode === 'Agent';
       const toolNames = new Set(terminalTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, 'apply_diff', ...COMMAND_TOOL_NAMES]
+        : planTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]
         : writeTools ? [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, 'apply_diff'] : READ_TOOL_NAMES);
       this.pending.set(id, { type, expected, onEvent, resolve, reject, timer,
-        readTools: payload.readTools === true || writeTools || terminalTools, writeTools, terminalTools, toolNames,
+        readTools: payload.readTools !== false, writeTools, terminalTools, toolNames,
         approvals: new Map(), terminal: null, tools: new Map(), streamSize: 0, eventCount: 0, nextSequence: 1 });
       try { this.transport.postMessage({ version: 1, id, type, payload }); }
       catch { this.finish(id, new ByokError('bridge_unavailable')); }

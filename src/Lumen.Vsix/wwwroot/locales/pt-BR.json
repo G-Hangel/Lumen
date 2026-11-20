@@ -203,7 +203,6 @@
   "byokModeAsk": "Ask",
   "byokModePlan": "Plan",
   "byokModeAgent": "Agent",
-  "byokModeHelp": "Ask responde; Plan cria um plano sem alterar arquivos ou executar comandos; Agent pode agir com os consentimentos abaixo.",
   "byokApplyPlan": "Aplicar plano no modo Agent",
   "byokApplyPlanDone": "Modo Agent ativado para aplicar o plano. Revise os consentimentos antes de enviar; nada foi executado.",
   "byokAutoReadConsent": "Permitir ferramentas somente leitura neste envio",
@@ -379,5 +378,11 @@
   "hintShortcut": "Enter envia · Shift+Enter para nova linha",
   "byokEffortHelp": "Esforço de raciocínio do modelo selecionado; indisponível quando o modelo não suporta raciocínio.",
   "byokErrorTextTooLarge": "O prompt excede o limite de 262144 caracteres.",
-  "byokErrorTools": "O modelo selecionado não tem chamada de ferramentas habilitada. Escolha outro modelo ou revise o override manual."
+  "byokErrorTools": "O modelo selecionado não tem chamada de ferramentas habilitada. Escolha outro modelo ou revise o override manual.",
+  "byokPermission": "Nível de permissão",
+  "byokPermissionInteractive": "Interativo",
+  "byokPermissionPermissive": "Permissivo",
+  "byokPermissionFull": "Acesso total",
+  "byokPermissionHelp": "Interativo pede aprovação para escrita fora do workspace e comandos. Permissivo só pede aprovação para comandos. Acesso total nunca pede; a blocklist e o confinamento de path continuam valendo.",
+  "byokModeHelp": "Ask lê e lista arquivos. Plan lê arquivos e cria ou edita documentos .md/.txt. Agent lê, escreve e executa comandos."
 }

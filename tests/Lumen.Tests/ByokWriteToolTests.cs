@@ -35,6 +35,7 @@ public sealed class ByokWriteToolTests
         public IReadOnlyList<ToolSpec> Specs => Array.Empty<ToolSpec>();
         public Func<ToolInvocation, CancellationToken, Task<ToolResult>> Run = (call, _) => Task.FromResult(new ToolResult(call.Id, false, "{}"));
         public Task<IWriteToolExecutor> CaptureAsync(CancellationToken token) { Captures++; Lifecycle.Add("capture"); return Task.FromResult(Captured ?? this); }
+        public IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
         public Task BeginTurnAsync(bool automatic, CancellationToken token) { Lifecycle.Add(automatic ? "auto" : "manual"); return Begin(automatic, token); }
         public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) { Calls++; Lifecycle.Add("execute"); PendingChanges++; return Run(call, token); }
         public Task UndoTurnAsync(CancellationToken token) { Undos++; PendingChanges = 0; return Task.CompletedTask; }

@@ -20,7 +20,7 @@ errado, corrija-o com evidência e anote a fonte.
 | Nome | **Lumen** |
 | Estratégia | **Chat próprio independente.** Não estender o Copilot Chat nativo do VS. |
 | Alvo | Visual Studio Community 2026 (18.x) |
-| Modos | **Agent**, **Ask**, **Plan** |
+| Modos | **Agent**, **Ask**, **Plan** (Plan cria/edita apenas `.txt`/`.md`) |
 | BYOK | Descoberta automática de modelos + capacidades (visão, raciocínio, tool calling) |
 | Ferramentas | Ler / editar / criar arquivos; executar cmd, PowerShell e bash |
 | Extras | Sistema de Skills e personalização visual |
@@ -32,8 +32,11 @@ errado, corrija-o com evidência e anote a fonte.
   diff visível e undo em lote.
 - Escrita **fora** do workspace: exige confirmação.
 - **Qualquer** comando de terminal: exige confirmação, com opção
-  "sempre permitir nesta sessão".
-- Modo **Plan**: nunca escreve nada, nunca executa comando. Só produz o plano.
+  "sempre permitir nesta sessão". O seletor de permissão (Interativo /
+  Permissivo / Acesso Total) só relaxa aprovações; blocklist e confinamento de
+  path continuam valendo.
+- Modo **Plan**: lê arquivos e cria/edita **apenas arquivos .txt/.md** dentro
+  do workspace; nunca executa comandos.
 - Modo **Ask**: read-only. Pode ler arquivos, nunca alterar.
 
 ## 2. Dinheiro e credenciais — rigoroso

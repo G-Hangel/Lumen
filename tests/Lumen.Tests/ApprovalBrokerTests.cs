@@ -12,19 +12,50 @@ namespace Lumen.Tests;
 
 public sealed class ApprovalBrokerTests
 {
-    [Theory]
-    [InlineData(ChatMode.Ask)]
-    [InlineData(ChatMode.Plan)]
-    public async Task ReadOnlyModesDenyWritesAndCommandsBeforePromptOrPathAccess(ChatMode mode)
+    [Fact]
+    public async Task AskDeniesWritesAndCommandsBeforePromptOrPathAccess()
     {
         using var folder = new Folder();
         var prompt = new Prompt();
         using var broker = new ApprovalBroker(new WorkspaceGuard(folder.Path), prompt);
-        broker.AuthorizeRead(mode, CancellationToken.None);
-        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeWriteAsync(mode, Call("create_file"), "../unsafe", CancellationToken.None))).Code);
-        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeCommandAsync(mode, Call("run_command"), false, CancellationToken.None))).Code);
+        broker.AuthorizeRead(ChatMode.Ask, CancellationToken.None);
+        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeWriteAsync(ChatMode.Ask, Call("create_file"), "new.md", CancellationToken.None))).Code);
+        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeCommandAsync(ChatMode.Ask, Call("run_command"), false, CancellationToken.None))).Code);
         Assert.Empty(prompt.Requests);
         Assert.Empty(Directory.GetFileSystemEntries(folder.Path));
+    }
+
+    [Fact]
+    public async Task PlanAllowsInsideWritesButDeniesOutsideWritesAndCommands()
+    {
+        using var folder = new Folder();
+        using var outside = new Folder();
+        var prompt = new Prompt();
+        using var broker = new ApprovalBroker(new WorkspaceGuard(folder.Path), prompt);
+        broker.AuthorizeRead(ChatMode.Plan, CancellationToken.None);
+        // The broker enforces the workspace boundary; the executor narrows Plan to .md/.txt.
+        Assert.Equal(Path.Combine(folder.Path, "plan.md"), await broker.AuthorizeWriteAsync(ChatMode.Plan, Call("create_file"), "plan.md", CancellationToken.None));
+        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeWriteAsync(ChatMode.Plan, Call("create_file"), Path.Combine(outside.Path, "plan.md"), CancellationToken.None))).Code);
+        Assert.Equal("mode_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeCommandAsync(ChatMode.Plan, Call("run_command"), false, CancellationToken.None))).Code);
+        Assert.Empty(prompt.Requests);
+    }
+
+    [Fact]
+    public async Task PermissionLevelsRelaxOnlyAgentApprovals()
+    {
+        using var folder = new Folder();
+        using var outside = new Folder();
+        var prompt = new Prompt();
+        using var broker = new ApprovalBroker(new WorkspaceGuard(folder.Path), prompt) { Permission = PermissionLevel.Permissive };
+        var target = Path.Combine(outside.Path, "new.cs");
+        Assert.Equal(target, await broker.AuthorizeWriteAsync(ChatMode.Agent, Call("create_file"), target, CancellationToken.None));
+        Assert.Empty(prompt.Requests);
+        Assert.Equal("approval_denied", (await Assert.ThrowsAsync<ToolException>(() => broker.AuthorizeCommandAsync(ChatMode.Agent, Call("run_command"), false, CancellationToken.None))).Code);
+        Assert.Single(prompt.Requests);
+
+        using var full = new ApprovalBroker(new WorkspaceGuard(folder.Path), prompt) { Permission = PermissionLevel.FullAccess };
+        await full.AuthorizeCommandAsync(ChatMode.Agent, Call("run_command"), false, CancellationToken.None);
+        Assert.Single(prompt.Requests, request => request.Category == ToolCategory.ExecuteCommand);
     }
 
     [Fact]

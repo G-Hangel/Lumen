@@ -227,7 +227,6 @@ test('execution lifecycle rejects spoofed unknown/unended calls, unconsented exe
     { call: true, name: 'edit_file', bad: executionEvent() },
     { call: true, name: 'edit_file', bad: executionEvent('Completed') },
     { call: true, bad: executionEvent('Failed', { isError: false }) },
-    { call: true, readTools: false, bad: executionEvent() },
     { call: true, before: [executionEvent(), { kind: 'Done', reason: 'Stop' }], bad: executionEvent('Completed') }
   ];
   for (const value of cases) {
@@ -274,48 +273,37 @@ test('automatic rounds accept execution feedback but Done/ToolUse and cancel ack
   assert.deepEqual(events.filter(event => event.kind === 'ToolExecution').map(event => event.status), ['Running', 'Completed', 'Running', 'Failed', 'Cancelled']);
 });
 
-test('automatic UI consent defaults off, is per-send, never configures on enabling and resets on config/model changes', async t => {
+test('permission selector defaults to Interactive, never configures on change and survives model changes', async t => {
   const f = uiFixture(t);
-  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
+  assert.equal(f.node('permission').value, 'Interactive'); assert.equal(f.node('permission').disabled, true);
   await openWithModel(f, model, { otherModels: [{ ...model, id: 'other-model' }] });
-  assert.equal(f.node('auto-read-tools').disabled, false);
+  assert.equal(f.node('permission').disabled, false);
   const count = f.transport.messages.length;
-  f.node('auto-read-tools').checked = true; await f.node('auto-read-tools').emit('change');
+  f.node('permission').value = 'Permissive'; await f.node('permission').emit('change');
   assert.equal(f.transport.messages.length, count);
-  for (const id of ['provider-id', 'url', 'key', 'deployments']) {
-    f.node('auto-read-tools').checked = true; await f.node(id).emit('input'); assert.equal(f.node('auto-read-tools').checked, false);
-  }
-  f.node('auto-read-tools').checked = true; f.node('models').value = 'other-model';
-  const selection = f.node('models').emit('change'); assert.equal(f.node('auto-read-tools').checked, false);
+  f.node('models').value = 'other-model';
+  const selection = f.node('models').emit('change');
   f.transport.reply({ configuration: { ...config, selectedModelId: 'other-model' } }); await selection;
+  assert.equal(f.node('permission').value, 'Permissive');
   f.node('message').value = 'read'; await f.node('message').emit('input');
-  f.node('auto-read-tools').checked = true;
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
-  assert.equal(sent.payload.readTools, true); assert.equal(Object.hasOwn(sent.payload, 'tools'), false);
-  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
+  assert.equal(sent.payload.permission, 'Permissive'); assert.equal(Object.hasOwn(sent.payload, 'readTools'), false);
   f.transport.reply({ completed: true, conversation: { ...summary, modelId: 'other-model' } }); await pending;
-  f.node('message').value = 'manual'; await f.node('message').emit('input');
-  const manual = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
-  f.transport.reply({ completed: true, conversation: { ...summary, modelId: 'other-model', turnCount: 2 } }); await manual;
-  f.node('auto-read-tools').checked = true; f.disconnect(); assert.equal(f.node('auto-read-tools').checked, false);
 });
-
-test('automatic consent disables without tools/model and during separate manual disk operations', async t => {
-  const f = uiFixture(t); await openWithModel(f, { ...model, tools: false });
-  assert.equal(f.node('auto-read-tools').disabled, true);
-  f.node('auto-read-tools').checked = true;
-  f.node('message').value = 'manual'; await f.node('message').emit('input');
-  const chat = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
-  f.transport.reply({ completed: true, conversation: summary }); await chat;
-  const g = uiFixture(t); await openWithModel(g);
-  const read = g.node('read-form').emit('submit'); assert.equal(g.node('auto-read-tools').disabled, true);
-  g.transport.reply(diskResult()); await read; assert.equal(g.node('auto-read-tools').disabled, false);
+test('permission selector is disabled while disconnected and survives manual disk operations', async t => {
+  const f = uiFixture(t);
+  assert.equal(f.node('permission').disabled, true);
+  await openWithModel(f);
+  assert.equal(f.node('permission').disabled, false);
+  const read = f.node('read-form').emit('submit');
+  f.transport.reply(diskResult()); await read;
+  assert.equal(f.node('permission').disabled, false);
+  f.disconnect(); assert.equal(f.node('permission').disabled, true);
 });
-
 test('execution UI renders inert plain/focusable results, localized lifecycle and cached/reopened terminal history', async t => {
   let markdownCalls = 0;
   const f = uiFixture(t, { renderMarkdown: () => { markdownCalls++; return ''; } }); await openWithModel(f);
-  f.node('message').value = 'read'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  f.node('message').value = 'read'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1); emitReadCall(f, sent);
   f.transport.emit(envelope('byok.event', executionEvent(), sent.id));
   const card = f.node('live').querySelectorAll('details').find(item => item.className === 'byok-tool'); const state = card.querySelectorAll('p')[1];
@@ -336,13 +324,13 @@ test('execution UI renders inert plain/focusable results, localized lifecycle an
 
 test('automatic UI failed/cancelled cards stay plain and cancellation acknowledgement never unlocks early', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  f.node('message').value = 'read'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  f.node('message').value = 'read'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   emitReadCall(f, sent); f.transport.emit(envelope('byok.event', executionEvent(), sent.id));
   f.transport.emit(envelope('byok.event', executionEvent('Failed', { content: '<script>inert()</script>' }), sent.id));
   emitReadCall(f, sent, 'read-2'); f.transport.emit(envelope('byok.event', executionEvent('Running', { id: 'read-2' }), sent.id));
   const cancel = f.node('cancel').emit('click'); f.transport.reply({ cancelled: true }); await cancel;
-  assert.equal(f.node('send').disabled, true); assert.equal(f.node('auto-read-tools').disabled, true);
+  assert.equal(f.node('send').disabled, true); assert.equal(f.node('permission').disabled, true);
   f.transport.emit(envelope('byok.event', executionEvent('Cancelled', { id: 'read-2' }), sent.id));
   const cards = f.node('live').querySelectorAll('details').filter(item => item.className === 'byok-tool');
   assert.equal(cards[0].querySelectorAll('p')[1].textContent, en.byokToolFailed);
@@ -351,14 +339,14 @@ test('automatic UI failed/cancelled cards stay plain and cancellation acknowledg
   f.transport.emit(envelope('byok.event', { kind: 'Done', reason: 'Cancelled' }, sent.id));
   assert.equal(f.node('read-run').disabled, true, 'Done is not native completion');
   f.transport.reply({ completed: false, conversation: summary }, sent); await pending; f.flushFrames();
-  assert.equal(f.node('auto-read-tools').disabled, false); assert.equal(f.node('auto-read-tools').checked, false);
+  assert.equal(f.node('permission').disabled, false);
   assert.ok(f.node('history-items').textContent.includes(en.byokToolFailed));
   assert.ok(f.node('history-items').textContent.includes(en.byokToolCancelled));
 });
 
 test('assistant timeline renders interleaved reasoning, tool and answer blocks in arrival order, live and archived', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  f.node('message').value = 'read it'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  f.node('message').value = 'read it'; await f.node('message').emit('input');
   const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
   const emit = event => f.transport.emit(envelope('byok.event', event, chat.id));
   emit({ kind: 'ReasoningDelta', text: 'first plan' });
@@ -384,18 +372,17 @@ test('assistant timeline renders interleaved reasoning, tool and answer blocks i
   assert.ok(row.textContent.includes(en.byokToolCompleted));
 });
 
-test('consent resets immediately on provider/kind change and configure attempt without an enabling RPC', async t => {
+test('permission selector survives provider/kind changes and configure attempts', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  f.node('auto-read-tools').checked = true; f.node('kind').value = 'OpenAI'; await f.node('kind').emit('change');
-  assert.equal(f.node('auto-read-tools').checked, false);
-  f.node('auto-read-tools').checked = true;
+  f.node('permission').value = 'FullAccess'; await f.node('permission').emit('change');
+  f.node('kind').value = 'OpenAI'; await f.node('kind').emit('change');
+  assert.equal(f.node('permission').value, 'FullAccess');
   f.node('providers').value = ''; await f.node('providers').emit('change');
-  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.node('auto-read-tools').disabled, true);
-  f.node('auto-read-tools').checked = true; f.node('url').value = 'invalid-url';
+  assert.equal(f.node('permission').value, 'FullAccess');
+  f.node('url').value = 'invalid-url';
   const count = f.transport.messages.length; await f.node('configure').emit('submit');
-  assert.equal(f.node('auto-read-tools').checked, false); assert.equal(f.transport.messages.length, count);
+  assert.equal(f.transport.messages.length, count);
 });
-
 test('history accepts legacy tools and complete terminal triplets, rejects partial/Running/oversize results', () => {
   const call = { id: 'read-1', name: 'read_file', arguments: { path: '.' } };
   const valid = tools => isByokEnvelope(envelope('byok.history.open.result', { ...page(), turns: [{ ...archiveTurn(0), tools }] }));
@@ -407,39 +394,27 @@ test('history accepts legacy tools and complete terminal triplets, rejects parti
 
 test('budget failure is localized, retains gate until result, does not retry and permits manual resend', async t => {
   const f = uiFixture(t); await openWithModel(f);
-  f.node('message').value = 'read too much'; await f.node('message').emit('input'); f.node('auto-read-tools').checked = true;
+  f.node('message').value = 'read too much'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1); const count = f.transport.messages.length;
   f.transport.emit(envelope('byok.event', { kind: 'Error', code: 'tool_budget_exceeded' }, sent.id));
   assert.equal(f.node('send').disabled, true); assert.equal(f.node('error').textContent, en.byokErrorToolBudget);
   f.transport.reply({ completed: false, conversation: summary }); await pending;
-  assert.equal(f.transport.messages.length, count); assert.equal(f.node('auto-read-tools').checked, false);
+  assert.equal(f.transport.messages.length, count);
   f.locale(); assert.equal(f.node('error').textContent, pt.byokErrorToolBudget);
   const manual = f.node('chat-form').emit('submit'); assert.equal(Object.hasOwn(f.transport.messages.at(-1).payload, 'readTools'), false);
   f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }); await manual;
 });
 
-test('automatic consent has accessible native compact labels and explicit privacy/budget help', () => {
-  assert.match(html, /id="byok-auto-read-tools"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-auto-read-help"/);
-  assert.match(html, /for="byok-auto-read-tools"/);
-  assert.doesNotMatch(html.match(/<input id="byok-auto-read-tools"[^>]*>/)[0], /\bchecked\b/);
-  assert.match(en.byokAutoReadHelp, /selected provider may receive file contents/);
-  assert.match(en.byokAutoReadHelp, /including unsaved editor buffers through get_edit_snapshot/);
-  assert.match(pt.byokAutoReadHelp, /inclusive buffers não salvos do editor por get_edit_snapshot/);
-  assert.match(en.byokAutoReadHelp, /paid tokens/); assert.match(en.byokAutoReadHelp, /64 rounds.*256 tools.*1 MB.*10 minutes/);
+test('permission selector is accessible and help explains the approval matrix', () => {
+  assert.match(html, /id="byok-permission"[^>]*disabled/);
+  assert.match(html, /for="byok-permission"/);
+  assert.doesNotMatch(html.match(/<select id="byok-permission"[^>]*>/)[0], /\bchecked\b/);
+  assert.match(en.byokPermissionHelp, /Interactive/);
+  assert.match(pt.byokPermissionHelp, /Interativo/);
+  assert.match(en.byokPermissionHelp, /blocklist and path confinement/);
   assert.match(css, /\.byok-tool \.byok-tool-result\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
-  for (const [id, help] of [['auto-write-tools', 'auto-write-help'], ['auto-terminal', 'auto-terminal-help']]) {
-    assert.match(html, new RegExp(`id="byok-${id}"[^>]*type="checkbox"[^>]*disabled[^>]*aria-describedby="byok-${help}"`));
-    assert.match(html, new RegExp(`for="byok-${id}"`));
-    assert.doesNotMatch(html.match(new RegExp(`<input id="byok-${id}"[^>]*>`))[0], /\bchecked\b/);
-  }
-  assert.match(en.byokAutoWriteHelp, /visible diff and batch undo/);
-  assert.match(en.byokAutoWriteHelp, /outside the workspace every write requires your explicit approval/);
-  assert.match(en.byokAutoTerminalHelp, /Every command requires your explicit approval/);
-  assert.match(en.byokAutoTerminalHelp, /always allow this session/);
-  assert.match(en.byokAutoTerminalHelp, /never concatenated/);
   assert.match(css, /\.byok-approval pre\s*\{[^}]*max-height: 203px;[^}]*var\(--vs-background\)[^}]*var\(--vs-foreground\)/);
 });
-
 test('approval schema rejects forged category, session mismatch, missing fields and oversized payloads', () => {
   assert.equal(isByokEvent(approvalEvent()), true);
   assert.equal(isByokEvent(approvalEvent('WriteOutsideWorkspace')), true);
@@ -477,9 +452,9 @@ test('approval respond validates the decision before the busy gate and bypasses 
 
 test('approval events require the matching consent flag, unique ids and a bounded count', async t => {
   const cases = [
-    { flags: { readTools: true }, bad: approvalEvent() },
-    { flags: { writeTools: true }, bad: approvalEvent() },
-    { flags: { terminal: true }, bad: approvalEvent('WriteOutsideWorkspace') }
+    { flags: { mode: 'Ask' }, bad: approvalEvent() },
+    { flags: { mode: 'Ask' }, bad: approvalEvent('WriteOutsideWorkspace') },
+    { flags: { mode: 'Plan' }, bad: approvalEvent('ExecuteCommand') }
   ];
   for (const value of cases) {
     const f = fixture(t); const pending = f.bridge.request('byok.chat', { configurationId, text: 'x', effort: 'Off', mode: 'Agent', ...value.flags });
@@ -503,27 +478,25 @@ test('a chat result with an unanswered approval is rejected as an invalid respon
   f.transport.reply({ completed: true, conversation: summary }, sent); await rejected;
 });
 
-test('mode switch revokes consent and Plan sends read-only intent', async t => {
+test('mode switch keeps permission and Plan sends mode without write/terminal booleans', async t => {
   const f = uiFixture(t); await openWithModel(f);
   assert.equal(f.node('mode').value, 'Ask');
-  assert.equal(f.node('auto-write-tools').disabled, true);
+  f.node('permission').value = 'Permissive'; await f.node('permission').emit('change');
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
-  f.node('auto-write-tools').checked = true; f.node('auto-terminal').checked = true;
+  assert.equal(f.node('permission').value, 'Permissive');
   f.node('mode').value = 'Plan'; await f.node('mode').emit('change');
-  assert.equal(f.node('auto-write-tools').checked, false);
-  assert.equal(f.node('auto-terminal').checked, false);
-  assert.equal(f.node('auto-write-tools').disabled, true);
-  assert.equal(f.node('auto-terminal').disabled, true);
+  assert.equal(f.node('permission').value, 'Permissive');
   f.node('message').value = 'plan this'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
   assert.equal(sent.payload.mode, 'Plan');
+  assert.equal(sent.payload.permission, 'Permissive');
   assert.equal(Object.hasOwn(sent.payload, 'writeTools'), false);
   assert.equal(Object.hasOwn(sent.payload, 'terminal'), false);
   f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
 });
-
 test('apply plan appears only in Plan, switches to Agent without requests and preserves history', async t => {
   const f = uiFixture(t); await openWithModel(f);
+  f.node('permission').value = 'Permissive'; await f.node('permission').emit('change');
   assert.equal(f.node('apply-plan').hidden, true);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   assert.equal(f.node('apply-plan').hidden, true);
@@ -534,11 +507,11 @@ test('apply plan appears only in Plan, switches to Agent without requests and pr
   const pending = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
   f.transport.reply({ completed: true, conversation: summary }, sent); await pending;
   const chats = f.transport.messages.filter(item => item.type === 'byok.chat').length;
-  f.node('auto-read-tools').checked = true;
+ 
   await f.node('apply-plan').emit('click');
   assert.equal(f.node('mode').value, 'Agent');
   assert.equal(f.node('apply-plan').hidden, true);
-  assert.equal(f.node('auto-read-tools').checked, false, 'mode change revokes per-send consent');
+  assert.equal(f.node('permission').value, 'Permissive', 'apply plan keeps the permission level');
   assert.equal(f.transport.messages.filter(item => item.type === 'byok.chat').length, chats, 'apply plan never calls the provider');
   assert.equal(f.transport.messages.some(item => ['byok.history.new', 'byok.history.delete'].includes(item.type)), false);
   assert.equal(f.document.getElementById('announcement').textContent, en.byokApplyPlanDone);
@@ -575,7 +548,7 @@ test('paused turn is announced, kept in history with its consents and resumes wi
   const f = uiFixture(t); await openWithModel(f);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
   f.node('message').value = 'long task'; await f.node('message').emit('input');
-  f.node('auto-read-tools').checked = true;
+ 
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   f.transport.emit(envelope('byok.event', { kind: 'Notice', code: 'tool_budget_paused' }, sent.id));
   const live = f.node('live').children[0], notices = live.children.at(-1);
@@ -593,33 +566,32 @@ test('paused turn is announced, kept in history with its consents and resumes wi
   const next = f.transport.messages.at(-1);
   assert.equal(next.type, 'byok.chat');
   assert.equal(next.payload.text, pt.byokContinueMessage);
-  assert.equal(next.payload.readTools, true, 'the click restores that turn consents');
+  assert.equal(next.payload.permission, 'Interactive', 'the click restores that turn permission');
   f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }, next); await resumed;
 });
 
-test('write and terminal consent default off, travel per-send and reset on disconnect', async t => {
+test('Agent sends mode and permission without per-tool booleans and permission survives disconnect', async t => {
   const f = uiFixture(t);
-  for (const id of ['auto-write-tools', 'auto-terminal']) { assert.equal(f.node(id).checked, false); assert.equal(f.node(id).disabled, true); }
+  assert.equal(f.node('permission').disabled, true);
   await openWithModel(f);
-  for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(f.node(id).disabled, true);
+  assert.equal(f.node('permission').disabled, false);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
-  for (const id of ['auto-write-tools', 'auto-terminal']) assert.equal(f.node(id).disabled, false);
+  f.node('permission').value = 'Permissive'; await f.node('permission').emit('change');
   f.node('message').value = 'edit'; await f.node('message').emit('input');
-  f.node('auto-write-tools').checked = true; f.node('auto-terminal').checked = true;
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
-  assert.equal(sent.payload.writeTools, true); assert.equal(sent.payload.terminal, true);
-  assert.equal(Object.hasOwn(sent.payload, 'readTools'), false, 'host derives read enablement from write/terminal');
-  for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) { assert.equal(f.node(id).checked, false); assert.equal(f.node(id).disabled, true); }
+  assert.equal(sent.payload.mode, 'Agent');
+  assert.equal(sent.payload.permission, 'Permissive');
+  assert.equal(Object.hasOwn(sent.payload, 'readTools'), false);
+  assert.equal(Object.hasOwn(sent.payload, 'writeTools'), false);
+  assert.equal(Object.hasOwn(sent.payload, 'terminal'), false);
   f.transport.reply({ completed: true, conversation: summary }); await pending;
-  f.node('auto-write-tools').checked = true; f.disconnect(); assert.equal(f.node('auto-write-tools').checked, false);
-  const g = uiFixture(t); await openWithModel(g, { ...model, tools: false });
-  assert.equal(g.node('auto-write-tools').disabled, true); assert.equal(g.node('auto-terminal').disabled, true);
+  f.node('permission').value = 'FullAccess'; await f.node('permission').emit('change');
+  f.disconnect(); assert.equal(f.node('permission').value, 'FullAccess');
 });
-
 test('approval card renders inert arguments, focuses Deny and settles on the host decision', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
-  f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
+  f.node('message').value = 'run'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   const arguments_ = { command: 'cmd', args: ['echo', '<script>inert()</script>'] };
   f.transport.emit(envelope('byok.event', approvalEvent('ExecuteCommand', { arguments: arguments_ }), sent.id));
@@ -641,7 +613,7 @@ test('approval card renders inert arguments, focuses Deny and settles on the hos
 test('outside-write approval hides the session decision and a failed respond expires the card', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
-  f.node('message').value = 'write'; await f.node('message').emit('input'); f.node('auto-write-tools').checked = true;
+  f.node('message').value = 'write'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   f.transport.emit(envelope('byok.event', approvalEvent('WriteOutsideWorkspace'), sent.id));
   const card = approvalCards(f)[0]; const buttons = card.querySelectorAll('button');
@@ -657,7 +629,7 @@ test('outside-write approval hides the session decision and a failed respond exp
 test('unanswered approvals expire when the chat ends or errors', async t => {
   const f = uiFixture(t); await openWithModel(f);
   f.node('mode').value = 'Agent'; await f.node('mode').emit('change');
-  f.node('message').value = 'run'; await f.node('message').emit('input'); f.node('auto-terminal').checked = true;
+  f.node('message').value = 'run'; await f.node('message').emit('input');
   const pending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
   f.transport.emit(envelope('byok.event', approvalEvent(), sent.id));
   const state = approvalCards(f)[0].querySelectorAll('p').find(item => item.getAttribute('role') === 'status');
@@ -670,11 +642,21 @@ const manualWrite = (name = 'create_file', arguments_ = {}) => ({ name, argument
 const plainDiff = (extra = {}) => ({ truncated: false, changes: [{ op: 'remove', text: 'old', ending: 'CRLF' },
   { op: 'add', text: '<script>inert()</script>\n<img onerror="inert()">', ending: 'LF' }], linesBefore: 1, linesAfter: 2, ...extra });
 const writeResult = (name = 'create_file', extra = {}) => ({ name, isError: false, content: JSON.stringify({ buffer: true, diff: plainDiff() }), pending: 1, ...extra });
+const repliedWriteStatus = new WeakSet();
+async function settleWriteStatus(f, pending = 0) {
+  for (let index = 0; index < 6; index++) {
+    const sent = f.transport.messages.find(message => message.type === 'byok.tool.write.status' && !repliedWriteStatus.has(message));
+    if (!sent) return;
+    repliedWriteStatus.add(sent);
+    f.transport.reply({ pending }, sent);
+    await tick();
+  }
+}
 async function openWritePanel(f, pending = 0) {
   f.connect(); f.node('write-tools').open = true;
   await f.node('write-tools').emit('toggle');
   assert.equal(f.transport.messages.at(-1).type, 'byok.tool.write.status');
-  f.transport.reply({ pending }); await tick();
+  await settleWriteStatus(f, pending);
 }
 
 test('manual write bridge rejects tool, relative path, payload and authority negatives before posting', async t => {
@@ -943,6 +925,7 @@ test('manual writes cannot bypass a live chat gate or feed content to the model'
   await f.node('write-form').emit('submit'); await f.node('write-undo').emit('click');
   assert.equal(f.transport.messages.length, count);
   f.transport.reply({ completed: true, conversation: summary }, sent); await chat;
+  await settleWriteStatus(f, 1);
   assert.equal(f.node('write-apply').disabled, false); assert.equal(f.node('write-undo').disabled, false);
 });
 
@@ -1985,7 +1968,7 @@ for (const completed of [true, false]) {
     await attachContext(f, 'file', first); await attachContext(f, 'solution', second);
     f.node('message').value = 'prompt'; await f.node('message').emit('input');
     const sending = f.node('chat-form').emit('submit'), sent = f.transport.messages.at(-1);
-    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', mode: 'Ask', effort: 'Low', contextIds: [first.id, second.id] });
+    assert.deepEqual(sent.payload, { configurationId, text: 'prompt', mode: 'Ask', permission: 'Interactive', effort: 'Low', contextIds: [first.id, second.id] });
     const joined = `[Context: ${first.label}]\n${first.text}\n\n[Context: ${second.label}]\n${second.text}`;
     const turn = f.node('live').children[0], details = turn.querySelector('details');
     assert.equal(details.open, false); assert.equal(details.querySelector('pre').textContent, joined);

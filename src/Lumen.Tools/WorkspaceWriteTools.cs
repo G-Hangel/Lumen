@@ -43,6 +43,9 @@ public sealed class WorkspaceWriteTools
             var diffArguments = isDiff ? WriteToolCatalog.ValidateDiff(invocation) : default;
             var arguments = isDiff ? (Path: diffArguments.Path, Content: string.Empty) : WriteToolCatalog.Validate(invocation);
             var requestedPath = arguments.Path;
+            // Plan may only create or edit plan documents; the restriction lives in the host, not the prompt.
+            if (mode == ChatMode.Plan && (invocation.Name == "apply_diff" || !IsPlanDocument(requestedPath)))
+                throw new ToolException("mode_denied");
             var path = await approvals.AuthorizeWriteAsync(mode, invocation, requestedPath, cancellationToken).ConfigureAwait(false);
             object result;
             if (invocation.Name == "create_file") result = CreateFile(path, arguments.Content, cancellationToken);
@@ -264,6 +267,9 @@ public sealed class WorkspaceWriteTools
         if (start < text.Length) lines.Add(text.Substring(start));
         return lines.ToArray();
     }
+
+    private static bool IsPlanDocument(string path) =>
+        path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
 
     private string Relative(string path) => !workspace.Contains(path) ? path.Replace('\\', '/') :
         path.Length == workspace.Root.Length ? "." :

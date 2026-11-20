@@ -218,20 +218,43 @@ public sealed class WorkspaceWriteToolsTests
         Assert.False(File.Exists(target));
     }
 
-    [Theory]
-    [InlineData(ChatMode.Ask)]
-    [InlineData(ChatMode.Plan)]
-    public async Task ReadOnlyModesDenyWritesBeforePromptOrPathAccess(ChatMode mode)
+    [Fact]
+    public async Task AskDeniesWritesBeforePromptOrPathAccess()
     {
         using var fixture = new Fixture();
         foreach (var tool in new[] { "create_file", "edit_file" })
         {
-            var result = await fixture.Execute(tool, "{\"path\":\"x.cs\",\"content\":\"y\"}", mode);
+            var result = await fixture.Execute(tool, "{\"path\":\"x.cs\",\"content\":\"y\"}", ChatMode.Ask);
             Assert.True(result.IsError);
             Assert.Equal("mode_denied", Code(result));
         }
         Assert.Empty(fixture.Requests);
         Assert.Empty(Directory.GetFileSystemEntries(fixture.Path));
+    }
+
+    [Fact]
+    public async Task PlanWritesOnlyPlanDocuments()
+    {
+        using var fixture = new Fixture();
+        foreach (var tool in new[] { "create_file", "edit_file" })
+        {
+            var denied = await fixture.Execute(tool, "{\"path\":\"x.cs\",\"content\":\"y\"}", ChatMode.Plan);
+            Assert.True(denied.IsError);
+            Assert.Equal("mode_denied", Code(denied));
+        }
+        var diff = await fixture.Execute("apply_diff", JsonSerializer.Serialize(new
+        {
+            path = "plan.md", base_sha256 = new string('a', 64),
+            replacements = new[] { new { old = "a", @new = "b" } }
+        }), ChatMode.Plan);
+        Assert.True(diff.IsError);
+        Assert.Equal("mode_denied", Code(diff));
+        Assert.Empty(fixture.Requests);
+        Assert.Empty(Directory.GetFileSystemEntries(fixture.Path));
+
+        var created = await fixture.Execute("create_file", "{\"path\":\"plan.md\",\"content\":\"# Plan\"}", ChatMode.Plan);
+        Assert.False(created.IsError);
+        Assert.Equal("# Plan", File.ReadAllText(Path.Combine(fixture.Path, "plan.md")));
     }
 
     [Theory]

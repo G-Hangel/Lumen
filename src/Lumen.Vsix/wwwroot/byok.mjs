@@ -73,6 +73,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   const node = id => document.getElementById(`byok-${id}`);
   const panel = node('panel');
   node('mode').value = 'Ask';
+  node('permission').value = 'Interactive';
   setMode(node('mode').value);
   let connectedState = Boolean(connected()), disposed = false, busy = false, imageLoading = false, cancelling = false;
   let cancelRequested = false, cancelRequest = null;
@@ -323,7 +324,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
   function renderProbeBudget() {
     node('probe-budget').textContent = text('byokProbeBudget', { remaining: remainingBudget ?? text('byokUnknown'), max: MAX_PROBE_BUDGET });
   }
-  function clearToolConsent() { for (const id of ['auto-read-tools', 'auto-write-tools', 'auto-terminal']) node(id).checked = false; }
   function clearProbeConsent() { node('probe-consent').checked = false; }
   function probeEligible() {
     const config = configurations.find(item => item.id === configurationId);
@@ -458,8 +458,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('mode').disabled = !enabled || locked;
     node('apply-plan').hidden = node('mode').value !== 'Plan';
     node('apply-plan').disabled = !enabled || locked;
-    node('auto-read-tools').disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory;
-    for (const id of ['auto-write-tools', 'auto-terminal']) node(id).disabled = !enabled || locked || !model?.tools || !configurationId || !matchesHistory || node('mode').value !== 'Agent';
+    node('permission').disabled = !enabled || locked;
     node('message').disabled = !enabled || !model || !configurationId || locked || !matchesHistory;
     
     node('remove-image').disabled = locked;
@@ -547,7 +546,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function resetSelection() {
-    models = []; selectedModelId = ''; clearProbeConsent(); clearToolConsent(); removeAttachment(); renderModels(); renderCapabilities();
+    models = []; selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderModels(); renderCapabilities();
   }
   async function operate(task, focusTarget, loadingKey = 'byokLoading') {
     if (!online() || busy || imageLoading || needsCancel || cancelling) return;
@@ -785,7 +784,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function applyCatalog(result) {
-    models = result.models; selectedModelId = ''; clearProbeConsent(); clearToolConsent();
+    models = result.models; selectedModelId = ''; clearProbeConsent();
     // Public catalogs can succeed without verifying a key; errors with unknown validity must not be saved.
     const catalogUnverified = result.credentialValid === null && !result.code;
     // A 429 / 402 may validate credentials despite returning no models. Never relabel it as a 401.
@@ -884,7 +883,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
     }
   }
   function changeKind() {
-    clearToolConsent();
     const kind = node('kind').value;
     node('url').value = DEFAULT_BASE_URLS[kind]; node('url').placeholder = kind === 'Azure' ? text('byokAzureUrlPlaceholder') : '';
     node('provider-id').value = kind.toLowerCase(); node('key').value = '';
@@ -899,7 +897,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function configure(event) {
     event.preventDefault();
-    clearToolConsent();
     let key = node('key').value;
     node('key').value = '';
     if (!online() || busy || imageLoading || needsCancel || cancelling) { key = ''; return; }
@@ -943,7 +940,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       renderModels();
       return;
     }
-    selectedModelId = ''; clearProbeConsent(); clearToolConsent(); removeAttachment(); renderCapabilities();
+    selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderCapabilities();
     if (!modelId) return;
     await operate(async () => {
       const result = await bridge.request('byok.select', { configurationId, modelId });
@@ -955,7 +952,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function override() {
     if (node('apply-override').disabled) return;
-    clearToolConsent();
     const modelId = selectedModelId;
     await operate(async () => {
       const result = await bridge.request('byok.override', { configurationId, modelId,
@@ -979,7 +975,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
           remainingBudget = result.remainingBudget; renderProbeBudget();
           if (result.supported === null) { setStatus('byokProbeInconclusive'); return; }
           // Keep the native evidence precedence; a probe must not replace a stronger origin in the browser.
-          clearToolConsent();
           models = models.map(model => model.id === modelId ? result.model : model);
           if (!selectedModel().vision) removeAttachment();
           renderModels(); renderCapabilities(); setStatus(result.supported ? 'byokProbeSupported' : 'byokProbeUnsupported');
@@ -1260,10 +1255,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
   function continuePaused(source) {
     const consents = source?.consents;
     if (!consents || busy || !online() || !selectedModel() || !configurationId || node('message').value.trim()) return;
-    // The click is the explicit per-send consent for the same tools the paused turn used.
-    node('auto-read-tools').checked = consents.readTools === true && !node('auto-read-tools').disabled;
-    node('auto-write-tools').checked = consents.writeTools === true && !node('auto-write-tools').disabled;
-    node('auto-terminal').checked = consents.terminal === true && !node('auto-terminal').disabled;
+    // The click is the explicit consent to resume with the same mode and permission level.
+    if (['Ask', 'Plan', 'Agent'].includes(consents.mode)) node('mode').value = consents.mode;
+    if (['Interactive', 'Permissive', 'FullAccess'].includes(consents.permission)) node('permission').value = consents.permission;
+    modeChanged();
     node('message').value = text('byokContinueMessage');
     updateControls();
     if (!node('send').disabled) node('chat-form').requestSubmit();
@@ -1273,10 +1268,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
       || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > MAX_PROMPT_LENGTH
       || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
-    const readTools = node('auto-read-tools').checked === true && !node('auto-read-tools').disabled && selectedModel().tools;
-    const writeTools = node('auto-write-tools').checked === true && !node('auto-write-tools').disabled && selectedModel().tools;
-    const terminal = node('auto-terminal').checked === true && !node('auto-terminal').disabled && selectedModel().tools;
-    clearToolConsent();
+    const permission = node('permission').value;
     const value = node('message').value;
     const mentions = parseMentions(value);
     busy = true; clearError(); setStatus(mentions.length ? 'byokMentions' : 'byokStreaming'); updateControls();
@@ -1296,13 +1288,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
       streaming = true; setStatus('byokStreaming'); updateControls();
       const contextText = contexts.map(item => `[Context: ${item.label}]\n${item.text}`).join('\n\n');
       turn = createTurn(value, contextText); turn.record.hasImage = Boolean(attachment);
-      turn.consents = { readTools, writeTools, terminal };
+      turn.consents = { mode: node('mode').value, permission };
       liveTurn = turn; node('live').replaceChildren(turn.article); syncEmpty();
       node('output').scrollTop = node('output').scrollHeight;
-      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value,
-        ...(readTools ? { readTools: true } : {}),
-        ...(writeTools ? { writeTools: true } : {}),
-        ...(terminal ? { terminal: true } : {}),
+      const request = bridge.request('byok.chat', { configurationId, text: value, mode: node('mode').value, permission,
         ...(selectedSkills.size ? { skills: [...selectedSkills] } : {}),
         effort: selectedModel()?.reasoning && selectedModel().efforts.length ? node('effort').value : 'Off',
         ...(attachment ? { image: attachment } : {}),
@@ -1335,7 +1324,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       busy = false; streaming = false; if (!cancelling) cancelRequested = false; clearProbeConsent();
       // The host revokes unanswered approvals when the chat ends; the card must never stay actionable.
       if (turn) for (const approval of turn.approvals.values()) if (!approval.answered) approval.expire();
-      if (writeTools && turn) requestWriteStatus();
+      if (turn) requestWriteStatus();
       if (!disposed) { if (turn && liveTurn === turn) finishMarkdown(turn); updateControls(); queueMicrotask(pumpHistory); if (!node('message').disabled) node('message').focus({ preventScroll: true }); }
     }
   }
@@ -1438,7 +1427,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('history-keep'), 'click', () => { deleteTarget = ''; node('history-confirmation').hidden = true; node('history-delete').focus(); });
   listen(node('history-first'), 'click', () => history.jump(false));
   listen(node('history-last'), 'click', () => history.jump(true));
-  node('error').tabIndex = -1; node('status').tabIndex = -1; clearProbeConsent(); clearToolConsent();
+  node('error').tabIndex = -1; node('status').tabIndex = -1; clearProbeConsent();
   node('kind').replaceChildren(...PROVIDER_KINDS.map(kind => option(kind, kind))); node('kind').value = 'OpenAI'; changeKind();
   listen(panel, 'toggle', () => {
     if (!panel.open) { node('key').value = ''; clearProbeConsent(); updateControls(); }
@@ -1446,10 +1435,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   });
   listen(node('kind'), 'change', changeKind);
   listen(node('configure'), 'submit', configure);
-  for (const id of ['provider-id', 'url', 'key', 'deployments']) listen(node(id), 'input', clearToolConsent);
-  for (const key of Object.keys(capabilityNames)) listen(node(key), 'change', clearToolConsent);
   const modeChanged = () => {
-    clearToolConsent();
     setMode(node('mode').value);
     for (const name of selectedSkills) if (!skillItems.some(skill => skill.name === name && skill.enabled && skill.modes.includes(node('mode').value))) selectedSkills.delete(name);
     renderSkills(); renderAgents(); updateControls();
@@ -1464,9 +1450,6 @@ export function startByok({ transport, connected = () => false, text, renderMark
     if (!node('message').disabled) node('message').focus({ preventScroll: true });
   });
   for (const id of ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']) listen(node(id), 'input', updateControls);
-  listen(node('auto-read-tools'), 'change', updateControls);
-  listen(node('auto-write-tools'), 'change', updateControls);
-  listen(node('auto-terminal'), 'change', updateControls);
   listen(node('list'), 'click', listProviders);
   listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); cancelRemoveProvider(false); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
   listen(node('discover'), 'click', discover);

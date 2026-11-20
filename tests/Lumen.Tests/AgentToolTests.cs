@@ -25,6 +25,27 @@ public sealed class AgentToolTests
             Task.FromResult(new ToolResult(call.Id, false, "read"));
     }
 
+    private sealed class FakeWrite : IWriteToolExecutor
+    {
+        public IReadOnlyList<ToolSpec> Specs => WriteToolCatalog.Specs;
+        public Task<IWriteToolExecutor> CaptureAsync(CancellationToken token) => Task.FromResult<IWriteToolExecutor>(this);
+        public IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
+        public Task BeginTurnAsync(bool automatic, CancellationToken token) => Task.CompletedTask;
+        public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) =>
+            Task.FromResult(new ToolResult(call.Id, false, "{}"));
+        public Task UndoTurnAsync(CancellationToken token) => Task.CompletedTask;
+        public int PendingChanges => 0;
+    }
+
+    private sealed class FakeShell : IShellToolExecutor
+    {
+        public IReadOnlyList<ToolSpec> Specs => CommandToolCatalog.Specs;
+        public Task<IShellToolExecutor> CaptureAsync(CancellationToken token) => Task.FromResult<IShellToolExecutor>(this);
+        public IShellToolExecutor ForMode(ChatMode mode, PermissionLevel permission) => this;
+        public Task<ToolResult> ExecuteAsync(ToolInvocation call, CancellationToken token) =>
+            Task.FromResult(new ToolResult(call.Id, false, "{}"));
+    }
+
     private sealed class EchoAgent : AgentBase
     {
         public EchoAgent() : base("helper", AgentScope.Project) { }
@@ -184,7 +205,7 @@ public sealed class AgentToolTests
         var id = Guid.NewGuid().ToString("D");
         using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
             new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-chat-" + Guid.NewGuid().ToString("N"), "providers.json")),
-            readTools: new FakeRead(), agentRegistry: registry, agentCoordinator: coordinator);
+            readTools: new FakeRead(), writeTools: new FakeWrite(), shellTools: new FakeShell(), agentRegistry: registry, agentCoordinator: coordinator);
         async Task Send(string type, object payload) => await session.HandleAsync("https://lumen.local/index.html",
             JsonSerializer.Serialize(new { version = 1, id = Guid.NewGuid().ToString("D"), type, payload }), _ => Task.CompletedTask, CancellationToken.None);
         await Send("byok.configure", new { id, providerId = "fixture", kind = "OpenAI", baseUrl = "https://provider.test/v1/", key = "synthetic" });
@@ -217,7 +238,7 @@ public sealed class AgentToolTests
         var id = Guid.NewGuid().ToString("D");
         using var session = new ByokSession(new ProviderFactory(new HttpTransport(client), new CapabilityResolver()),
             new Credentials(), new SettingsStore(Path.Combine(Path.GetTempPath(), "lumen-agent-secret-" + Guid.NewGuid().ToString("N"), "providers.json")),
-            readTools: new FakeRead(), agentRegistry: registry, agentCoordinator: coordinator);
+            readTools: new FakeRead(), writeTools: new FakeWrite(), shellTools: new FakeShell(), agentRegistry: registry, agentCoordinator: coordinator);
         var replies = new List<JsonElement>();
         async Task Send(string type, object payload) => await session.HandleAsync("https://lumen.local/index.html",
             JsonSerializer.Serialize(new { version = 1, id = Guid.NewGuid().ToString("D"), type, payload }), message =>

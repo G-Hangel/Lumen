@@ -8,6 +8,7 @@ public interface IWriteToolExecutor
 {
     IReadOnlyList<ToolSpec> Specs { get; }
     Task<IWriteToolExecutor> CaptureAsync(CancellationToken cancellationToken);
+    IWriteToolExecutor ForMode(ChatMode mode, PermissionLevel permission);
     Task BeginTurnAsync(bool automatic, CancellationToken cancellationToken);
     Task<ToolResult> ExecuteAsync(ToolInvocation invocation, CancellationToken cancellationToken);
     Task UndoTurnAsync(CancellationToken cancellationToken);

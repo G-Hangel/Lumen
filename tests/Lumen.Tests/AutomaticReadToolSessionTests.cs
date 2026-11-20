@@ -131,19 +131,30 @@ public sealed class AutomaticReadToolSessionTests
         Assert.False(replay.RootElement.TryGetProperty("tools", out _));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(null)]
-    public async Task OptoutDoesNotCaptureOrExecuteOrAdvertise(bool? enabled)
+    [Fact]
+    public async Task ExplicitOptoutDoesNotCaptureOrExecuteOrAdvertise()
     {
         using var fixture = new Fixture();
         await fixture.Prepare();
-        await fixture.Chat(enabled);
+        await fixture.Chat(false);
         Assert.Single(fixture.Handler.Bodies);
         Assert.Equal(0, fixture.Executor.Captures);
         Assert.Equal(0, fixture.Executor.Calls);
         using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
         Assert.False(body.RootElement.TryGetProperty("tools", out _));
+    }
+
+    [Fact]
+    public async Task DefaultAskCapturesAndAdvertisesReadTools()
+    {
+        using var fixture = new Fixture();
+        await fixture.Prepare();
+        await fixture.Chat(null);
+        Assert.Equal(2, fixture.Handler.Bodies.Count);
+        Assert.Equal(1, fixture.Executor.Captures);
+        Assert.Equal(1, fixture.Executor.Calls);
+        using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
+        Assert.True(body.RootElement.TryGetProperty("tools", out _));
     }
 
     [Theory]

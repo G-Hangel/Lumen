@@ -46,7 +46,7 @@ Critérios de aceite / controles negativos:
 - Esforço selecionado chega no `byok.chat`; seletor reflete o modelo novo.
 - Suítes verde (UI + .NET + pacote), build 0/0, VSIX reconstruído, commit local.
 
-## Fatia B — Permissões por modo (item 3)
+## Fatia B — Permissões por modo (item 3) — concluída
 
 - Remover os checkboxes "ferramentas automáticas" e o painel de ajuda.
 - `readTools/writeTools/terminal` passam a derivar do modo **no host**: Ask =
@@ -88,3 +88,20 @@ Critérios de aceite / controles negativos:
 - `npm run check:package`: **3/3**.
 - Controles negativos: Enter não envia durante composição IME, com send desabilitado ou com Shift; prompt de 262145 rejeitado na UI e nas fronteiras (bridge/host); drop de não-imagem e arquivo grande rejeitados; troca de modelo bloqueada quando a sessão usa ferramentas e o novo modelo não as suporta.
 - `SameSelectionRetainsConversationButDifferentModelOrConfigurationClearsIt` agora cobre os dois caminhos: troca de modelo preserva a sessão (replay no novo modelo), troca de provedor ainda cria sessão nova.
+### EvidÃªncia (Fatia B)
+
+- Build Release: 0 erros / 0 avisos.
+- npm run check:ui: 236/236.
+- dotnet test: 1668/1668 (inclui PlanWritesOnlyPlanDocuments, PermissionLevelsOnlyRelaxAgentApprovals, PlanModeCanCreatePlanDocuments).
+- npm run check:package: 3/3.
+- Controles negativos: a ponte rejeita terminal/writeTools legados fora do modo (Ask/Plan); Plan nÃ£o anuncia run_command; WorkspaceWriteTools rejeita .cs e apply_diff em Plan (disco e buffers abertos); ApprovalBroker mantÃ©m mode_denied para escrita fora do workspace em Plan e comandos em Ask/Plan; Permissivo ainda pede aprovaÃ§Ã£o para comandos; Acesso Total nunca pede, mas blocklist e confinamento de path permanecem.
+- AGENTS.md atualizado: Plan cria/edita apenas .txt/.md; o seletor de permissÃ£o sÃ³ relaxa aprovaÃ§Ãµes.
+### Evidência (Fatia B)
+
+- Build Release: 0 erros / 0 avisos.
+- npm run check:ui: 236/236.
+- dotnet test: 1668/1668 (inclui PlanWritesOnlyPlanDocuments, PermissionLevelsOnlyRelaxAgentApprovals, PlanModeCanCreatePlanDocuments).
+- npm run check:package: 3/3.
+- Controles negativos: a ponte rejeita terminal/writeTools legados fora do modo (Ask/Plan); Plan não anuncia run_command; WorkspaceWriteTools rejeita .cs e apply_diff em Plan (disco e buffers abertos); ApprovalBroker mantém mode_denied para escrita fora do workspace em Plan e comandos em Ask/Plan; Permissivo ainda pede aprovação para comandos; Acesso Total nunca pede, mas blocklist e confinamento de path permanecem.
+- AGENTS.md atualizado: Plan cria/edita apenas .txt/.md; o seletor de permissão só relaxa aprovações.
+- VSIX reconstruído e instalado nos dois hives (57/57 arquivos verificados por SHA-256 em cada um).

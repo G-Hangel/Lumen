@@ -14,7 +14,7 @@ public sealed class DomainModelTests
     [InlineData(ChatMode.Ask, ToolCategory.WriteOutsideWorkspace, ToolPermission.Deny)]
     [InlineData(ChatMode.Ask, ToolCategory.ExecuteCommand, ToolPermission.Deny)]
     [InlineData(ChatMode.Plan, ToolCategory.Read, ToolPermission.Allow)]
-    [InlineData(ChatMode.Plan, ToolCategory.WriteInsideWorkspace, ToolPermission.Deny)]
+    [InlineData(ChatMode.Plan, ToolCategory.WriteInsideWorkspace, ToolPermission.AllowWithUndo)]
     [InlineData(ChatMode.Plan, ToolCategory.WriteOutsideWorkspace, ToolPermission.Deny)]
     [InlineData(ChatMode.Plan, ToolCategory.ExecuteCommand, ToolPermission.Deny)]
     [InlineData(ChatMode.Agent, ToolCategory.Read, ToolPermission.Allow)]
@@ -27,12 +27,11 @@ public sealed class DomainModelTests
     [Fact]
     public void ReadOnlyModesCannotWriteOrExecute()
     {
-        foreach (var mode in new[] { ChatMode.Ask, ChatMode.Plan })
-        {
-            Assert.False(ChatModePolicy.CanWrite(mode));
-            Assert.False(ChatModePolicy.CanExecuteCommand(mode));
-        }
-
+        Assert.False(ChatModePolicy.CanWrite(ChatMode.Ask));
+        Assert.False(ChatModePolicy.CanExecuteCommand(ChatMode.Ask));
+        // Plan writes plan documents inside the workspace, but never executes commands.
+        Assert.True(ChatModePolicy.CanWrite(ChatMode.Plan));
+        Assert.False(ChatModePolicy.CanExecuteCommand(ChatMode.Plan));
         Assert.True(ChatModePolicy.CanWrite(ChatMode.Agent));
         Assert.True(ChatModePolicy.CanExecuteCommand(ChatMode.Agent));
     }
@@ -40,6 +39,20 @@ public sealed class DomainModelTests
     [Fact]
     public void AgentModeNeverAutoApprovesShellCommands() =>
         Assert.Equal(ToolPermission.RequireApproval, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.ExecuteCommand));
+
+    [Fact]
+    public void PermissionLevelsOnlyRelaxAgentApprovals()
+    {
+        Assert.Equal(ToolPermission.RequireApproval, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.WriteOutsideWorkspace, PermissionLevel.Interactive));
+        Assert.Equal(ToolPermission.AllowWithUndo, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.WriteOutsideWorkspace, PermissionLevel.Permissive));
+        Assert.Equal(ToolPermission.AllowWithUndo, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.WriteOutsideWorkspace, PermissionLevel.FullAccess));
+        // Permissive still asks for commands; only full access skips them.
+        Assert.Equal(ToolPermission.RequireApproval, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.ExecuteCommand, PermissionLevel.Permissive));
+        Assert.Equal(ToolPermission.Allow, ChatModePolicy.Evaluate(ChatMode.Agent, ToolCategory.ExecuteCommand, PermissionLevel.FullAccess));
+        // Permission levels never widen Ask or Plan.
+        Assert.Equal(ToolPermission.Deny, ChatModePolicy.Evaluate(ChatMode.Plan, ToolCategory.WriteOutsideWorkspace, PermissionLevel.FullAccess));
+        Assert.Equal(ToolPermission.Deny, ChatModePolicy.Evaluate(ChatMode.Ask, ToolCategory.WriteInsideWorkspace, PermissionLevel.FullAccess));
+    }
 
     [Fact]
     public void PolicyRejectsUndefinedEnumValues()

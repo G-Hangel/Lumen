@@ -542,7 +542,7 @@ public sealed class ByokSession : IDisposable
                     break;
                 case "byok.chat":
                 {
-                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode", "budget", "skills" });
+                    Require(payload, new[] { "configurationId", "text", "effort" }, new[] { "image", "contextIds", "readTools", "writeTools", "terminal", "mode", "permission", "budget", "skills" });
                     var chatConfiguration = Find(payload);
                     var chatModel = FindModel(chatConfiguration, chatConfiguration.SelectedModelId ?? "");
                     var readToolsValue = JsonWire.Get(payload, "readTools");
@@ -564,6 +564,19 @@ public sealed class ByokSession : IDisposable
                             _ => throw new ProviderException("invalid_message")
                         };
                     }
+                    var permissionValue = JsonWire.Get(payload, "permission");
+                    var permission = PermissionLevel.Interactive;
+                    if (permissionValue.ValueKind != JsonValueKind.Undefined)
+                    {
+                        if (permissionValue.ValueKind != JsonValueKind.String) throw new ProviderException("invalid_message");
+                        permission = permissionValue.GetString() switch
+                        {
+                            "Interactive" => PermissionLevel.Interactive,
+                            "Permissive" => PermissionLevel.Permissive,
+                            "FullAccess" => PermissionLevel.FullAccess,
+                            _ => throw new ProviderException("invalid_message")
+                        };
+                    }
                     var budgetValue = JsonWire.Get(payload, "budget");
                     ToolBudget? budget = null;
                     if (budgetValue.ValueKind != JsonValueKind.Undefined)
@@ -574,21 +587,25 @@ public sealed class ByokSession : IDisposable
                             JsonWire.Int(budgetValue, "maxOutputTokens") ?? throw new ProviderException("invalid_message"),
                             JsonWire.Int(budgetValue, "maxInvocations") ?? throw new ProviderException("invalid_message"));
                     }
-                    var enableWriteTools = writeToolsValue.ValueKind == JsonValueKind.True;
-                    var enableTerminal = terminalValue.ValueKind == JsonValueKind.True;
-                    if (mode != ChatMode.Agent && (enableWriteTools || enableTerminal)) throw new ProviderException("mode_denied");
-                    var enableReadTools = readToolsValue.ValueKind == JsonValueKind.True || enableWriteTools || enableTerminal;
+                    // Mode is authoritative: Ask reads, Plan reads and writes plan documents, Agent does everything.
+                    // Legacy per-send booleans are accepted but cannot widen the mode.
+                    if (terminalValue.ValueKind == JsonValueKind.True && mode != ChatMode.Agent) throw new ProviderException("mode_denied");
+                    if (writeToolsValue.ValueKind == JsonValueKind.True && mode == ChatMode.Ask) throw new ProviderException("mode_denied");
+                    var enableWriteTools = mode != ChatMode.Ask;
+                    var enableTerminal = mode == ChatMode.Agent;
+                    var enableReadTools = readToolsValue.ValueKind != JsonValueKind.False || enableWriteTools || enableTerminal;
+                    if (enableReadTools && readTools is null && mode != ChatMode.Ask) throw new ProviderException("workspace_unavailable");
+                    if (enableReadTools && readTools is null) enableReadTools = false;
                     if (enableReadTools && !chatModel.Has(ModelCapabilities.Tools)) throw new ProviderException("tools_not_supported");
-                    if (enableReadTools && readTools is null) throw new ProviderException("workspace_unavailable");
                     if (enableWriteTools && writeTools is null) throw new ProviderException("workspace_unavailable");
                     if (enableTerminal && shellTools is null) throw new ProviderException("workspace_unavailable");
                     var capturedRead = enableReadTools ? await readTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
                     cancellationToken.ThrowIfCancellationRequested();
-                    var capturedWrite = enableWriteTools ? await writeTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
+                    var capturedWrite = enableWriteTools ? (await writeTools!.CaptureAsync(cancellationToken).ConfigureAwait(false)).ForMode(mode, permission) : null;
                     cancellationToken.ThrowIfCancellationRequested();
-                    var capturedShell = enableTerminal ? await shellTools!.CaptureAsync(cancellationToken).ConfigureAwait(false) : null;
+                    var capturedShell = enableTerminal ? (await shellTools!.CaptureAsync(cancellationToken).ConfigureAwait(false)).ForMode(mode, permission) : null;
                     cancellationToken.ThrowIfCancellationRequested();
-                    IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Agent ? new CompositeExecutor(capturedRead, capturedWrite, capturedShell) : capturedRead;
+                    IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Ask ? capturedRead : new CompositeExecutor(capturedRead, capturedWrite, capturedShell);
                     var skillSnapshot = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     var disabledSkills = new HashSet<string>(await settings.ReadDisabledSkillsAsync(cancellationToken).ConfigureAwait(false), StringComparer.Ordinal);

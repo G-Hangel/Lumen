@@ -80,7 +80,7 @@ public sealed class DomainModelTests
     {
         var names = Enum.GetNames(typeof(ReasoningIntent));
         Assert.Equal(
-            new[] { "Off", "Minimal", "Low", "Medium", "High", "Max" },
+            new[] { "Off", "Minimal", "Low", "Medium", "High", "XHigh", "Max" },
             names);
     }
 

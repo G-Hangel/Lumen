@@ -387,5 +387,8 @@
   "byokModeHelp": "Ask lê e lista arquivos. Plan lê arquivos e cria ou edita documentos .md/.txt. Agent lê, escreve e executa comandos.",
   "sessionsTitle": "Sessões",
   "sessionDraft": "Nova sessão",
-  "sessionCloseLabel": "Fechar {title}"
+  "sessionCloseLabel": "Fechar {title}",
+  "byokEffortXHigh": "Extra alto",
+  "byokModelDisplayName": "Nome de exibição",
+  "byokEffortLevels": "Níveis de esforço suportados"
 }

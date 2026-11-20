@@ -113,3 +113,10 @@ Critérios de aceite / controles negativos:
 - npm run check:package: 3/3.
 - Controles negativos: troca de modelo bloqueada quando a sessão já usou tools/visão e o novo modelo não suporta; bloqueio também no byok.chat (defesa em profundidade); abas persistidas em localStorage (apenas a chave lumen.sessionTabs.v1); fechar aba não apaga conversa; provider removido fecha abas daquele provedor.
 - VSIX reconstruído e instalado nos dois hives; 57/57 arquivos verificados por SHA-256 em cada um.
+
+## Melhorias de providers e esforço de raciocínio (2026-11-20)
+
+- Effort XHigh adicionado (minimal, low, medium, high, xhigh, max).
+- Configuração por modelo: nome de exibição, tools, reasoning e níveis de esforço, persistidos em providers.models.json.
+- Botão de remover provedor virou ícone de lixeira com confirmação.
+- Controles negativos: displayName > 128 e efforts fora da lista global rejeitados.

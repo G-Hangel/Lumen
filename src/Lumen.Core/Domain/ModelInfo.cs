@@ -40,6 +40,7 @@ public enum ReasoningIntent
     Low,
     Medium,
     High,
+    XHigh,
     Max
 }
 

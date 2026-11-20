@@ -167,6 +167,7 @@ public sealed class OllamaProvider : IModelCatalog, IChatProvider
         "low" => ReasoningIntent.Low,
         "medium" => ReasoningIntent.Medium,
         "high" => ReasoningIntent.High,
+        "xhigh" => ReasoningIntent.XHigh,
         "max" => ReasoningIntent.Max,
         _ => null
     };

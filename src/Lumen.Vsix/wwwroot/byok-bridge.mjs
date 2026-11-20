@@ -1,5 +1,5 @@
 export const PROVIDER_KINDS = Object.freeze(['OpenAI', 'OpenRouter', 'Anthropic', 'Gemini', 'Ollama', 'Azure', 'LMStudio']);
-export const EFFORTS = Object.freeze(['Off', 'Minimal', 'Low', 'Medium', 'High', 'Max']);
+export const EFFORTS = Object.freeze(['Off', 'Minimal', 'Low', 'Medium', 'High', 'XHigh', 'Max']);
 export const PROBE_CAPABILITIES = Object.freeze(['Vision', 'Tools']);
 export const PROBE_PROVIDER_KINDS = Object.freeze(['OpenAI', 'OpenRouter', 'LMStudio', 'Azure']);
 export const MAX_PROBE_BUDGET = 5;
@@ -353,8 +353,10 @@ function validRequest(type, p) {
       && PROBE_CAPABILITIES.includes(p.capability) && p.consent === true;
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.remove': return fields(p, ['configurationId']) && guid(p.configurationId);
-    case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'])
-      && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean');
+    case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'], ['displayName', 'efforts'])
+      && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean')
+      && (!Object.hasOwn(p, 'displayName') || string(p.displayName, 128, true))
+      && (!Object.hasOwn(p, 'efforts') || (list(p.efforts, 6, effort => EFFORTS.includes(effort)) && unique(p.efforts)));
     case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'permission', 'budget', 'skills']) && guid(p.configurationId)
       && (!Object.hasOwn(p, 'skills') || (list(p.skills, 8, skillName) && unique(p.skills)))
       && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))

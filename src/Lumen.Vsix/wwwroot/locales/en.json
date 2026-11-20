@@ -387,5 +387,8 @@
   "byokModeHelp": "Ask reads and lists files. Plan reads files and creates or edits .md/.txt documents. Agent reads, writes and runs commands.",
   "sessionsTitle": "Sessions",
   "sessionDraft": "New session",
-  "sessionCloseLabel": "Close {title}"
+  "sessionCloseLabel": "Close {title}",
+  "byokEffortXHigh": "Extra high",
+  "byokModelDisplayName": "Display name",
+  "byokEffortLevels": "Supported effort levels"
 }

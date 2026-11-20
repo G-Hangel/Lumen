@@ -140,6 +140,74 @@ public sealed class SettingsStore
         return Task.Run(() => { if (File.Exists(themePath)) File.Delete(themePath); }, cancellationToken);
     }
 
+    public async Task<IReadOnlyDictionary<string, ModelOverride>> ReadModelOverridesAsync(CancellationToken cancellationToken)
+    {
+        var modelPath = Path.ChangeExtension(path, "models.json");
+        if (!File.Exists(modelPath)) return new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
+        using var file = File.OpenRead(modelPath);
+        if (file.Length > 262144) throw new ProviderException("invalid_configuration");
+        using var json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (json.RootElement.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
+        var result = new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
+        foreach (var property in json.RootElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
+            var displayName = JsonWire.String(property.Value, "displayName");
+            var tools = JsonWire.Get(property.Value, "tools");
+            var reasoning = JsonWire.Get(property.Value, "reasoning");
+            var efforts = JsonWire.Array(JsonWire.Get(property.Value, "efforts"));
+            if (tools.ValueKind != JsonValueKind.True && tools.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
+            if (reasoning.ValueKind != JsonValueKind.True && reasoning.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
+            foreach (var effort in efforts)
+                if (effort.ValueKind != JsonValueKind.String || !new[] { "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(effort.GetString()!, StringComparer.OrdinalIgnoreCase)) throw new ProviderException("invalid_configuration");
+            result[property.Name] = new ModelOverride(displayName ?? string.Empty, tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray());
+        }
+        return result;
+    }
+
+    public Task WriteModelOverrideAsync(string key, ModelOverride overrideValue, CancellationToken cancellationToken)
+    {
+        return WriteModelOverrideEntryAsync(key, overrideValue, cancellationToken);
+    }
+
+    private async Task WriteModelOverrideEntryAsync(string key, ModelOverride overrideValue, CancellationToken cancellationToken)
+    {
+        var modelPath = Path.ChangeExtension(path, "models.json");
+        var overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
+        if (File.Exists(modelPath))
+        {
+            var existing = await ReadModelOverridesAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var pair in existing) overrides[pair.Key] = pair.Value;
+        }
+        overrides[key] = overrideValue;
+        var payload = overrides.ToDictionary(pair => pair.Key, pair => new
+        {
+            displayName = pair.Value.DisplayName,
+            tools = pair.Value.Tools,
+            reasoning = pair.Value.Reasoning,
+            efforts = pair.Value.Efforts
+        });
+        await WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task RemoveModelOverridesAsync(string configurationId, CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var modelPath = Path.ChangeExtension(path, "models.json");
+            if (!File.Exists(modelPath)) return;
+            var existing = ReadModelOverridesAsync(cancellationToken).GetAwaiter().GetResult();
+            var filtered = existing.Where(pair => !pair.Key.StartsWith(configurationId + "/", StringComparison.Ordinal)).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            if (filtered.Count == existing.Count) return;
+            var payload = filtered.ToDictionary(pair => pair.Key, pair => new
+            {
+                displayName = pair.Value.DisplayName,
+                tools = pair.Value.Tools,
+                reasoning = pair.Value.Reasoning,
+                efforts = pair.Value.Efforts
+            });
+            WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).GetAwaiter().GetResult();
+        }, cancellationToken);
+
     private static async Task WriteJsonAsync(string path, string json, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

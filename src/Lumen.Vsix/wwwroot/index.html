@@ -180,7 +180,9 @@
               <div class="byok-actions">
                 <button id="byok-list" type="button" class="text-button" data-i18n="byokList" disabled></button>
                 <button id="byok-discover" type="button" class="text-button" data-i18n="byokDiscover" disabled></button>
-                <button id="byok-remove" type="button" class="text-button danger-button" data-i18n="byokRemove" disabled></button>
+                 <button id="byok-remove" type="button" class="icon-button danger-button" data-i18n-label="byokRemove" data-i18n-title="byokRemove" disabled>
+                   <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.5 4.5h9M6 4.5V3h4v1.5M5 4.5v8a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                 </button>
               </div>
               <div id="byok-remove-confirmation" class="confirm-card" hidden>
                 <p data-i18n="byokRemoveWarning"></p>
@@ -192,14 +194,25 @@
               <label for="byok-models" data-i18n="byokModel"></label>
               <select id="byok-models" disabled></select>
               <ul id="byok-capabilities" class="byok-capabilities" aria-live="polite"></ul>
-              <details id="byok-override" class="byok-override">
-                <summary data-i18n="byokOverrideTitle"></summary>
-                <p class="secondary" data-i18n="byokOverrideHelp"></p>
-                <label for="byok-vision" data-i18n="byokVision"></label><select id="byok-vision" disabled></select>
-                <label for="byok-tools" data-i18n="byokTools"></label><select id="byok-tools" disabled></select>
-                <label for="byok-reasoning" data-i18n="byokReasoning"></label><select id="byok-reasoning" disabled></select>
-                <button id="byok-apply-override" type="button" class="text-button" data-i18n="byokApplyOverride" disabled></button>
-              </details>
+               <details id="byok-override" class="byok-override">
+                 <summary data-i18n="byokOverrideTitle"></summary>
+                 <p class="secondary" data-i18n="byokOverrideHelp"></p>
+                 <label for="byok-display-name" data-i18n="byokModelDisplayName"></label>
+                 <input id="byok-display-name" type="text" maxlength="128" disabled spellcheck="false" aria-describedby="byok-override-help">
+                 <label for="byok-vision" data-i18n="byokVision"></label><select id="byok-vision" disabled></select>
+                 <label for="byok-tools" data-i18n="byokTools"></label><select id="byok-tools" disabled></select>
+                 <label for="byok-reasoning" data-i18n="byokReasoning"></label><select id="byok-reasoning" disabled></select>
+                 <fieldset id="byok-effort-levels" class="byok-effort-levels" disabled>
+                   <legend data-i18n="byokEffortLevels"></legend>
+                   <label><input type="checkbox" value="Minimal" disabled> <span data-i18n="byokEffortMinimal"></span></label>
+                   <label><input type="checkbox" value="Low" disabled> <span data-i18n="byokEffortLow"></span></label>
+                   <label><input type="checkbox" value="Medium" disabled> <span data-i18n="byokEffortMedium"></span></label>
+                   <label><input type="checkbox" value="High" disabled> <span data-i18n="byokEffortHigh"></span></label>
+                   <label><input type="checkbox" value="XHigh" disabled> <span data-i18n="byokEffortXHigh"></span></label>
+                   <label><input type="checkbox" value="Max" disabled> <span data-i18n="byokEffortMax"></span></label>
+                 </fieldset>
+                 <button id="byok-apply-override" type="button" class="text-button" data-i18n="byokApplyOverride" disabled></button>
+               </details>
               <section id="byok-probe" class="byok-probe" aria-labelledby="byok-probe-title" aria-busy="false">
                 <h3 id="byok-probe-title" data-i18n="byokProbeTitle"></h3>
                 <p id="byok-probe-help" class="secondary" data-i18n="byokProbeHelp"></p>

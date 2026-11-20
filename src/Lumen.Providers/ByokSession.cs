@@ -945,7 +945,26 @@ public sealed class ByokSession : IDisposable
 
     private CatalogResult ApplyProbeCatalog(ProviderConfiguration configuration, CatalogResult catalog) =>
         new CatalogResult(catalog.Models.Select(model => ApplyProbe(configuration, model)).ToArray(), catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
-
+     private CatalogResult ApplyModelOverrides(ProviderConfiguration configuration, CatalogResult catalog)
+     {
+         var overrides = settings.ReadModelOverridesAsync(CancellationToken.None).GetAwaiter().GetResult();
+         if (overrides.Count == 0) return catalog;
+         return new CatalogResult(catalog.Models.Select(model =>
+         {
+             var key = configuration.Id + "/" + model.ModelId;
+             if (!overrides.TryGetValue(key, out var overrideValue)) return model;
+             var caps = model.Capabilities;
+             caps = overrideValue.Tools ? caps | ModelCapabilities.Tools : caps & ~ModelCapabilities.Tools;
+             caps = overrideValue.Reasoning ? caps | ModelCapabilities.Reasoning : caps & ~ModelCapabilities.Reasoning;
+             var reasoning = (caps & ModelCapabilities.Reasoning) != 0
+                 ? new ReasoningSupport(model.Reasoning?.Kind ?? ReasoningKind.ModelSelection,
+                     overrideValue.Efforts.Count > 0 ? overrideValue.Efforts.Select(e => Enum.TryParse<ReasoningIntent>(e, true, out var r) ? r : ReasoningIntent.Low).ToArray() : (model.Reasoning?.Efforts ?? new[] { ReasoningIntent.Low }),
+                     model.Reasoning?.Mandatory ?? false)
+                 : null;
+             var displayName = string.IsNullOrWhiteSpace(overrideValue.DisplayName) ? model.DisplayName : overrideValue.DisplayName;
+             return new ModelInfo(model.ProviderId, model.ModelId, caps, displayName, reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins);
+         }).ToArray(), catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
+     }
     private ModelInfo ApplyProbe(ProviderConfiguration configuration, ModelInfo model)
     {
         var caps = model.Capabilities;

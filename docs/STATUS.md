@@ -2,29 +2,24 @@
 
 Atualizado em **2026-11-20**.
 
-## Fatia C — Modelo na sessão e abas de conversa (2026-11-20)
+## Melhorias de providers e esforço de raciocínio (2026-11-20)
 
-1. **Seletor de modelo no composer.** Ao lado de "Ponte conectada", lista os modelos
-   do provedor ativo. Trocar de modelo não descarta a sessão: o histórico é
-   mantido e a próxima mensagem faz replay no modelo novo. Guardas no host
-   (`byok.select` e `byok.chat`): se a sessão já usou ferramentas e o novo modelo
-   não suporta tools → `tools_not_supported`; se usou imagem e não suporta visão →
-   `vision_not_supported`. A UI mantém o texto antigo bloqueado apenas quando o
-   provedor muda.
-2. **Abas de sessão.** Faixa entre o cabeçalho e o chat, com título + modelo.
-   Nova sessão cria um draft; ao enviar a primeira mensagem o draft recebe o id e
-   o título. Abrir aba = `byok.history.open`; fechar aba apenas remove o atalho,
-   nunca apaga a conversa. A lista + aba ativa persistem em `localStorage`
-   (`lumen.sessionTabs.v1`, chave única sem dados sensíveis) e são restauradas ao
-   reabrir o Lumen. O Histórico continua listando tudo para retomar qualquer
-   conversa antiga.
-
-Controles negativos: troca para modelo sem tools bloqueada; troca para modelo sem
-visão bloqueada; fechar aba não emite `byok.history.delete`; aba restaurada abre
-a conversa correta; persistência usa somente a chave namespaces (teste estático).
+1. **Effort XHigh.** Adicionado `ReasoningIntent.XHigh` ao enum unificado (minimal, low,
+   medium, high, xhigh, max). Bridge `EFFORTS` atualizado; Ollama parseia `xhigh`;
+   Gemini mapeia XHigh para High no wire; locale adicionou `byokEffortXHigh`.
+2. **Configuração por modelo.** `byok.override` aceita `displayName` e `efforts` (lista),
+   persiste em `providers.models.json` via `SettingsStore` (WriteModelOverrideAsync /
+   ReadModelOverridesAsync / RemoveModelOverridesAsync). Overrides são aplicados no
+   discover (`ApplyModelOverrides`). Remover provedor limpa os overrides.
+3. **UI de configuração.** Painel de override ganhou campo "Nome de exibição" e
+   checkboxes de níveis de esforço. Botão de remover provedor virou ícone de lixeira
+   com confirmação existente.
+4. **Controles negativos.** Override rejeita displayName > 128 e efforts fora da lista
+   global; bridge valida `displayName` e `efforts`; persistência rejeita JSON inválido.
 
 Evidência: build Release 0 erros/0 avisos; UI 238/238; .NET 1669/1669; pacote
-3/3. VSIX reconstruído e instalado nos dois hives (57/57 por SHA-256).
+3/3. VSIX reconstruído e instalado no hive Exp (57/57); hive regular bloqueado por
+VS em execução (git.exe órfão encerrado; reinstalar após fechar o VS).
 ## Correção de build/pacote (2026-11-19)
 
 `Menus.cto` (saída binária do VSCT) não estava sendo empacotado, embora o pkgdef

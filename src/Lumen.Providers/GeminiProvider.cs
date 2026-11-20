@@ -130,7 +130,7 @@ public sealed class GeminiProvider : IModelCatalog, IChatProvider
         if (level is not null)
         {
             if (IsGemini3OrLater(id) && request.Model.Reasoning!.Kind == ReasoningKind.Effort && level != ReasoningIntent.Off)
-                config["thinkingConfig"] = new { thinkingLevel = (level == ReasoningIntent.Max ? ReasoningIntent.High : level.Value).ToString().ToUpperInvariant() };
+                config["thinkingConfig"] = new { thinkingLevel = (level == ReasoningIntent.Max || level == ReasoningIntent.XHigh ? ReasoningIntent.High : level.Value).ToString().ToUpperInvariant() };
             else if (IsGemini25(id) && request.Model.Reasoning!.Kind == ReasoningKind.BudgetTokens)
             {
                 var budget = level.Value switch { ReasoningIntent.Off => 0, ReasoningIntent.Minimal or ReasoningIntent.Low => 1024, ReasoningIntent.Medium => 4096, ReasoningIntent.High => 8192, _ => 16384 };

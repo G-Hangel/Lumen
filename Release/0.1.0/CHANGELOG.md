@@ -26,7 +26,7 @@ Versões seguem `MAJOR.MINOR.PATCH` do manifesto do VSIX.
 ### Alterado
 
 - O composer ganhou seletor de esforço de raciocínio ao lado do modelo; imagem agora entra por arrastar/colar; Enter envia e Shift+Enter quebra linha; o limite do prompt subiu de 4096 para 262144 caracteres.
-- Conversas agora têm abas de sessão (título + modelo), persistidas entre reinícios, e o seletor de modelo fica ao lado do indicador de conexão; trocar de modelo mantém a sessão, com bloqueio quando o novo modelo não suporta tools/visão já usados.
+- Configuração por modelo: nome de exibição, tools, reasoning e níveis de esforço (minimal/low/medium/high/xhigh/max), persistidos em `providers.models.json`; botão de remover provedor virou ícone de lixeira com confirmação.`r`n- Conversas agora têm abas de sessão (título + modelo), persistidas entre reinícios, e o seletor de modelo fica ao lado do indicador de conexão; trocar de modelo mantém a sessão, com bloqueio quando o novo modelo não suporta tools/visão já usados.
 - A resposta do assistente renderiza como **linha do tempo ordenada** (pensar →
   ferramenta → pensar → resposta), em vez de blocos fixos agrupados; cada
   burst de raciocínio vira seu próprio bloco e o histórico arquivado reproduz

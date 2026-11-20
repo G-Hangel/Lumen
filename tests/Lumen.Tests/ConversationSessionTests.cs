@@ -300,6 +300,37 @@ public sealed class ConversationSessionTests
     }
 
     [Fact]
+    public async Task SwitchingToModelWithoutToolsIsRejectedWhenTheSessionUsedTools()
+    {
+        using var fixture = new Fixture("Gemini", new ReadStub());
+        fixture.Handler.Catalog = "{\"models\":[{\"name\":\"models/" + Model + "\",\"supportedGenerationMethods\":[\"generateContent\"]}," +
+            "{\"name\":\"models/text-only\",\"supportedGenerationMethods\":[\"generateContent\"]}]}";
+        fixture.Handler.StreamFor = round => round == 1
+            ? GeminiFrame(new object[] { new { functionCall = new { id = "plan-call", name = "read_file", args = new { path = "Sample.cs" } } } }, true)
+            : GeminiFrame(new object[] { new { text = "done" } }, true);
+        await fixture.ConfigureAndSelect();
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        var firstTurn = await fixture.Chat("read Sample.cs", new { readTools = true });
+        if (Type(firstTurn) != "byok.chat.result") Assert.Fail(Payload(firstTurn).GetProperty("code").GetString());
+        ChatSummary(firstTurn, fixture.ConfigurationId, Model, 1);
+        await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
+        // Discovery re-reads native capabilities, so re-apply the overrides before switching.
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = "text-only", vision = false, tools = false, reasoning = false });
+        var selected = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = "text-only" });
+        Assert.Equal("error", Type(selected));
+        Assert.Equal("tools_not_supported", Payload(selected).GetProperty("code").GetString());
+        // The session is preserved: selecting the original model again keeps the same conversation.
+        await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = Model });
+        var continuedTurn = await fixture.Chat("continue");
+        if (Type(continuedTurn) != "byok.chat.result") Assert.Fail(Payload(continuedTurn).GetProperty("code").GetString());
+        ChatSummary(continuedTurn, fixture.ConfigurationId, Model, 2);
+        var blockedAgain = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = "text-only" });
+        Assert.Equal("error", Type(blockedAgain));
+        Assert.Equal("tools_not_supported", Payload(blockedAgain).GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task LongPromptsPastLegacyLimitAreAcceptedAndArchived()
     {
         using var fixture = new Fixture();

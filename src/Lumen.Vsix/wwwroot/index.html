@@ -367,6 +367,7 @@
         </div>
       </div>
       <button id="byok-history-error-action" type="button" class="text-button" data-i18n="byokOpenSettings" hidden></button>
+      <div id="byok-session-tabs" class="session-tabs" role="tablist" data-i18n-label="sessionsTitle"></div>
       <div class="welcome">
         <span class="welcome-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" focusable="false"><path d="M7 5.5v9.2a4.3 4.3 0 0 0 6.6 3.6l3.4-2.1" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><circle cx="16.6" cy="7.4" r="2.1" fill="currentColor"/></svg>
@@ -396,6 +397,8 @@
           <span id="connection-status" class="status-badge" role="status"></span>
           <p id="byok-active-model" class="secondary" role="status"></p>
           <div class="composer-model-controls">
+            <label for="byok-model-select" class="sr-only" data-i18n="byokModel"></label>
+            <select id="byok-model-select" disabled aria-describedby="byok-active-model"></select>
             <label for="byok-effort" data-i18n="byokEffort"></label>
             <select id="byok-effort" disabled aria-describedby="byok-effort-help"></select>
           </div>

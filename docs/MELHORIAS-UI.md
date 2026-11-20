@@ -57,7 +57,7 @@ Critérios de aceite / controles negativos:
   (nada pede; blocklist e paths continuam).
 - Atualizar `AGENTS.md` (escopo do Plan) e a matriz de testes do host/bridge/UI.
 
-## Fatia C — Modelo e abas de sessão (itens 1 e 2)
+## Fatia C — Modelo e abas de sessão (itens 1 e 2) — concluída
 
 - Seletor de modelo na linha do composer, ligado ao provedor ativo; troca com
   guardas de capacidade sem descartar a conversa.
@@ -105,3 +105,11 @@ Critérios de aceite / controles negativos:
 - Controles negativos: a ponte rejeita terminal/writeTools legados fora do modo (Ask/Plan); Plan não anuncia run_command; WorkspaceWriteTools rejeita .cs e apply_diff em Plan (disco e buffers abertos); ApprovalBroker mantém mode_denied para escrita fora do workspace em Plan e comandos em Ask/Plan; Permissivo ainda pede aprovação para comandos; Acesso Total nunca pede, mas blocklist e confinamento de path permanecem.
 - AGENTS.md atualizado: Plan cria/edita apenas .txt/.md; o seletor de permissão só relaxa aprovações.
 - VSIX reconstruído e instalado nos dois hives (57/57 arquivos verificados por SHA-256 em cada um).
+### Evidência (Fatia C)
+
+- Build Release: 0 erros / 0 avisos.
+- npm run check:ui: 238/238.
+- dotnet test: 1669/1669 (inclui SwitchingToModelWithoutToolsIsRejectedWhenTheSessionUsedTools).
+- npm run check:package: 3/3.
+- Controles negativos: troca de modelo bloqueada quando a sessão já usou tools/visão e o novo modelo não suporta; bloqueio também no byok.chat (defesa em profundidade); abas persistidas em localStorage (apenas a chave lumen.sessionTabs.v1); fechar aba não apaga conversa; provider removido fecha abas daquele provedor.
+- VSIX reconstruído e instalado nos dois hives; 57/57 arquivos verificados por SHA-256 em cada um.

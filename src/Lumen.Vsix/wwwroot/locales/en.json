@@ -384,5 +384,8 @@
   "byokPermissionPermissive": "Permissive",
   "byokPermissionFull": "Full access",
   "byokPermissionHelp": "Interactive asks for approval on writes outside the workspace and on commands. Permissive only asks for commands. Full access never asks; the blocklist and path confinement still apply.",
-  "byokModeHelp": "Ask reads and lists files. Plan reads files and creates or edits .md/.txt documents. Agent reads, writes and runs commands."
+  "byokModeHelp": "Ask reads and lists files. Plan reads files and creates or edits .md/.txt documents. Agent reads, writes and runs commands.",
+  "sessionsTitle": "Sessions",
+  "sessionDraft": "New session",
+  "sessionCloseLabel": "Close {title}"
 }

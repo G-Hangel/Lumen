@@ -1650,7 +1650,7 @@ class Element {
   }
   addEventListener(type, listener) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(listener); }
   removeEventListener(type, listener) { this.listeners.get(type)?.delete(listener); }
-  async emit(type, extra = {}) { const event = { preventDefault() {}, ...extra }; for (const listener of this.listeners.get(type) || []) await listener(event); }
+  async emit(type, extra = {}) { const event = { preventDefault() {}, stopPropagation() {}, ...extra }; for (const listener of this.listeners.get(type) || []) await listener(event); }
   querySelectorAll(selector) {
     const attribute = selector.startsWith('[') ? selector.slice(1, -1) : null;
     const tag = attribute ? null : selector.toUpperCase();
@@ -2625,18 +2625,18 @@ for (const code of ['cancelled', 'network_error']) {
   });
 }
 
-test('UI an archive for another model is readable but cannot send until New resets the active identity', async t => {
+test('UI an archive for another model can be continued without losing the session', async t => {
   const otherModel = { ...model, id: 'different-model', name: 'Different model' };
   const f = uiFixture(t); await openWithModel(f, otherModel);
   await listArchive(f, [summary]); await openArchive(f, summary);
   assert.match(f.node('history-items').textContent, /archived question 0/);
-  f.node('message').value = 'do not replay against a different model'; await f.node('message').emit('input');
-  assert.equal(f.node('message').disabled, true); assert.equal(f.node('send').disabled, true);
-  const count = f.transport.messages.length; await f.node('chat-form').emit('submit'); assert.equal(f.transport.messages.length, count);
-  const reset = f.node('history-new').emit('click'); f.transport.reply({ created: true }); await reset;
+  f.node('message').value = 'continue on the selected model'; await f.node('message').emit('input');
   assert.equal(f.node('message').disabled, false); assert.equal(f.node('send').disabled, false);
-  assert.equal(f.node('empty').hidden, false); assert.equal(f.node('history-items').children.length, 0);
-  assert.equal(f.transport.messages.some(message => message.type === 'byok.chat'), false);
+  const send = f.node('chat-form').emit('submit'); const sent = f.transport.messages.at(-1);
+  assert.equal(sent.type, 'byok.chat'); assert.equal(sent.payload.text, 'continue on the selected model');
+  f.transport.reply({ completed: true, conversation: { ...summary, turnCount: 2 } }, sent); await send;
+  assert.equal(f.node('history-items').children.length, 2, 'the archive turn plus the new turn stay in the same session');
+  assert.match(f.node('history-items').textContent, /continue on the selected model/);
 });
 
 test('UI model selection retains the open archive and replays it to the new model; another provider still resets', async t => {
@@ -2657,9 +2657,78 @@ test('UI model selection retains the open archive and replays it to the new mode
   f.node('message').value = 'hello'; await f.node('message').emit('input');
   assert.equal(f.node('history-items').textContent, before, 'switching models keeps the open session');
   assert.equal(f.node('empty').hidden, true);
-  assert.equal(f.node('message').disabled, true, 'a model change requires a fresh send consent');
+  assert.equal(f.node('message').disabled, false, 'a model change keeps the session sendable');
+  assert.equal(f.node('send').disabled, false);
   assert.equal(f.node('history-list').children.length, 2, 'selection change must not delete disk history');
   assert.equal(f.transport.messages.filter(message => message.type === 'byok.history.open').length, 1);
+});
+
+test('composer model selector switches models without dropping the open session', async t => {
+  const otherModel = { ...model, id: 'other-model', name: 'Other model' };
+  const f = uiFixture(t); await openWithModel(f, model, { otherModels: [otherModel] });
+  assert.deepEqual(f.node('model-select').children.map(option => option.value), ['', model.id, otherModel.id]);
+  await listArchive(f, [summary]); await openArchive(f, summary);
+  const before = f.node('history-items').textContent;
+  f.node('model-select').value = otherModel.id;
+  const change = f.node('model-select').emit('change');
+  const sent = f.transport.messages.at(-1);
+  assert.equal(sent.type, 'byok.select'); assert.equal(sent.payload.modelId, otherModel.id);
+  f.transport.reply({ configuration: { ...config, selectedModelId: otherModel.id } }, sent); await change;
+  assert.equal(f.node('model-select').value, otherModel.id);
+  assert.equal(f.node('models').value, otherModel.id);
+  assert.match(f.node('active-model').textContent, /Other model/);
+  assert.equal(f.node('history-items').textContent, before, 'switching models keeps the archive');
+  assert.match(f.node('session-tabs').textContent, /Other model/, 'the tab shows the new model');
+});
+
+function withLocalStorage(t, initial = {}) {
+  const store = new Map(Object.entries(initial));
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { value: {
+    getItem: key => store.has(key) ? store.get(key) : null,
+    setItem: (key, value) => store.set(key, String(value)),
+    removeItem: key => store.delete(key)
+  }, configurable: true, writable: true });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'localStorage', previous); else delete globalThis.localStorage; });
+  return store;
+}
+
+test('session tabs follow the open session, new sessions and persist across reloads', async t => {
+  const store = withLocalStorage(t);
+  const f = uiFixture(t); await openWithModel(f);
+  const tabs = () => f.node('session-tabs').children;
+  assert.equal(tabs().length, 1, 'a fresh session starts with one draft tab');
+  assert.match(tabs()[0].textContent, new RegExp(en.sessionDraft));
+
+  f.node('message').value = 'first question'; await f.node('message').emit('input');
+  const send = f.node('chat-form').emit('submit'); const chat = f.transport.messages.at(-1);
+  f.transport.reply({ completed: true, conversation: summary }); await send; f.flushFrames();
+  assert.equal(tabs().length, 1);
+  assert.match(tabs()[0].textContent, /Local archive/);
+  assert.equal(tabs()[0].children[0].getAttribute('aria-selected'), 'true');
+
+  const reset = f.node('history-new').emit('click'); f.transport.reply({ created: true }); await reset;
+  assert.equal(tabs().length, 2, 'new session adds a draft tab');
+  assert.equal(tabs()[1].children[0].getAttribute('aria-selected'), 'true');
+
+  const stored = JSON.parse(store.get('lumen.sessionTabs.v1'));
+  assert.deepEqual(stored.map(tab => tab.id), [summary.id, null]);
+
+  // A fresh Lumen restores the persisted tabs and can open the saved one.
+  const g = uiFixture(t); await openWithModel(g);
+  const restored = g.node('session-tabs').children;
+  assert.equal(restored.length, 2);
+  assert.match(restored[0].textContent, /Local archive/);
+  const open = restored[0].children[0].emit('click');
+  const opened = g.transport.messages.at(-1);
+  assert.equal(opened.type, 'byok.history.open'); assert.equal(opened.payload.conversationId, summary.id);
+  g.transport.reply({ conversation: summary, offset: 0, total: 1, turns: [archiveTurn(0)] }, opened); await open;
+  assert.match(g.node('history-items').textContent, /archived question 0/);
+
+  // Closing a tab never deletes the conversation.
+  const close = g.node('session-tabs').children[1].children[1];
+  await close.emit('click');
+  assert.equal(g.transport.messages.some(message => message.type === 'byok.history.delete'), false);
 });
 
 test('UI missing visible pages use the shared RPC busy gate and defer fetching until an operation finishes', async t => {
@@ -3140,7 +3209,12 @@ test('static UI retains unified chat ids/CSP, labels match locales and panel wra
   for (const key of Object.keys(en)) assert.deepEqual(en[key].match(/\{\w+\}/g), pt[key].match(/\{\w+\}/g), key);
   for (const name of ['byok.mjs', 'byok-bridge.mjs']) {
     const source = await readFile(new URL(name, root), 'utf8');
-    assert.doesNotMatch(source, /fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|console\.|createObjectURL/);
+    assert.doesNotMatch(source, /fetch\(|XMLHttpRequest|WebSocket|sessionStorage|console\.|createObjectURL/);
+    if (name === 'byok.mjs') {
+      assert.match(source, /localStorage\.getItem\(TAB_STORAGE_KEY\)/);
+      assert.match(source, /localStorage\.setItem\(TAB_STORAGE_KEY,/);
+      assert.equal([...source.matchAll(/localStorage\./g)].length, 2, 'localStorage is only used for the session tab strip');
+    } else assert.doesNotMatch(source, /localStorage/);
     for (const [, key] of source.matchAll(/\btext\('([^']+)'/g)) assert.equal(typeof en[key], 'string', key);
   }
   assert.match(css, /\.byok-scroll \{[^}]*max-height:[^}]*overflow: auto;/);

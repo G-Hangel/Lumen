@@ -384,5 +384,8 @@
   "byokPermissionPermissive": "Permissivo",
   "byokPermissionFull": "Acesso total",
   "byokPermissionHelp": "Interativo pede aprovação para escrita fora do workspace e comandos. Permissivo só pede aprovação para comandos. Acesso total nunca pede; a blocklist e o confinamento de path continuam valendo.",
-  "byokModeHelp": "Ask lê e lista arquivos. Plan lê arquivos e cria ou edita documentos .md/.txt. Agent lê, escreve e executa comandos."
+  "byokModeHelp": "Ask lê e lista arquivos. Plan lê arquivos e cria ou edita documentos .md/.txt. Agent lê, escreve e executa comandos.",
+  "sessionsTitle": "Sessões",
+  "sessionDraft": "Nova sessão",
+  "sessionCloseLabel": "Fechar {title}"
 }

@@ -231,6 +231,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
   const canCapture = () => online() && !busy && !imageLoading && !needsCancel && !cancelling
     && contexts.length < MAX_CONTEXTS && contextSize() < MAX_CONTEXT_TOTAL;
   let activeConversation = null, savedConversations = [], records = [], liveTurn = null, historyLoaded = false;
+  const TAB_STORAGE_KEY = 'lumen.sessionTabs.v1';
+  let openTabs = readStoredTabs();
   let visible = { start: 0, end: 0 }, deleteTarget = '', historyGeneration = 0, removeTarget = '';
   const failedPages = new Set(), cached = new Map();
   const bridge = new ByokBridge(transport, { connected: () => connectedState && Boolean(connected()) && !disposed });
@@ -352,12 +354,15 @@ export function startByok({ transport, connected = () => false, text, renderMark
   function rememberSummary(summary) {
     activeConversation = summary;
     savedConversations = [summary, ...savedConversations.filter(item => item.id !== summary.id)].slice(0, 256);
+    const tab = openTabs.find(item => item.id === summary.id) || openTabs.find(item => item.id === null);
+    if (tab) { tab.id = summary.id; tab.title = summary.title; tab.modelId = summary.modelId; tab.turnCount = summary.turnCount; }
+    else openTabs.push({ id: summary.id, title: summary.title, modelId: summary.modelId, turnCount: summary.turnCount });
     renderSaved(); node('history-list').value = summary.id; node('history-name').value = summary.title;
-    renderHistoryStatus();
+    renderHistoryStatus(); renderTabs(); persistTabs();
   }
   function resetHistory() {
     historyGeneration++; activeConversation = null; records = []; liveTurn = null; cached.clear(); failedPages.clear();
-    node('live').replaceChildren(); history.setItems(records); syncEmpty(); renderHistoryStatus();
+    node('live').replaceChildren(); history.setItems(records); syncEmpty(); renderHistoryStatus(); renderTabs();
   }
   function cacheTurns(turns) {
     for (const item of turns) { records[item.index] = item; cached.delete(item.index); cached.set(item.index, true); }
@@ -391,21 +396,61 @@ export function startByok({ transport, connected = () => false, text, renderMark
       savedConversations = result.conversations; historyLoaded = true; renderSaved(); setStatus('byokReady');
     });
   }
-  async function openHistory() {
-    const id = node('history-list').value;
+  async function openHistoryById(id) {
     if (!id) return;
     await operate(async () => {
       const result = await bridge.request('byok.history.open', { conversationId: id, offset: 0, limit: 10 });
       if (disposed) return;
       resetHistory(); rememberSummary(result.conversation); records = Array(result.total).fill(null);
       cacheTurns(result.turns); node('output').scrollTop = 0; history.setItems(records); syncEmpty(); setStatus('byokReady');
+      renderTabs(); persistTabs();
     }, node('output'));
+  }
+  async function openHistory() {
+    const id = node('history-list').value;
+    if (id) await openHistoryById(id);
+  }
+  async function openConversationById(id) {
+    if (!online() || busy || !id) return;
+    const summary = savedConversations.find(item => item.id === id);
+    if (summary && summary.configurationId !== configurationId) {
+      const config = configurations.find(item => item.id === summary.configurationId);
+      if (!config) { showError('conversation_not_found'); return; }
+      node('providers').value = config.id;
+      await changeProvider();
+    }
+    if (summary && summary.modelId && summary.modelId !== selectedModelId) {
+      if (!models.some(item => item.id === summary.modelId)) { showError('model_not_found'); return; }
+      node('models').value = summary.modelId;
+      await chooseModel();
+    }
+    await openHistoryById(id);
+  }
+  async function activateTab(tab) {
+    if (!online() || busy) return;
+    if (!tab.id) { if (!activeConversation) return; await newHistory(); return; }
+    if (tab.id === activeConversation?.id) return;
+    await openConversationById(tab.id);
+  }
+  async function closeTab(tab) {
+    const index = openTabs.indexOf(tab);
+    if (index < 0) return;
+    const wasActive = tab.id === activeConversation?.id || (!tab.id && !activeConversation);
+    openTabs.splice(index, 1);
+    if (wasActive) {
+      const next = openTabs.find(item => item.id) || openTabs[0];
+      if (next && next.id) await openConversationById(next.id); else await newHistory();
+    }
+    renderTabs(); persistTabs();
   }
   async function newHistory() {
     await operate(async () => {
       await bridge.request('byok.history.new', {});
       if (disposed) return;
-      resetHistory(); node('history-list').value = ''; node('history-name').value = ''; setStatus('byokReady');
+      resetHistory();
+      if (!openTabs.some(item => item.id === null)) openTabs.push({ id: null, title: '', modelId: selectedModelId, turnCount: 0 });
+      node('history-list').value = ''; node('history-name').value = '';
+      renderTabs(); persistTabs(); setStatus('byokReady');
     }, node('message'));
   }
   async function renameHistory(event) {
@@ -417,7 +462,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (disposed) return;
       savedConversations = savedConversations.map(item => item.id === id ? result.conversation : item);
       if (activeConversation?.id === id) activeConversation = result.conversation;
-      renderSaved(); renderHistoryStatus(); setStatus('byokReady');
+      const tab = openTabs.find(item => item.id === id);
+      if (tab) { tab.title = result.conversation.title; tab.modelId = result.conversation.modelId; tab.turnCount = result.conversation.turnCount; }
+      renderSaved(); renderHistoryStatus(); renderTabs(); persistTabs(); setStatus('byokReady');
     });
   }
   async function deleteHistory() {
@@ -427,8 +474,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
       await bridge.request('byok.history.delete', { conversationId: id, confirm: true });
       if (disposed) return;
       savedConversations = savedConversations.filter(item => item.id !== id);
-      if (activeConversation?.id === id) resetHistory();
-      deleteTarget = ''; node('history-confirmation').hidden = true; renderSaved(); setStatus('byokReady');
+      openTabs = openTabs.filter(item => item.id !== id);
+      if (activeConversation?.id === id) {
+        resetHistory();
+        if (!openTabs.some(item => item.id === null)) openTabs.push({ id: null, title: '', modelId: selectedModelId, turnCount: 0 });
+      }
+      deleteTarget = ''; node('history-confirmation').hidden = true; renderSaved(); renderTabs(); persistTabs(); setStatus('byokReady');
     });
   }
   function scrollPinned() {
@@ -450,11 +501,13 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('remove').disabled = !enabled || locked || !configurationId;
     for (const id of ['remove-confirm', 'remove-keep']) node(id).disabled = !enabled || locked;
     node('models').disabled = !enabled || locked || !models.length || !configurationId;
+    node('model-select').disabled = !enabled || locked || !models.length || !configurationId;
     const model = selectedModel();
     for (const capability of Object.keys(capabilityNames)) node(capability).disabled = !enabled || locked || !model;
     node('apply-override').disabled = !enabled || locked || !model || Object.keys(capabilityNames).some(key => node(key).value === '');
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
-    const matchesHistory = !activeConversation || (activeConversation.configurationId === configurationId && activeConversation.modelId === selectedModelId);
+    // Model switches now replay the same session, so only the provider must match.
+    const matchesHistory = !activeConversation || activeConversation.configurationId === configurationId;
     node('mode').disabled = !enabled || locked;
     node('apply-plan').hidden = node('mode').value !== 'Plan';
     node('apply-plan').disabled = !enabled || locked;
@@ -517,6 +570,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('models').replaceChildren(option('', text(models.length ? 'byokChooseModel' : 'byokEmptyModels')),
       ...models.map(model => option(model.id, modelLabel(model))));
     node('models').value = selectedModelId;
+    node('model-select').replaceChildren(option('', text(models.length ? 'byokChooseModel' : 'byokEmptyModels')),
+      ...models.map(model => option(model.id, model.name)));
+    node('model-select').value = selectedModelId;
   }
   function renderCapabilities(resetOverride = true) {
     node('capabilities').replaceChildren();
@@ -840,11 +896,16 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (disposed) return;
       configurations = configurations.filter(config => config.id !== id);
       cancelRemoveProvider(false);
+      const removedTabIds = new Set(savedConversations.filter(item => item.configurationId === id).map(item => item.id));
+      openTabs = openTabs.filter(item => !item.id || !removedTabIds.has(item.id));
       if (configurationId === id) {
         configurationId = ''; resetSelection();
-        if (activeConversation?.configurationId === id) resetHistory();
+        if (activeConversation?.configurationId === id) {
+          resetHistory();
+          if (!openTabs.some(item => item.id === null)) openTabs.push({ id: null, title: '', modelId: '', turnCount: 0 });
+        }
       }
-      renderProviders(); syncEmpty();
+      renderProviders(); renderTabs(); persistTabs(); syncEmpty();
       setStatus(configurations.length ? 'byokReady' : 'byokEmptyProviders');
     }, node('providers'));
   }
@@ -947,6 +1008,9 @@ export function startByok({ transport, connected = () => false, text, renderMark
       if (disposed) return;
       configurations = configurations.map(config => config.id === result.configuration.id ? result.configuration : config);
       selectedModelId = result.configuration.selectedModelId; renderModels(); renderCapabilities(); setStatus('byokSelected');
+      const tab = openTabs.find(item => item.id === activeConversation?.id)
+        || (!activeConversation ? openTabs.find(item => item.id === null) : null);
+      if (tab) { tab.modelId = selectedModelId; renderTabs(); persistTabs(); }
       syncEmpty();
     }, node('message'));
   }
@@ -1267,7 +1331,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     event.preventDefault();
     if (node('send').disabled || !online() || busy || imageLoading || needsCancel || cancelling || !selectedModel() || !configurationId
       || !contextWithinBounds() || !node('message').value.trim() || node('message').value.length > MAX_PROMPT_LENGTH
-      || (activeConversation && (activeConversation.configurationId !== configurationId || activeConversation.modelId !== selectedModelId))) return;
+      || (activeConversation && activeConversation.configurationId !== configurationId)) return;
     const permission = node('permission').value;
     const value = node('message').value;
     const mentions = parseMentions(value);
@@ -1378,7 +1442,52 @@ export function startByok({ transport, connected = () => false, text, renderMark
     }
     if (errorCode) showError(errorCode); updateControls();
   }
-  function setConnected(value = connected()) {
+  function renderTabs() {
+    const host = node('session-tabs');
+    if (!host) return;
+    host.replaceChildren();
+    for (const tab of openTabs) {
+      const row = document.createElement('div'); row.className = 'session-tab'; row.setAttribute('role', 'presentation');
+      const main = document.createElement('button'); main.type = 'button'; main.className = 'session-tab-main';
+      main.setAttribute('role', 'tab');
+      main.setAttribute('aria-selected', String(tab.id ? tab.id === activeConversation?.id : !activeConversation));
+      const title = document.createElement('span'); title.className = 'session-tab-title';
+      title.textContent = tab.title || text('sessionDraft');
+      const model = document.createElement('span'); model.className = 'session-tab-model';
+      const info = models.find(item => item.id === tab.modelId);
+      model.textContent = info?.name || tab.modelId || '';
+      main.append(title, model);
+      main.addEventListener('click', () => void activateTab(tab));
+      const close = document.createElement('button'); close.type = 'button'; close.className = 'session-tab-close';
+      close.tabIndex = 0; close.textContent = '×';
+      close.setAttribute('aria-label', text('sessionCloseLabel', { title: tab.title || text('sessionDraft') }));
+      close.addEventListener('click', event => { event.stopPropagation(); void closeTab(tab); });
+      row.append(main, close); host.append(row);
+    }
+  }
+  function readStoredTabs() {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      const raw = localStorage.getItem(TAB_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.slice(0, 32).map(tab => ({
+        id: typeof tab?.id === 'string' && tab.id ? tab.id : null,
+        title: typeof tab?.title === 'string' ? tab.title : '',
+        modelId: typeof tab?.modelId === 'string' ? tab.modelId : '',
+        turnCount: Number.isInteger(tab?.turnCount) && tab.turnCount >= 0 ? tab.turnCount : 0
+      })).filter(tab => tab.id || tab.title === '');
+    } catch { return []; }
+  }
+  function persistTabs() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(openTabs.map(tab => ({
+        id: tab.id, title: tab.title, modelId: tab.modelId, turnCount: tab.turnCount
+      }))));
+    } catch { /* tab persistence is best-effort */ }
+  }  function setConnected(value = connected()) {
     if (disposed) return;
     const wasConnected = connectedState;
     connectedState = Boolean(value) && Boolean(connected()) && bridge.available;
@@ -1451,13 +1560,21 @@ export function startByok({ transport, connected = () => false, text, renderMark
   });
   for (const id of ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']) listen(node(id), 'input', updateControls);
   listen(node('list'), 'click', listProviders);
-  listen(node('providers'), 'change', () => { configurationId = node('providers').value; resetSelection(); cancelRemoveProvider(false); if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); } void discover(); });
+  async function changeProvider() {
+    if (!online() || busy) return;
+    configurationId = node('providers').value;
+    resetSelection(); cancelRemoveProvider(false);
+    if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); }
+    await discover();
+  }
+  listen(node('providers'), 'change', () => void changeProvider());
   listen(node('discover'), 'click', discover);
   listen(node('remove'), 'click', requestRemoveProvider);
   listen(node('remove-confirm'), 'click', deleteProvider);
   listen(node('remove-keep'), 'click', () => cancelRemoveProvider());
   listen(node('azure-inventory'), 'click', requestAzureInventory);
   listen(node('models'), 'change', chooseModel);
+  listen(node('model-select'), 'change', () => { node('models').value = node('model-select').value; void chooseModel(); });
   listen(node('apply-override'), 'click', override);
   listen(node('probe-consent'), 'change', updateControls);
   listen(node('probe-capability'), 'change', updateControls);
@@ -1564,7 +1681,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(node('write-refresh'), 'click', () => { if (writeAllowed()) requestWriteStatus(); });
   listen(node('write-cancel'), 'click', cancel);
   listen(node('cancel'), 'click', cancel);
-  renderAgents(); renderDiagnostics(); refreshLocale(); setConnected(connectedState);
+  if (!openTabs.length) openTabs.push({ id: null, title: '', modelId: selectedModelId, turnCount: 0 });
+  renderAgents(); renderDiagnostics(); renderTabs(); refreshLocale(); setConnected(connectedState);
   return {
     refreshLocale, setConnected, bridge,
     dispose() {

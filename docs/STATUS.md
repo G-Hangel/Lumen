@@ -2,33 +2,29 @@
 
 Atualizado em **2026-11-20**.
 
-## Fatia B — Permissões por modo e Plan editável (2026-11-20)
+## Fatia C — Modelo na sessão e abas de conversa (2026-11-20)
 
-1. **Ferramentas derivadas do modo.** Ask = ler/listar; Plan = ler + criar/editar
-   `.txt`/`.md`; Agent = ler, criar, editar e terminal. Os checkboxes
-   "ferramentas automáticas" e o painel de ajuda foram removidos; a UI envia
-   apenas `mode` e `permission`.
-2. **Seletor de permissão** ao lado do modo: Interativo (comportamento atual),
-   Permissivo (só escrita fora do workspace pede aprovação; terminal sempre pede)
-   e Acesso Total (nada pede). Blocklist e confinamento de path permanecem em
-   todos os níveis. A política vive em `ChatModePolicy.Evaluate(mode, category,
-   permission)` e é aplicada no `ApprovalBroker`.
-3. **Plan editável.** `PlanAllowed` inclui `create_file`/`edit_file`; o
-   `WorkspaceWriteTools` e o caminho de buffers do `VisualStudioWriteTools`
-   rejeitam qualquer extensão que não seja `.md`/`.txt` e `apply_diff` em Plan.
-   A instrução do Plan foi atualizada. `AGENTS.md` reflete o novo escopo.
-4. **Host/bridge.** `ByokSession` deriva os executores do modo, aplica
-   `ForMode(mode, permission)` e valida os booleans legados (terminal só em
-   Agent; writeTools não em Ask). A ponte deriva os conjuntos de ferramentas do
-   modo para validar eventos/aprovações.
+1. **Seletor de modelo no composer.** Ao lado de "Ponte conectada", lista os modelos
+   do provedor ativo. Trocar de modelo não descarta a sessão: o histórico é
+   mantido e a próxima mensagem faz replay no modelo novo. Guardas no host
+   (`byok.select` e `byok.chat`): se a sessão já usou ferramentas e o novo modelo
+   não suporta tools → `tools_not_supported`; se usou imagem e não suporta visão →
+   `vision_not_supported`. A UI mantém o texto antigo bloqueado apenas quando o
+   provedor muda.
+2. **Abas de sessão.** Faixa entre o cabeçalho e o chat, com título + modelo.
+   Nova sessão cria um draft; ao enviar a primeira mensagem o draft recebe o id e
+   o título. Abrir aba = `byok.history.open`; fechar aba apenas remove o atalho,
+   nunca apaga a conversa. A lista + aba ativa persistem em `localStorage`
+   (`lumen.sessionTabs.v1`, chave única sem dados sensíveis) e são restauradas ao
+   reabrir o Lumen. O Histórico continua listando tudo para retomar qualquer
+   conversa antiga.
 
-Controles negativos: ponte rejeita terminal em Ask/Plan; Plan não anuncia
-run_command; Plan rejeita `.cs` e `apply_diff` (disco e buffer); Permissivo ainda
-pede comando; Acesso Total não pede, mas blocklist/paths continuam; Ask continua
-read-only.
+Controles negativos: troca para modelo sem tools bloqueada; troca para modelo sem
+visão bloqueada; fechar aba não emite `byok.history.delete`; aba restaurada abre
+a conversa correta; persistência usa somente a chave namespaces (teste estático).
 
-Evidência: build Release 0 erros/0 avisos; UI 236/236; .NET 1668/1668; pacote
-3/3. VSIX reconstruído, normalizado e instalado nos dois hives; 57/57 arquivos verificados por SHA-256 em cada um.
+Evidência: build Release 0 erros/0 avisos; UI 238/238; .NET 1669/1669; pacote
+3/3. VSIX reconstruído e instalado nos dois hives (57/57 por SHA-256).
 ## Correção de build/pacote (2026-11-19)
 
 `Menus.cto` (saída binária do VSCT) não estava sendo empacotado, embora o pkgdef

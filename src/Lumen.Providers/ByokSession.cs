@@ -498,7 +498,16 @@ public sealed class ByokSession : IDisposable
                     Require(payload, new[] { "configurationId", "modelId" });
                     var selected = Find(payload);
                     var modelId = RequiredString(payload, "modelId", 512);
-                    FindModel(selected, modelId);
+                    var nextModel = FindModel(selected, modelId);
+                    // A model switch replays the whole session; the new model must support every capability already used.
+                    if (conversation is not null && conversation.ConfigurationId == selected.Id && !string.Equals(modelId, selected.SelectedModelId, StringComparison.Ordinal))
+                    {
+                        var existingMessages = conversation.Conversation.Messages;
+                        if (existingMessages.Any(message => message.Parts.OfType<ToolCallPart>().Any()) && !nextModel.Has(ModelCapabilities.Tools))
+                            throw new ProviderException("tools_not_supported");
+                        if (existingMessages.Any(message => message.Parts.OfType<ImagePart>().Any()) && !nextModel.Has(ModelCapabilities.Vision))
+                            throw new ProviderException("vision_not_supported");
+                    }
                     var replacement = new ProviderConfiguration(selected.Id, selected.ProviderId, selected.Kind, selected.BaseUrl, modelId, selected.DeploymentNames);
                     configurations[configurations.IndexOf(selected)] = replacement;
                     if (conversation is not null && conversation.ConfigurationId != selected.Id) conversation = null;
@@ -641,6 +650,14 @@ public sealed class ByokSession : IDisposable
                         parts.Add(new ImagePart(RequiredString(image, "mediaType", 32), RequiredString(image, "base64Data", 6 * 1024 * 1024)));
                     }
                     if (conversation is not null && conversation.ConfigurationId != chatConfiguration.Id) conversation = null;
+                    if (conversation is not null && !string.Equals(conversation.Conversation.ModelId, chatModel.ModelId, StringComparison.Ordinal))
+                    {
+                        var replayMessages = conversation.Conversation.Messages;
+                        if (replayMessages.Any(message => message.Parts.OfType<ToolCallPart>().Any()) && !chatModel.Has(ModelCapabilities.Tools))
+                            throw new ProviderException("tools_not_supported");
+                        if (replayMessages.Any(message => message.Parts.OfType<ImagePart>().Any()) && !chatModel.Has(ModelCapabilities.Vision))
+                            throw new ProviderException("vision_not_supported");
+                    }
                     var userMessage = new Message(MessageRole.User, parts);
                     var titleText = text.Trim();
                     var titleLength = Math.Min(80, titleText.Length);

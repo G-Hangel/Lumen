@@ -4,7 +4,7 @@ param(
     [string]$Vsix
 )
 $ErrorActionPreference = 'Stop'
-if (-not $Vsix) { $Vsix = Join-Path $PSScriptRoot '..\src\Lumen.Vsix\bin\Release\net48\Lumen.Vsix.vsix' }
+if (-not $Vsix) { $Vsix = Join-Path $PSScriptRoot '..\..\src\Lumen.Vsix\bin\Release\net48\Lumen.Vsix.vsix' }
 $extensionId = 'Lumen.37b13e92-66f4-4ebd-8f31-4fe1a889f684'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 $instances = & $vswhere -prerelease -all -format json | ConvertFrom-Json
@@ -14,7 +14,7 @@ if ($instance.Count -ne 1 -or ([version]$instance[0].installationVersion).Major 
 }
 $installer = Join-Path $instance[0].installationPath 'Common7\IDE\VSIXInstaller.exe'
 $extensions = Join-Path $env:LOCALAPPDATA "Microsoft\VisualStudio\18.0_${InstanceId}Exp\Extensions"
-$artifacts = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\artifacts'))
+$artifacts = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\artifacts'))
 [IO.Directory]::CreateDirectory($artifacts) | Out-Null
 
 function Get-LumenInstall {

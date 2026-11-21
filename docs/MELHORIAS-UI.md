@@ -120,3 +120,21 @@ Critérios de aceite / controles negativos:
 - Configuração por modelo: nome de exibição, tools, reasoning e níveis de esforço, persistidos em providers.models.json.
 - Botão de remover provedor virou ícone de lixeira com confirmação.
 - Controles negativos: displayName > 128 e efforts fora da lista global rejeitados.
+
+## Correções de configuração de modelos (2026-11-21)
+
+- Painel de override voltou à paleta do Lumen (`--surface-1`, `--border`,
+  `--brand-ink`); removida a regra duplicada que aplicava `color-mix` com roxo.
+- Checkboxes de esforço agora usam flex-wrap com `white-space: nowrap`, dentro
+  de um `<div>` (o `<fieldset>` com `display: grid` quebrava as labels no WebView).
+- Apenas modelos configurados aparecem nos seletores: `ApplyModelOverrides`
+  marca `enabled = false` para modelos sem override; `byok.override.result`
+  retorna a lista completa (`models`) e a UI troca a lista inteira, sem custo de
+  rediscovery. `off` passou a ser aceito como effort persistido.
+- `enabled` passou a ser gravado e lido em `providers.models.json` (antes
+  sempre voltava como `true` após reinício).
+- Controles negativos: resposta de override sem `models` mantém a lista anterior
+  (teste `UI override result with models hides unconfigured models...`); leitura
+  de overrides rejeita JSON inválido e efforts fora da lista global.
+- Evidência: build 0 erros/0 avisos; dotnet test 1669/1669; check:ui 239/239;
+  check:package 3/3; VSIX normalizado e instalado nos dois hives (57/57 por SHA-256).

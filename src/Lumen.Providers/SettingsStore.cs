@@ -166,7 +166,7 @@ public sealed class SettingsStore
             if (reasoning.ValueKind != JsonValueKind.True && reasoning.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             if (enabled.ValueKind != JsonValueKind.Undefined && enabled.ValueKind != JsonValueKind.True && enabled.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             foreach (var effort in efforts)
-                if (effort.ValueKind != JsonValueKind.String || !new[] { "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(effort.GetString()!, StringComparer.OrdinalIgnoreCase)) throw new ProviderException("invalid_configuration");
+                if (effort.ValueKind != JsonValueKind.String || !new[] { "off", "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(effort.GetString()!, StringComparer.OrdinalIgnoreCase)) throw new ProviderException("invalid_configuration");
             result[property.Name] = new ModelOverride(displayName ?? string.Empty, vision.GetBoolean(), tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray(), enabled.ValueKind == JsonValueKind.Undefined ? true : enabled.GetBoolean());
         }
         json.Dispose();

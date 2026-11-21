@@ -1039,7 +1039,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
         enabled
       });
       if (disposed) return;
-      models = models.map(model => model.id === result.model.id ? result.model : model);
+      models = Object.hasOwn(result, "models") ? result.models : models.map(model => model.id === result.model.id ? result.model : model);
       removeAttachment(); renderModels(); renderCapabilities(); setStatus('byokSelected');
     });
   }

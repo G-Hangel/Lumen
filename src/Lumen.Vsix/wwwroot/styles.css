@@ -465,38 +465,59 @@ textarea:disabled { opacity: .65; }
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Override panel: clearer spacing and grouped effort checkboxes. */
-.byok-override {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--vs-border, #3c3c3c);
-  border-radius: var(--radius, 6px);
-  background: color-mix(in srgb, var(--vs-background, #1e1e1e) 92%, var(--vs-accent, #0078d4) 8%);
-}
-.byok-override label { font-weight: 500; margin-top: 4px; }
+/* Override panel: effort checkboxes laid out with Lumen palette and no label wrapping. */
+.byok-override label { font-weight: 600; margin-top: 6px; color: var(--vs-foreground); }
 .byok-override input[type="text"] {
   width: 100%;
-  padding: 4px 8px;
-  border-radius: var(--radius, 6px);
-  border: 1px solid var(--vs-border, #3c3c3c);
-  background: var(--vs-background, #1e1e1e);
-  color: var(--vs-foreground, #eeeeee);
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--vs-foreground);
 }
 .byok-effort-levels {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 4px 12px;
-  padding: 6px 8px;
-  border: 1px solid var(--vs-border, #3c3c3c);
-  border-radius: var(--radius, 6px);
-  margin: 4px 0;
+  min-width: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  margin: 6px 8px;
 }
-.byok-effort-levels legend { font-weight: 600; padding: 0 4px; }
-.byok-effort-levels label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; }
-.byok-model-enable { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-.byok-model-enable label { margin: 0; }
-/* Remove-provider button: trash icon, danger affordance. */
+.byok-effort-levels legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--brand-ink);
+  padding: 0 4px;
+}
+.byok-effort-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding-top: 4px;
+}
+.byok-effort-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 400;
+  white-space: nowrap;
+  color: var(--vs-foreground);
+  cursor: pointer;
+}
+.byok-effort-grid input[type="checkbox"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--vs-accent);
+}
+.byok-model-enable { display: flex; align-items: center; gap: 6px; margin: 6px 8px; }
+.byok-model-enable label { margin: 0; cursor: pointer; }
+.byok-model-enable input[type="checkbox"] { flex: none; width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: var(--vs-accent); }/* Remove-provider button: trash icon, danger affordance. */
 .danger-button.icon-button { color: #d32f2f; }
 .danger-button.icon-button:hover:not(:disabled) { background: rgba(211, 47, 47, 0.12); }

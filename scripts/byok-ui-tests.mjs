@@ -2202,6 +2202,23 @@ test('UI unknown capability is visible, manual override requires explicit values
   f.locale(); assert.match(f.node('capabilities').textContent, /Override manual/); assert.equal(f.node('models').value, model.id);
 });
 
+test('UI override result with models hides unconfigured models from both selectors, without models keeps list', async t => {
+  const second = { id: 'second-model', name: 'Second model', vision: false, tools: false, reasoning: false, origins: [], efforts: [], enabled: true };
+  const disabledSecond = { ...second, enabled: false };
+  const f = uiFixture(t);
+  await openWithModel(f, model, { otherModels: [second] });
+  assert.equal(f.node('model-select').children.length, 3);
+  f.node('display-name').value = 'Configured';
+  const apply = f.node('apply-override').emit('click');
+  const configured = { ...model, name: 'Configured', enabled: true };
+  f.transport.reply({ model: configured, models: [configured, disabledSecond] }); await apply;
+  assert.deepEqual([...f.node('model-select').children].map(option => option.value), ['', model.id]);
+  assert.deepEqual([...f.node('models').children].map(option => option.value), ['', model.id]);
+  const apply2 = f.node('apply-override').emit('click');
+  f.transport.reply({ model: configured }); await apply2;
+  assert.equal(f.node('model-select').children.length, 2);
+});
+
 test('UI streams plain text/reasoning/tools without execution, safe Markdown is opt-in and cancellation stays concurrent', async t => {
   const rendered = [];
   const f = uiFixture(t, { renderMarkdown: text => { rendered.push(text); return '<p>safe output</p>'; } });

@@ -159,12 +159,15 @@ public sealed class SettingsStore
             var tools = JsonWire.Get(property.Value, "tools");
             var vision = JsonWire.Get(property.Value, "vision");
             var reasoning = JsonWire.Get(property.Value, "reasoning");
+            var enabled = JsonWire.Get(property.Value, "enabled");
             var efforts = JsonWire.Array(JsonWire.Get(property.Value, "efforts"));
             if (vision.ValueKind != JsonValueKind.True && vision.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             if (tools.ValueKind != JsonValueKind.True && tools.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
+            if (reasoning.ValueKind != JsonValueKind.True && reasoning.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
+            if (enabled.ValueKind != JsonValueKind.Undefined && enabled.ValueKind != JsonValueKind.True && enabled.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             foreach (var effort in efforts)
                 if (effort.ValueKind != JsonValueKind.String || !new[] { "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(effort.GetString()!, StringComparer.OrdinalIgnoreCase)) throw new ProviderException("invalid_configuration");
-            result[property.Name] = new ModelOverride(displayName ?? string.Empty, vision.GetBoolean(), tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray());
+            result[property.Name] = new ModelOverride(displayName ?? string.Empty, vision.GetBoolean(), tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray(), enabled.ValueKind == JsonValueKind.Undefined ? true : enabled.GetBoolean());
         }
         json.Dispose();
         return result;
@@ -190,7 +193,8 @@ public sealed class SettingsStore
             vision = pair.Value.Vision,
             tools = pair.Value.Tools,
             reasoning = pair.Value.Reasoning,
-            efforts = pair.Value.Efforts
+            efforts = pair.Value.Efforts,
+            enabled = pair.Value.Enabled
         });
         await WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).ConfigureAwait(false);
     }
@@ -209,7 +213,8 @@ public sealed class SettingsStore
                 vision = pair.Value.Vision,
                 tools = pair.Value.Tools,
                 reasoning = pair.Value.Reasoning,
-                efforts = pair.Value.Efforts
+                efforts = pair.Value.Efforts,
+                enabled = pair.Value.Enabled
             });
             WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).GetAwaiter().GetResult();
         }, cancellationToken);

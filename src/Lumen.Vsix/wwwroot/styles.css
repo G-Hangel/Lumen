@@ -427,3 +427,76 @@ textarea:disabled { opacity: .65; }
 .session-tab-model { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.7; font-size: 0.75em; }
 .session-tab-close { padding: 0 6px; border: 1px solid transparent; border-radius: var(--radius, 4px); background: transparent; color: inherit; cursor: pointer; }
 .session-tab-close:hover { border-color: var(--vs-border, #3c3c3c); }
+/* Composer model controls: model selector + reasoning effort, aligned and modern. */
+.composer-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.composer-model-controls label {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.composer-model-controls select {
+  min-width: 140px;
+  max-width: 240px;
+  padding: 4px 8px;
+  border-radius: var(--radius, 6px);
+  border: 1px solid var(--vs-border, #3c3c3c);
+  background: var(--vs-background, #1e1e1e);
+  color: var(--vs-foreground, #eeeeee);
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.composer-model-controls select:hover:not(:disabled) {
+  border-color: var(--vs-accent, #0078d4);
+}
+.composer-model-controls select:focus-visible {
+  outline: 2px solid var(--focus-color, #0078d4);
+  outline-offset: 1px;
+}
+.composer-model-controls select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Override panel: clearer spacing and grouped effort checkboxes. */
+.byok-override {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--vs-border, #3c3c3c);
+  border-radius: var(--radius, 6px);
+  background: color-mix(in srgb, var(--vs-background, #1e1e1e) 92%, var(--vs-accent, #0078d4) 8%);
+}
+.byok-override label { font-weight: 500; margin-top: 4px; }
+.byok-override input[type="text"] {
+  width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius, 6px);
+  border: 1px solid var(--vs-border, #3c3c3c);
+  background: var(--vs-background, #1e1e1e);
+  color: var(--vs-foreground, #eeeeee);
+}
+.byok-effort-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 4px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--vs-border, #3c3c3c);
+  border-radius: var(--radius, 6px);
+  margin: 4px 0;
+}
+.byok-effort-levels legend { font-weight: 600; padding: 0 4px; }
+.byok-effort-levels label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; }
+.byok-model-enable { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.byok-model-enable label { margin: 0; }
+/* Remove-provider button: trash icon, danger affordance. */
+.danger-button.icon-button { color: #d32f2f; }
+.danger-button.icon-button:hover:not(:disabled) { background: rgba(211, 47, 47, 0.12); }

@@ -2190,7 +2190,7 @@ for (const key of ['', 'synthetic_public_catalog_key']) {
 
 test('UI unknown capability is visible, manual override requires explicit values, locale refresh preserves selections', async t => {
   const f = uiFixture(t); await openWithModel(f, { ...model, vision: false, tools: false, reasoning: false, origins: [], efforts: [] });
-  assert.match(f.node('capabilities').textContent, /Vision · Unknown · Unknown/); assert.equal(f.node('apply-override').disabled, true);
+  assert.match(f.node('capabilities').textContent, /Vision · Unknown · Unknown/); assert.equal(f.node('apply-override').disabled, false);
   assert.match(f.node('models').children[1].textContent, /Unknown · Unknown · Unknown · Unverified/);
   for (const key of ['vision', 'tools', 'reasoning']) { f.node(key).value = key === 'vision' ? 'true' : 'false'; await f.node(key).emit('change'); }
   assert.equal(f.node('apply-override').disabled, false);

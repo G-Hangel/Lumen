@@ -504,7 +504,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('model-select').disabled = !enabled || locked || !models.length || !configurationId;
     const model = selectedModel();
     for (const capability of Object.keys(capabilityNames)) node(capability).disabled = !enabled || locked || !model;
-    node('apply-override').disabled = !enabled || locked || !model || Object.keys(capabilityNames).some(key => node(key).value === '');
+    node('apply-override').disabled = !enabled || locked || !model;
     if (node('display-name')) node('display-name').disabled = !enabled || locked || !model;
     if (node('effort-levels')) node('effort-levels').disabled = !enabled || locked || !model;
     if (node('model-enabled')) node('model-enabled').disabled = !enabled || locked || !model;

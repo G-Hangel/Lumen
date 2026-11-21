@@ -2195,7 +2195,7 @@ test('UI unknown capability is visible, manual override requires explicit values
   for (const key of ['vision', 'tools', 'reasoning']) { f.node(key).value = key === 'vision' ? 'true' : 'false'; await f.node(key).emit('change'); }
   assert.equal(f.node('apply-override').disabled, false);
   const apply = f.node('apply-override').emit('click'); const sent = f.transport.messages.at(-1);
-  assert.deepEqual(sent.payload, { configurationId, modelId: model.id, vision: true, tools: false, reasoning: false, displayName: 'Local model' });
+  assert.deepEqual(sent.payload, { configurationId, modelId: model.id, vision: true, tools: false, reasoning: false, displayName: 'Local model', enabled: true });
   const overridden = { ...model, reasoning: false, tools: false, efforts: [], origins: model.origins.map(origin => ({ ...origin, source: 'UserOverride' })) };
   f.transport.reply({ model: overridden }); await apply;
   assert.match(f.node('capabilities').textContent, /Manual override/);

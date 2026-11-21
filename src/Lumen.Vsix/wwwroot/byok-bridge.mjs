@@ -94,10 +94,11 @@ const configuration = value => fields(value, ['id', 'providerId', 'kind', 'baseU
 const origin = value => fields(value, ['capability', 'source', 'confidence']) && string(value.capability, 64)
   && ['Native', 'Registry', 'Heuristic', 'Probe', 'UserOverride'].includes(value.source)
   && ['Low', 'Medium', 'High'].includes(value.confidence);
-export const isModel = value => fields(value, ['id', 'name', 'vision', 'tools', 'reasoning', 'origins', 'efforts'])
+export const isModel = value => fields(value, ['id', 'name', 'vision', 'tools', 'reasoning', 'origins', 'efforts'], ['enabled'])
   && string(value.id, 512) && string(value.name, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof value[key] === 'boolean')
   && list(value.origins, 32, origin) && unique(value.origins, item => item.capability)
-  && list(value.efforts, 6, effort => EFFORTS.includes(effort)) && unique(value.efforts);
+  && list(value.efforts, 6, effort => EFFORTS.includes(effort)) && unique(value.efforts)
+  && (!Object.hasOwn(value, 'enabled') || typeof value.enabled === 'boolean');
 const errorCode = value => string(value, 64) && /^[a-z][a-z0-9_]*$/.test(value);
 const tokenCount = value => Number.isSafeInteger(value) && value >= 0;
 const probeBudget = value => Number.isInteger(value) && value >= 0 && value <= MAX_PROBE_BUDGET;
@@ -353,10 +354,11 @@ function validRequest(type, p) {
       && PROBE_CAPABILITIES.includes(p.capability) && p.consent === true;
     case 'byok.select': return fields(p, ['configurationId', 'modelId']) && guid(p.configurationId) && string(p.modelId, 512);
     case 'byok.remove': return fields(p, ['configurationId']) && guid(p.configurationId);
-    case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'], ['displayName', 'efforts'])
+    case 'byok.override': return fields(p, ['configurationId', 'modelId', 'vision', 'tools', 'reasoning'], ['displayName', 'efforts', 'enabled'])
       && guid(p.configurationId) && string(p.modelId, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof p[key] === 'boolean')
       && (!Object.hasOwn(p, 'displayName') || string(p.displayName, 128, true))
-      && (!Object.hasOwn(p, 'efforts') || (list(p.efforts, 6, effort => EFFORTS.includes(effort)) && unique(p.efforts)));
+      && (!Object.hasOwn(p, 'efforts') || (list(p.efforts, 6, effort => EFFORTS.includes(effort)) && unique(p.efforts)))
+      && (!Object.hasOwn(p, 'enabled') || typeof p.enabled === 'boolean');
     case 'byok.chat': return fields(p, ['configurationId', 'text', 'effort'], ['image', 'contextIds', 'readTools', 'writeTools', 'terminal', 'mode', 'permission', 'budget', 'skills']) && guid(p.configurationId)
       && (!Object.hasOwn(p, 'skills') || (list(p.skills, 8, skillName) && unique(p.skills)))
       && (!Object.hasOwn(p, 'mode') || ['Ask', 'Plan', 'Agent'].includes(p.mode))

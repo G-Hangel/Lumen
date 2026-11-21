@@ -507,6 +507,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     node('apply-override').disabled = !enabled || locked || !model || Object.keys(capabilityNames).some(key => node(key).value === '');
     if (node('display-name')) node('display-name').disabled = !enabled || locked || !model;
     if (node('effort-levels')) node('effort-levels').disabled = !enabled || locked || !model;
+    if (node('model-enabled')) node('model-enabled').disabled = !enabled || locked || !model;
     node('effort').disabled = !enabled || locked || !model?.reasoning || !model.efforts.length;
     // Model switches now replay the same session, so only the provider must match.
     const matchesHistory = !activeConversation || activeConversation.configurationId === configurationId;
@@ -569,11 +570,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
     }).join(' / ')}`;
   }
   function renderModels() {
-    node('models').replaceChildren(option('', text(models.length ? 'byokChooseModel' : 'byokEmptyModels')),
-      ...models.map(model => option(model.id, modelLabel(model))));
+    const visibleModels = models.filter(model => model.enabled !== false || model.id === selectedModelId);
+    node('models').replaceChildren(option('', text(visibleModels.length ? 'byokChooseModel' : 'byokEmptyModels')),
+      ...visibleModels.map(model => option(model.id, modelLabel(model))));
     node('models').value = selectedModelId;
-    node('model-select').replaceChildren(option('', text(models.length ? 'byokChooseModel' : 'byokEmptyModels')),
-      ...models.map(model => option(model.id, model.name)));
+    node('model-select').replaceChildren(option('', text(visibleModels.length ? 'byokChooseModel' : 'byokEmptyModels')),
+      ...visibleModels.map(model => option(model.id, model.name)));
     node('model-select').value = selectedModelId;
   }
   function renderCapabilities(resetOverride = true) {
@@ -596,6 +598,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
       node('display-name').value = model ? (model.displayName || model.name || '') : '';
       const checked = new Set(model?.efforts || []);
       for (const input of node('effort-levels').querySelectorAll('input')) input.checked = checked.has(input.value);
+      if (node('model-enabled')) node('model-enabled').checked = model ? model.enabled !== false : true;
     }
     const probeCapability = node('probe-capability').value;
     node('probe-capability').replaceChildren(...PROBE_CAPABILITIES.map(value => option(value, text(capabilityLabels[value.toLowerCase()]))));
@@ -1026,12 +1029,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const modelId = selectedModelId;
     const displayName = node('display-name').value.trim();
     const efforts = [...node('effort-levels').querySelectorAll('input:checked')].map(input => input.value);
+    const enabled = node('model-enabled').checked;
     await operate(async () => {
       const result = await bridge.request('byok.override', {
         configurationId, modelId,
         ...Object.fromEntries(Object.keys(capabilityNames).map(key => [key, node(key).value === 'true'])),
         ...(displayName ? { displayName } : {}),
-        ...(efforts.length ? { efforts } : {})
+        ...(efforts.length ? { efforts } : {}),
+        enabled
       });
       if (disposed) return;
       models = models.map(model => model.id === result.model.id ? result.model : model);

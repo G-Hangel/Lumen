@@ -140,7 +140,8 @@ public sealed class ModelInfo
         ReasoningSupport? reasoning = null,
         int? contextWindowTokens = null,
         int? maxOutputTokens = null,
-        IReadOnlyList<CapabilityOrigin>? origins = null)
+        IReadOnlyList<CapabilityOrigin>? origins = null,
+        bool enabled = true)
     {
         ProviderId = string.IsNullOrEmpty(providerId) ? throw new ArgumentNullException(nameof(providerId)) : providerId;
         ModelId = string.IsNullOrEmpty(modelId) ? throw new ArgumentNullException(nameof(modelId)) : modelId;
@@ -176,6 +177,7 @@ public sealed class ModelInfo
         ContextWindowTokens = contextWindowTokens;
         MaxOutputTokens = maxOutputTokens;
         Origins = origins ?? Array.Empty<CapabilityOrigin>();
+        Enabled = enabled;
     }
 
     public string ProviderId { get; }
@@ -186,6 +188,7 @@ public sealed class ModelInfo
     public int? ContextWindowTokens { get; }
     public int? MaxOutputTokens { get; }
     public IReadOnlyList<CapabilityOrigin> Origins { get; }
+    public bool Enabled { get; }
 
     public bool Has(ModelCapabilities capability) => (Capabilities & capability) == capability && capability != ModelCapabilities.None;
 

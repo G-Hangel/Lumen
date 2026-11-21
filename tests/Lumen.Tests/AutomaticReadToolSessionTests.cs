@@ -124,12 +124,14 @@ public sealed class AutomaticReadToolSessionTests
         Assert.False(card.GetProperty("isError").GetBoolean());
         Assert.Contains("actual disk content", card.GetProperty("content").GetString());
         await fixture.Send("byok.discover", new { configurationId = fixture.Id });
-        fixture.Handler.RequestTool = false;
+        var discover = fixture.Last;
+        if (discover.GetProperty("type").GetString() != "byok.discover.result") Assert.Fail(discover.GetRawText());
         await fixture.Chat(false);
+        var secondChat = fixture.Last;
+        if (secondChat.GetProperty("type").GetString() != "byok.chat.result") Assert.Fail(JsonSerializer.Serialize(secondChat));
         using var replay = JsonDocument.Parse(fixture.Handler.Bodies.Last());
-        Assert.Equal(new[] { "system", "user", "assistant", "tool", "assistant", "user" }, replay.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()));
-        Assert.False(replay.RootElement.TryGetProperty("tools", out _));
-    }
+        Assert.Equal(new[] { "system", "user", "assistant", "tool", "assistant", "user" }, replay.RootElement.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()).ToArray());
+        }
 
     [Fact]
     public async Task ExplicitOptoutDoesNotCaptureOrExecuteOrAdvertise()

@@ -145,8 +145,11 @@ public sealed class SettingsStore
         var modelPath = Path.ChangeExtension(path, "models.json");
         if (!File.Exists(modelPath)) return new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
         using var file = File.OpenRead(modelPath);
+        if (file.Length == 0) return new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
         if (file.Length > 262144) throw new ProviderException("invalid_configuration");
-        using var json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false);
+        JsonDocument json;
+        try { json = await JsonDocument.ParseAsync(file, cancellationToken: cancellationToken).ConfigureAwait(false); }
+        catch (JsonException) { throw new ProviderException("invalid_configuration"); }
         if (json.RootElement.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
         var result = new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
         foreach (var property in json.RootElement.EnumerateObject())
@@ -154,17 +157,18 @@ public sealed class SettingsStore
             if (property.Value.ValueKind != JsonValueKind.Object) throw new ProviderException("invalid_configuration");
             var displayName = JsonWire.String(property.Value, "displayName");
             var tools = JsonWire.Get(property.Value, "tools");
+            var vision = JsonWire.Get(property.Value, "vision");
             var reasoning = JsonWire.Get(property.Value, "reasoning");
             var efforts = JsonWire.Array(JsonWire.Get(property.Value, "efforts"));
+            if (vision.ValueKind != JsonValueKind.True && vision.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             if (tools.ValueKind != JsonValueKind.True && tools.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
-            if (reasoning.ValueKind != JsonValueKind.True && reasoning.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_configuration");
             foreach (var effort in efforts)
                 if (effort.ValueKind != JsonValueKind.String || !new[] { "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(effort.GetString()!, StringComparer.OrdinalIgnoreCase)) throw new ProviderException("invalid_configuration");
-            result[property.Name] = new ModelOverride(displayName ?? string.Empty, tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray());
+            result[property.Name] = new ModelOverride(displayName ?? string.Empty, vision.GetBoolean(), tools.GetBoolean(), reasoning.GetBoolean(), efforts.Select(value => value.GetString()!).ToArray());
         }
+        json.Dispose();
         return result;
     }
-
     public Task WriteModelOverrideAsync(string key, ModelOverride overrideValue, CancellationToken cancellationToken)
     {
         return WriteModelOverrideEntryAsync(key, overrideValue, cancellationToken);
@@ -183,6 +187,7 @@ public sealed class SettingsStore
         var payload = overrides.ToDictionary(pair => pair.Key, pair => new
         {
             displayName = pair.Value.DisplayName,
+            vision = pair.Value.Vision,
             tools = pair.Value.Tools,
             reasoning = pair.Value.Reasoning,
             efforts = pair.Value.Efforts
@@ -201,6 +206,7 @@ public sealed class SettingsStore
             var payload = filtered.ToDictionary(pair => pair.Key, pair => new
             {
                 displayName = pair.Value.DisplayName,
+                vision = pair.Value.Vision,
                 tools = pair.Value.Tools,
                 reasoning = pair.Value.Reasoning,
                 efforts = pair.Value.Efforts

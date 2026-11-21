@@ -244,7 +244,8 @@ public sealed class ConversationSessionTests
         await fixture.ConfigureAndSelect();
         Assert.Equal("byok.override.result", Type(await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false })));
         var first = await fixture.Send("byok.chat", new { configurationId = fixture.ConfigurationId, text = "question with image", effort = "Off", image = new { mediaType = "image/png", base64Data = Image } });
-        var conversationId = ChatSummary(first, fixture.ConfigurationId, Model, 1).GetProperty("id").GetString()!;
+        if (Type(first) != "byok.chat.result") Assert.Fail(first.GetRawText());
+        var conversationId = Payload(first).GetProperty("conversation").GetProperty("id").GetString()!;
         var persisted = ReadDomain(fixture, conversationId);
         var image = Assert.Single(persisted.Messages[0].Parts.OfType<ImagePart>());
         Assert.Equal("image/png", image.MediaType);
@@ -282,9 +283,10 @@ public sealed class ConversationSessionTests
         Assert.Equal(reads, fixture.Credentials.Reads);
         AssertUiPrivate(fixture.Replies);
 
-        await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
-        await fixture.Select();
-        Assert.Equal("byok.override.result", Type(await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false })));
+        var discover = await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        var selectResult = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = Model });
+        if (Type(selectResult) != "byok.select.result") Assert.Fail(JsonSerializer.Serialize(selectResult));
         fixture.Handler.Stream = GeminiFrame(new object[] { new { text = "next answer" } }, true);
         ChatSummary(await fixture.Chat("next signed question"), fixture.ConfigurationId, Model, 2);
         using var replay = JsonDocument.Parse(fixture.Handler.ChatBodies.Last());
@@ -310,13 +312,10 @@ public sealed class ConversationSessionTests
             : GeminiFrame(new object[] { new { text = "done" } }, true);
         await fixture.ConfigureAndSelect();
         await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = "text-only", vision = false, tools = false, reasoning = false });
         var firstTurn = await fixture.Chat("read Sample.cs", new { readTools = true });
         if (Type(firstTurn) != "byok.chat.result") Assert.Fail(Payload(firstTurn).GetProperty("code").GetString());
         ChatSummary(firstTurn, fixture.ConfigurationId, Model, 1);
-        await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
-        // Discovery re-reads native capabilities, so re-apply the overrides before switching.
-        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
-        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = "text-only", vision = false, tools = false, reasoning = false });
         var selected = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = "text-only" });
         Assert.Equal("error", Type(selected));
         Assert.Equal("tools_not_supported", Payload(selected).GetProperty("code").GetString());
@@ -416,7 +415,9 @@ public sealed class ConversationSessionTests
         Assert.Equal(reads, fixture.Credentials.Reads);
 
         await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
-        await fixture.Select();
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        var selectResult = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = Model });
+        if (Type(selectResult) != "byok.select.result") Assert.Fail(JsonSerializer.Serialize(selectResult));
         ChatSummary(await fixture.Chat("explicit after cancellation"), fixture.ConfigurationId, Model, 3);
         var body = fixture.Handler.ChatBodies.Last();
         Assert.DoesNotContain("cancelled partial answer", body);
@@ -450,7 +451,9 @@ public sealed class ConversationSessionTests
         Assert.Equal(2, ReadDomain(fixture, conversationId).Messages.Count);
         Assert.Contains(ReadJsonFiles(fixture.HistoryPath), json => json.Contains("\"failed\"", StringComparison.Ordinal));
         await fixture.Send("byok.discover", new { configurationId = fixture.ConfigurationId });
-        await fixture.Select();
+        await fixture.Send("byok.override", new { configurationId = fixture.ConfigurationId, modelId = Model, vision = true, tools = true, reasoning = false });
+        var selectResult = await fixture.Send("byok.select", new { configurationId = fixture.ConfigurationId, modelId = Model });
+        if (Type(selectResult) != "byok.select.result") Assert.Fail(JsonSerializer.Serialize(selectResult));
         fixture.Handler.Stream = CompletedFrame(kind);
         ChatSummary(await fixture.Chat("retry explicit question"), fixture.ConfigurationId, Model, 2);
         var body = fixture.Handler.ChatBodies.Last();

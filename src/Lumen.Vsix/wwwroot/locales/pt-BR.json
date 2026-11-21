@@ -390,5 +390,6 @@
   "sessionCloseLabel": "Fechar {title}",
   "byokEffortXHigh": "Extra alto",
   "byokModelDisplayName": "Nome de exibição",
-  "byokEffortLevels": "Níveis de esforço suportados"
+  "byokEffortLevels": "Níveis de esforço suportados",
+  "byokModelEnabled": "Habilitado nos seletores do chat"
 }

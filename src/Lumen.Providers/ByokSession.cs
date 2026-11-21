@@ -460,6 +460,7 @@ public sealed class ByokSession : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     RejectSecretMetadata(configuration, discovery.Models, secret);
                     discovery = ApplyProbeCatalog(configuration, discovery);
+                    discovery = ApplyModelOverrides(configuration, discovery);
                     if (discovery.CredentialValid == true || (kind == ProviderKind.OpenRouter && discovery.CredentialValid is null && discovery.ErrorCode is null))
                     {
                         if (!string.IsNullOrEmpty(secret)) await credentials.WriteAsync(configuration.Id, secret, cancellationToken).ConfigureAwait(false);
@@ -479,6 +480,7 @@ public sealed class ByokSession : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     RejectSecretMetadata(current, result.Models, currentSecret);
                     result = ApplyProbeCatalog(current, result);
+                    result = ApplyModelOverrides(current, result);
                     models[current.Id] = result.Models;
                     await Reply(send, id, type + ".result", CatalogView(current, result)).ConfigureAwait(false);
                     break;
@@ -489,6 +491,7 @@ public sealed class ByokSession : IDisposable
                     configurations.Remove(removed);
                     models.Remove(removed.Id);
                     probe.Store.RemoveProvider(removed.Id);
+                    await settings.RemoveModelOverridesAsync(removed.Id, cancellationToken).ConfigureAwait(false);
                     if (conversation?.ConfigurationId == removed.Id) conversation = null;
                     await settings.WriteProbeCacheAsync(probe.Store, cancellationToken).ConfigureAwait(false);
                     await settings.WriteAsync(configurations, cancellationToken).ConfigureAwait(false);
@@ -515,7 +518,7 @@ public sealed class ByokSession : IDisposable
                     await Reply(send, id, type + ".result", new { configuration = ConfigurationView(replacement) }).ConfigureAwait(false);
                     break;
                 case "byok.override":
-                    Require(payload, new[] { "configurationId", "modelId", "vision", "tools", "reasoning" });
+                    Require(payload, new[] { "configurationId", "modelId", "vision", "tools", "reasoning" }, new[] { "displayName", "efforts", "enabled" });
                     var owner = Find(payload);
                     var previous = FindModel(owner, RequiredString(payload, "modelId", 512));
                     var caps = previous.Capabilities;
@@ -528,10 +531,33 @@ public sealed class ByokSession : IDisposable
                         origins.RemoveAll(origin => origin.Capability == capability);
                         origins.Add(new CapabilityOrigin(capability, CapabilitySource.UserOverride, Confidence.High));
                     }
-                    var overridden = new ModelInfo(owner.ProviderId, previous.ModelId, caps, previous.DisplayName,
-                        (caps & ModelCapabilities.Reasoning) != 0 ? previous.Reasoning ?? new ReasoningSupport(ReasoningKind.ModelSelection, new[] { ReasoningIntent.Off, ReasoningIntent.Low }) : null,
-                        previous.ContextWindowTokens, previous.MaxOutputTokens, origins);
+                    var displayNameValue = JsonWire.Get(payload, "displayName");
+                    var displayName = previous.DisplayName;
+                    if (displayNameValue.ValueKind == JsonValueKind.String) displayName = RequiredString(payload, "displayName", 128, true);
+                    else if (displayNameValue.ValueKind != JsonValueKind.Undefined) throw new ProviderException("invalid_message");
+                    var effortsValue = JsonWire.Get(payload, "efforts");
+                    var efforts = previous.Reasoning?.Efforts ?? new[] { ReasoningIntent.Off, ReasoningIntent.Low };
+                    if (effortsValue.ValueKind != JsonValueKind.Undefined)
+                    {
+                        if (effortsValue.ValueKind != JsonValueKind.Array) throw new ProviderException("invalid_message");
+                        var effortList = new List<ReasoningIntent>();
+                        foreach (var item in effortsValue.EnumerateArray())
+                        {
+                            if (item.ValueKind != JsonValueKind.String) throw new ProviderException("invalid_message");
+                            var effortText = item.GetString()!;
+                            if (!Enum.TryParse<ReasoningIntent>(effortText, true, out var parsed) || !Enum.IsDefined(typeof(ReasoningIntent), parsed)) throw new ProviderException("invalid_message");
+                            effortList.Add(parsed);
+                        }
+                        efforts = effortList.ToArray();
+                    }
+                    var enabledValue = JsonWire.Get(payload, "enabled");
+                    var modelEnabled = enabledValue.ValueKind == JsonValueKind.True ? true : enabledValue.ValueKind == JsonValueKind.False ? false : previous.Enabled;
+                    if (enabledValue.ValueKind != JsonValueKind.Undefined && enabledValue.ValueKind != JsonValueKind.True && enabledValue.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_message");
+                    var overridden = new ModelInfo(owner.ProviderId, previous.ModelId, caps, displayName,
+                        (caps & ModelCapabilities.Reasoning) != 0 ? new ReasoningSupport(previous.Reasoning?.Kind ?? ReasoningKind.ModelSelection, efforts, previous.Reasoning?.Mandatory ?? false) : null,
+                        previous.ContextWindowTokens, previous.MaxOutputTokens, origins, modelEnabled);
                     models[owner.Id] = models[owner.Id].Select(value => value.ModelId == overridden.ModelId ? overridden : value).ToArray();
+                    await settings.WriteModelOverrideAsync($"{owner.Id}/{previous.ModelId}", new ModelOverride(displayName ?? string.Empty, (caps & ModelCapabilities.Vision) != 0, (caps & ModelCapabilities.Tools) != 0, (caps & ModelCapabilities.Reasoning) != 0, efforts.Select(e => e.ToString().ToLowerInvariant()).ToArray(), modelEnabled), cancellationToken).ConfigureAwait(false);
                     await Reply(send, id, type + ".result", new { model = ModelView(overridden) }).ConfigureAwait(false);
                     break;
                 case "byok.probe":
@@ -947,13 +973,16 @@ public sealed class ByokSession : IDisposable
         new CatalogResult(catalog.Models.Select(model => ApplyProbe(configuration, model)).ToArray(), catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
      private CatalogResult ApplyModelOverrides(ProviderConfiguration configuration, CatalogResult catalog)
      {
-         var overrides = settings.ReadModelOverridesAsync(CancellationToken.None).GetAwaiter().GetResult();
+         IReadOnlyDictionary<string, ModelOverride> overrides;
+         try { overrides = settings.ReadModelOverridesAsync(CancellationToken.None).GetAwaiter().GetResult(); }
+         catch (Exception) { overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal); }
          if (overrides.Count == 0) return catalog;
          return new CatalogResult(catalog.Models.Select(model =>
          {
              var key = configuration.Id + "/" + model.ModelId;
              if (!overrides.TryGetValue(key, out var overrideValue)) return model;
              var caps = model.Capabilities;
+             caps = overrideValue.Vision ? caps | ModelCapabilities.Vision : caps & ~ModelCapabilities.Vision;
              caps = overrideValue.Tools ? caps | ModelCapabilities.Tools : caps & ~ModelCapabilities.Tools;
              caps = overrideValue.Reasoning ? caps | ModelCapabilities.Reasoning : caps & ~ModelCapabilities.Reasoning;
              var reasoning = (caps & ModelCapabilities.Reasoning) != 0
@@ -962,7 +991,7 @@ public sealed class ByokSession : IDisposable
                      model.Reasoning?.Mandatory ?? false)
                  : null;
              var displayName = string.IsNullOrWhiteSpace(overrideValue.DisplayName) ? model.DisplayName : overrideValue.DisplayName;
-             return new ModelInfo(model.ProviderId, model.ModelId, caps, displayName, reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins);
+             return new ModelInfo(model.ProviderId, model.ModelId, caps, displayName, reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, overrideValue.Enabled);
          }).ToArray(), catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
      }
     private ModelInfo ApplyProbe(ProviderConfiguration configuration, ModelInfo model)
@@ -1014,7 +1043,8 @@ public sealed class ByokSession : IDisposable
         id = model.ModelId, name = model.DisplayName ?? model.ModelId,
         vision = model.Has(ModelCapabilities.Vision), tools = model.Has(ModelCapabilities.Tools), reasoning = model.Has(ModelCapabilities.Reasoning),
         origins = model.Origins.Select(origin => new { capability = origin.Capability.ToString(), source = origin.Source.ToString(), confidence = origin.Confidence.ToString() }).ToArray(),
-        efforts = model.Reasoning?.Efforts.Where(level => !model.Reasoning.Mandatory || level != ReasoningIntent.Off).Select(level => level.ToString()).ToArray() ?? Array.Empty<string>()
+        efforts = model.Reasoning?.Efforts.Where(level => !model.Reasoning.Mandatory || level != ReasoningIntent.Off).Select(level => level.ToString()).ToArray() ?? Array.Empty<string>(),
+         enabled = model.Enabled
     };
     private static object EventView(StreamEvent value) => value switch
     {

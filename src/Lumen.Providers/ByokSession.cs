@@ -977,10 +977,11 @@ public sealed class ByokSession : IDisposable
          try { overrides = settings.ReadModelOverridesAsync(CancellationToken.None).GetAwaiter().GetResult(); }
          catch (Exception) { overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal); }
          if (overrides.Count == 0) return catalog;
+         // Models without an explicit override are hidden from the chat selector until configured.
          return new CatalogResult(catalog.Models.Select(model =>
          {
              var key = configuration.Id + "/" + model.ModelId;
-             if (!overrides.TryGetValue(key, out var overrideValue)) return model;
+             if (!overrides.TryGetValue(key, out var overrideValue)) return new ModelInfo(model.ProviderId, model.ModelId, model.Capabilities, model.DisplayName, model.Reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, false);
              var caps = model.Capabilities;
              caps = overrideValue.Vision ? caps | ModelCapabilities.Vision : caps & ~ModelCapabilities.Vision;
              caps = overrideValue.Tools ? caps | ModelCapabilities.Tools : caps & ~ModelCapabilities.Tools;

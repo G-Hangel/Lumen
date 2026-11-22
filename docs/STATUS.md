@@ -67,6 +67,34 @@ o SignPath validar a origem; depois instalar o `.vsix` assinado e confirmar
 
 **Automação pronta:** workflow `.github/workflows/sign-vsix.yml` (trusted build system GitHub + SignPath GitHub App instalado) assinará automaticamente a cada release/push. Artefato assinado disponível em *Artifacts* da execução do workflow.
 
+---
+
+### ✅ **Seletor unificado de modelos (2026-11-22)**
+
+**Problema:** O usuário precisava trocar de provedor na aba de configuração para acessar modelos de outro provedor.
+
+**Solução:** Seletor único que mostra **todos os modelos configurados de todos os provedores** simultaneamente.
+
+**Mudanças:**
+1. **Backend (`ByokSession.cs`):**
+   - Novo endpoint `byok.models` retorna array plano com todos os modelos habilitados (`enabled: true`) de todos os provedores, cada um com `configurationId`.
+   - `ModelView` agora inclui `configurationId` para identificar o provedor de origem.
+   - `CatalogView` passa o `configurationId` do provedor atual para cada modelo.
+
+2. **Frontend (`byok.mjs`):**
+   - `listProviders()` agora faz `Promise.all([byok.list, byok.models])` e carrega todos os modelos de uma vez.
+   - `discover()` faz merge dos modelos descobertos com a lista global (mantém overrides de outros provedores).
+   - `chooseModel()` detecta se o modelo selecionado pertence a outro provedor (`next.configurationId !== configurationId`) e troca `configurationId` automaticamente antes de chamar `byok.select`.
+   - `deleteProvider()` remove os modelos do provedor excluído da lista global.
+   - `resetSelection()` não limpa mais a lista global de modelos.
+
+3. **Bridge (`byok-bridge.mjs`):**
+   - Validação para `byok.models` (sem parâmetros, igual a `byok.list`).
+
+**Resultado:** O usuário vê todos os modelos configurados em um único `<select id="models">` e `<select id="model-select">`, com label mostrando `nome (provider)` se houver ambiguidade. Ao escolher um modelo de outro provedor, a UI troca o provedor ativo silenciosamente e seleciona o modelo.
+
+**Evidência:** Build Release 0 erros/0 avisos; suíte .NET 1669/1669; UI 239/239; pacote 3/3. Commit `f99683e`.
+
 ## Melhorias de providers e esforço de raciocínio (2026-11-20)
 
 1. **Effort XHigh.** Adicionado `ReasoningIntent.XHigh` ao enum unificado (minimal, low,

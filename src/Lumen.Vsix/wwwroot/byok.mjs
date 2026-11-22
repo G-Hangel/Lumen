@@ -881,7 +881,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     });
   }
   async function discover() {
-    if (!configurationId) return;
+    if (!configurationId || !isValidConfigId(configurationId)) return;
     removeAttachment();
     const id = configurationId; resetSelection();
     await operate(async () => {
@@ -1022,10 +1022,11 @@ export function startByok({ transport, connected = () => false, text, renderMark
     await operate(async () => {
       // If the selected model belongs to a different provider, switch configuration first
       const targetConfigId = next?.configurationId;
-      if (targetConfigId && targetConfigId !== configurationId) {
+      if (targetConfigId && targetConfigId !== configurationId && isValidConfigId(targetConfigId)) {
         configurationId = targetConfigId;
         renderProviders(); // update provider dropdown
       }
+      if (!isValidConfigId(configurationId)) return;
       const result = await bridge.request('byok.select', { configurationId, modelId });
       if (disposed) return;
       configurations = configurations.map(config => config.id === result.configuration.id ? result.configuration : config);
@@ -1590,9 +1591,18 @@ export function startByok({ transport, connected = () => false, text, renderMark
   });
   for (const id of ['azure-subscription', 'azure-resource-group', 'azure-account', 'azure-tenant', 'azure-client']) listen(node(id), 'input', updateControls);
   listen(node('list'), 'click', listProviders);
+  function isValidConfigId(id) {
+    return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  }
+
   async function changeProvider() {
     if (!online() || busy) return;
-    configurationId = node('providers').value;
+    const nextConfigId = node('providers').value;
+    if (!isValidConfigId(nextConfigId)) {
+      resetSelection(); cancelRemoveProvider(false); // Clear probe consent and selection, but don't switch provider
+      return;
+    }
+    configurationId = nextConfigId;
     resetSelection(); cancelRemoveProvider(false);
     if (!activeConversation) { liveTurn = null; node('live').replaceChildren(); syncEmpty(); }
     await discover();

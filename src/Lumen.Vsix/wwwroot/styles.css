@@ -466,13 +466,21 @@ textarea:disabled { opacity: .65; }
   cursor: not-allowed;
 }
 /* Override panel: effort checkboxes laid out with Lumen palette and no label wrapping. */
+.byok-override {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+}
+.byok-override > summary {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
 .byok-override label { font-weight: 600; margin-top: 6px; color: var(--vs-foreground); }
 .byok-override input[type="text"] {
   width: 100%;
   padding: 6px 8px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: var(--surface-1);
+  background: var(--surface-2);
   color: var(--vs-foreground);
 }
 .byok-effort-levels {
@@ -480,7 +488,7 @@ textarea:disabled { opacity: .65; }
   padding: 8px 10px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface-1);
+  background: var(--surface-2);
   margin: 6px 8px;
 }
 .byok-effort-levels legend {
@@ -494,8 +502,9 @@ textarea:disabled { opacity: .65; }
 .byok-effort-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 18px;
+  gap: 8px 16px;
   padding-top: 4px;
+  width: 100%;
 }
 .byok-effort-grid label {
   display: inline-flex;
@@ -506,6 +515,8 @@ textarea:disabled { opacity: .65; }
   white-space: nowrap;
   color: var(--vs-foreground);
   cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .byok-effort-grid input[type="checkbox"] {
   flex: none;

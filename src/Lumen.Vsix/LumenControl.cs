@@ -151,16 +151,13 @@ internal sealed class LumenControl : UserControl, IDisposable
         {
             try
             {
-                await Task.Run(async () =>
+                if (BridgeProtocol.IsTrustedSource(source) && ByokSession.IsRequest(json))
                 {
-                    if (BridgeProtocol.IsTrustedSource(source) && ByokSession.IsRequest(json))
-                    {
-                        await byok.Value.HandleAsync(source, json, PostAsync, lifetime.Token).ConfigureAwait(false);
-                        return;
-                    }
-                    var reply = BridgeProtocol.Handle(source, json, theme);
-                    if (reply != null) await PostAsync(reply.ToJson()).ConfigureAwait(false);
-                }, lifetime.Token);
+                    await byok.Value.HandleAsync(source, json, PostAsync, lifetime.Token).ConfigureAwait(false);
+                    return;
+                }
+                var reply = BridgeProtocol.Handle(source, json, theme);
+                if (reply != null) await PostAsync(reply.ToJson()).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
             catch (Exception exception)

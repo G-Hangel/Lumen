@@ -460,7 +460,7 @@ public sealed class ByokSession : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     RejectSecretMetadata(configuration, discovery.Models, secret);
                     discovery = ApplyProbeCatalog(configuration, discovery);
-                    discovery = ApplyModelOverrides(configuration, discovery);
+                    discovery = await ApplyModelOverridesAsync(configuration, discovery, cancellationToken).ConfigureAwait(false);
                     if (discovery.CredentialValid == true || (kind == ProviderKind.OpenRouter && discovery.CredentialValid is null && discovery.ErrorCode is null))
                     {
                         if (!string.IsNullOrEmpty(secret)) await credentials.WriteAsync(configuration.Id, secret, cancellationToken).ConfigureAwait(false);
@@ -480,7 +480,7 @@ public sealed class ByokSession : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     RejectSecretMetadata(current, result.Models, currentSecret);
                     result = ApplyProbeCatalog(current, result);
-                    result = ApplyModelOverrides(current, result);
+                    result = await ApplyModelOverridesAsync(current, result, cancellationToken).ConfigureAwait(false);
                     models[current.Id] = result.Models;
                     await Reply(send, id, type + ".result", CatalogView(current, result)).ConfigureAwait(false);
                     break;
@@ -554,7 +554,7 @@ public sealed class ByokSession : IDisposable
                     var modelEnabled = enabledValue.ValueKind == JsonValueKind.True ? true : enabledValue.ValueKind == JsonValueKind.False ? false : previous.Enabled;
                     if (enabledValue.ValueKind != JsonValueKind.Undefined && enabledValue.ValueKind != JsonValueKind.True && enabledValue.ValueKind != JsonValueKind.False) throw new ProviderException("invalid_message");
                     await settings.WriteModelOverrideAsync($"{owner.Id}/{previous.ModelId}", new ModelOverride(displayName ?? string.Empty, (caps & ModelCapabilities.Vision) != 0, (caps & ModelCapabilities.Tools) != 0, (caps & ModelCapabilities.Reasoning) != 0, efforts.Select(e => e.ToString().ToLowerInvariant()).ToArray(), modelEnabled), cancellationToken).ConfigureAwait(false);
-                    var applied = ApplyModelOverridesToModels(owner, models[owner.Id]);
+                    var applied = await ApplyModelOverridesToModelsAsync(owner, models[owner.Id], cancellationToken).ConfigureAwait(false);
                     models[owner.Id] = applied;
                     var view = applied.First(value => value.ModelId == previous.ModelId);
                     await Reply(send, id, type + ".result", new { model = ModelView(view), models = applied.Select(ModelView).ToArray() }).ConfigureAwait(false);
@@ -970,35 +970,36 @@ public sealed class ByokSession : IDisposable
 
     private CatalogResult ApplyProbeCatalog(ProviderConfiguration configuration, CatalogResult catalog) =>
         new CatalogResult(catalog.Models.Select(model => ApplyProbe(configuration, model)).ToArray(), catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
-     private CatalogResult ApplyModelOverrides(ProviderConfiguration configuration, CatalogResult catalog)
-     {
-         var models = ApplyModelOverridesToModels(configuration, catalog.Models);
-         return models == catalog.Models ? catalog : new CatalogResult(models, catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
-     }
-     private ModelInfo[] ApplyModelOverridesToModels(ProviderConfiguration configuration, IReadOnlyList<ModelInfo> catalogModels)
-     {
-         IReadOnlyDictionary<string, ModelOverride> overrides;
-         try { overrides = settings.ReadModelOverridesAsync(CancellationToken.None).GetAwaiter().GetResult(); }
-         catch (Exception) { overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal); }
-         if (overrides.Count == 0) return catalogModels.ToArray();
-         // Models without an explicit override are hidden from the chat selector until configured.
-         return catalogModels.Select(model =>
-         {
-             var key = configuration.Id + "/" + model.ModelId;
-             if (!overrides.TryGetValue(key, out var overrideValue)) return new ModelInfo(model.ProviderId, model.ModelId, model.Capabilities, model.DisplayName, model.Reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, false);
-             var caps = model.Capabilities;
-             caps = overrideValue.Vision ? caps | ModelCapabilities.Vision : caps & ~ModelCapabilities.Vision;
-             caps = overrideValue.Tools ? caps | ModelCapabilities.Tools : caps & ~ModelCapabilities.Tools;
-             caps = overrideValue.Reasoning ? caps | ModelCapabilities.Reasoning : caps & ~ModelCapabilities.Reasoning;
-             var reasoning = (caps & ModelCapabilities.Reasoning) != 0
-                 ? new ReasoningSupport(model.Reasoning?.Kind ?? ReasoningKind.ModelSelection,
-                     overrideValue.Efforts.Count > 0 ? overrideValue.Efforts.Select(e => Enum.TryParse<ReasoningIntent>(e, true, out var r) ? r : ReasoningIntent.Low).ToArray() : (model.Reasoning?.Efforts ?? new[] { ReasoningIntent.Low }),
-                     model.Reasoning?.Mandatory ?? false)
-                 : null;
-             var displayName = string.IsNullOrWhiteSpace(overrideValue.DisplayName) ? model.DisplayName : overrideValue.DisplayName;
-             return new ModelInfo(model.ProviderId, model.ModelId, caps, displayName, reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, overrideValue.Enabled);
-         }).ToArray();
-     }
+
+    private async Task<CatalogResult> ApplyModelOverridesAsync(ProviderConfiguration configuration, CatalogResult catalog, CancellationToken cancellationToken)
+    {
+        var models = await ApplyModelOverridesToModelsAsync(configuration, catalog.Models, cancellationToken).ConfigureAwait(false);
+        return models == catalog.Models ? catalog : new CatalogResult(models, catalog.CredentialValid, catalog.ErrorCode, catalog.RetryAfter);
+    }
+
+    private async Task<ModelInfo[]> ApplyModelOverridesToModelsAsync(ProviderConfiguration configuration, IReadOnlyList<ModelInfo> catalogModels, CancellationToken cancellationToken)
+    {
+        IReadOnlyDictionary<string, ModelOverride> overrides;
+        try { overrides = await settings.ReadModelOverridesAsync(cancellationToken).ConfigureAwait(false); }
+        catch (Exception) { overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal); }
+        // Models without an explicit override are hidden from the chat selector until configured.
+        return catalogModels.Select(model =>
+        {
+            var key = configuration.Id + "/" + model.ModelId;
+            if (!overrides.TryGetValue(key, out var overrideValue)) return new ModelInfo(model.ProviderId, model.ModelId, model.Capabilities, model.DisplayName, model.Reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, false);
+            var caps = model.Capabilities;
+            caps = overrideValue.Vision ? caps | ModelCapabilities.Vision : caps & ~ModelCapabilities.Vision;
+            caps = overrideValue.Tools ? caps | ModelCapabilities.Tools : caps & ~ModelCapabilities.Tools;
+            caps = overrideValue.Reasoning ? caps | ModelCapabilities.Reasoning : caps & ~ModelCapabilities.Reasoning;
+            var reasoning = (caps & ModelCapabilities.Reasoning) != 0
+                ? new ReasoningSupport(model.Reasoning?.Kind ?? ReasoningKind.ModelSelection,
+                    overrideValue.Efforts.Count > 0 ? overrideValue.Efforts.Select(e => Enum.TryParse<ReasoningIntent>(e, true, out var r) ? r : ReasoningIntent.Low).ToArray() : (model.Reasoning?.Efforts ?? new[] { ReasoningIntent.Low }),
+                    model.Reasoning?.Mandatory ?? false)
+                : null;
+            var displayName = string.IsNullOrWhiteSpace(overrideValue.DisplayName) ? model.DisplayName : overrideValue.DisplayName;
+            return new ModelInfo(model.ProviderId, model.ModelId, caps, displayName, reasoning, model.ContextWindowTokens, model.MaxOutputTokens, model.Origins, overrideValue.Enabled);
+        }).ToArray();
+    }
     private ModelInfo ApplyProbe(ProviderConfiguration configuration, ModelInfo model)
     {
         var caps = model.Capabilities;

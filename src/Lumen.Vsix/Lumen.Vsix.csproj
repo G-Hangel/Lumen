@@ -24,7 +24,7 @@
     <ProjectReference Include="../Lumen.Providers/Lumen.Providers.csproj" IncludeOutputGroupsInVSIX="BuiltProjectOutputGroup;SatelliteDllsProjectOutputGroup" />
     <ProjectReference Include="../Lumen.Tools/Lumen.Tools.csproj" IncludeOutputGroupsInVSIX="BuiltProjectOutputGroup;SatelliteDllsProjectOutputGroup" />
     <VSCTCompile Include="Menus.vsct">
-      <ResourceName>Menus.ctmenu</ResourceName>
+      <ResourceName>Menus.cto</ResourceName>
     </VSCTCompile>
     <SourceVsixManifest Include="extension.vsixmanifest" />
     <Content Include="wwwroot/**/*">

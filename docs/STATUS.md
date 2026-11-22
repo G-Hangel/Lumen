@@ -1,6 +1,11 @@
-# STATUS - Lumen
+# STATUS — Lumen
 
-Atualizado em **2026-11-20**.
+Diário do projeto: andamento cronológico, evidências de execução e hotfixes.
+Para o plano executável e critérios de aceite, veja [PLANO.md](file:///c:/Users/Hanjel/Documents/Extensão/docs/PLANO.md).
+Para rastreamento de bloqueios e impedimentos técnicos, veja [BLOQUEIOS.md](file:///c:/Users/Hanjel/Documents/Extensão/docs/BLOQUEIOS.md).
+Para o detalhamento de fatias de interface em andamento, veja [MELHORIAS-UI.md](file:///c:/Users/Hanjel/Documents/Extensão/docs/MELHORIAS-UI.md).
+
+Atualizado em **2026-11-21**.
 
 ## Melhorias de providers e esforço de raciocínio (2026-11-20)
 

@@ -8,6 +8,32 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ## Abertos
 
+### B17 - pkgdef não é processado no VS 2026 (18.x) — extensão não carrega
+
+**Sintoma:** VSIX instalado (tanto per-user quanto machine-wide), arquivos conferidos, mas o `privateregistry.bin` não recebe as chaves do `Lumen.Vsix.pkgdef` (`Packages\{69e1a944...}`, `Menus\{96a71c4a...}`, `ToolWindows\{2dccaf3a...}`). Menu "Lumen" não aparece em **Exibir**.
+
+**Evidência:**
+- `ActivityLog.xml` (Exp): `PkgDefSearchPath` **não inclui** `C:\Users\Hanjel\AppData\Local\Microsoft\VisualStudio\18.0_25e762c6Exp\Extensions` (apenas system folders).
+- `PkgDefCache fast check: timestamps are current` — cache stale impede reprocessamento.
+- `devenv /Setup`, `/ResetSettings`, `/UpdateConfiguration` (user e admin) não processam o pkgdef.
+- VSIXInstaller log: `SignatureState: Unsigned`, `Scheduling without hotload: No hotloadable VSIX packages were present in the plan`.
+- Mesmo com `Menus.cto` correto no VSIX e pkgdef referenciando `Menus.cto`, o registro não é atualizado.
+
+**Tentativas:**
+1. Corrigido `ResourceName=Menus.cto` no `.csproj` + rebuild VSIX manual com pkgdef corrigido.
+2. Desinstalação completa + limpeza de caches (`ExtensionMetadata*.mpack`, `privateregistry.bin`).
+3. Instalação machine-wide (`/admin`) em `C:\Program Files\...\Extensions\lumen\`.
+4. `devenv /Setup` como admin.
+5. Certificado de teste criado (`New-SelfSignedCertificate`) mas `signtool.exe` não disponível no ambiente.
+
+**Hipótese:** VS 2026 exige extensão assinada para processar pkgdef de extensões VSIX v3, ou o `PkgDefSearchPath` não inclui pastas de extensões per-user/machine-wide não-sistema.
+
+**Controle negativo:** extensões Microsoft assinadas na mesma pasta têm pkgdef processado (ex: `Microsoft.VisualStudio.LanguageServices.TypeScript`).
+
+**Próximo passo:** assinar VSIX com certificado válido (requer Windows SDK/signtool) ou testar em VS 2022 estável para confirmar se é regressão do 18.x.
+
+---
+
 ### B13 - Tool window não é realizado quando o VS é iniciado por automação - **RESOLVIDO 2026-11-19**
 
 Sintoma: iniciado por `Start-Process` a partir do agente, o VS nasce com a janela

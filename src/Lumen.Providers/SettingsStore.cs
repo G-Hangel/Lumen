@@ -13,6 +13,7 @@ namespace Lumen.Providers;
 public sealed class SettingsStore
 {
     private readonly string path;
+    private static readonly SemaphoreSlim ModelsLock = new(1, 1);
     public SettingsStore(string path)
     {
         this.path = path;
@@ -179,32 +180,42 @@ public sealed class SettingsStore
 
     private async Task WriteModelOverrideEntryAsync(string key, ModelOverride overrideValue, CancellationToken cancellationToken)
     {
-        var modelPath = Path.ChangeExtension(path, "models.json");
-        var overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
-        if (File.Exists(modelPath))
+        await ModelsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var existing = await ReadModelOverridesAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var pair in existing) overrides[pair.Key] = pair.Value;
+            var modelPath = Path.ChangeExtension(path, "models.json");
+            var overrides = new Dictionary<string, ModelOverride>(StringComparer.Ordinal);
+            if (File.Exists(modelPath))
+            {
+                var existing = await ReadModelOverridesAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var pair in existing) overrides[pair.Key] = pair.Value;
+            }
+            overrides[key] = overrideValue;
+            var payload = overrides.ToDictionary(pair => pair.Key, pair => new
+            {
+                displayName = pair.Value.DisplayName,
+                vision = pair.Value.Vision,
+                tools = pair.Value.Tools,
+                reasoning = pair.Value.Reasoning,
+                efforts = pair.Value.Efforts,
+                enabled = pair.Value.Enabled
+            });
+            await WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).ConfigureAwait(false);
         }
-        overrides[key] = overrideValue;
-        var payload = overrides.ToDictionary(pair => pair.Key, pair => new
+        finally
         {
-            displayName = pair.Value.DisplayName,
-            vision = pair.Value.Vision,
-            tools = pair.Value.Tools,
-            reasoning = pair.Value.Reasoning,
-            efforts = pair.Value.Efforts,
-            enabled = pair.Value.Enabled
-        });
-        await WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).ConfigureAwait(false);
+            ModelsLock.Release();
+        }
     }
 
-    public Task RemoveModelOverridesAsync(string configurationId, CancellationToken cancellationToken) =>
-        Task.Run(() =>
+    public async Task RemoveModelOverridesAsync(string configurationId, CancellationToken cancellationToken)
+    {
+        await ModelsLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
             var modelPath = Path.ChangeExtension(path, "models.json");
             if (!File.Exists(modelPath)) return;
-            var existing = ReadModelOverridesAsync(cancellationToken).GetAwaiter().GetResult();
+            var existing = await ReadModelOverridesAsync(cancellationToken).ConfigureAwait(false);
             var filtered = existing.Where(pair => !pair.Key.StartsWith(configurationId + "/", StringComparison.Ordinal)).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
             if (filtered.Count == existing.Count) return;
             var payload = filtered.ToDictionary(pair => pair.Key, pair => new
@@ -216,8 +227,13 @@ public sealed class SettingsStore
                 efforts = pair.Value.Efforts,
                 enabled = pair.Value.Enabled
             });
-            WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).GetAwaiter().GetResult();
-        }, cancellationToken);
+            await WriteJsonAsync(modelPath, JsonWire.Serialize(payload), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ModelsLock.Release();
+        }
+    }
 
     private static async Task WriteJsonAsync(string path, string json, CancellationToken cancellationToken)
     {

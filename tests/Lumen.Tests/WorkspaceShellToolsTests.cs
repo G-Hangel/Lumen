@@ -556,9 +556,10 @@ public sealed class WorkspaceShellToolsTests
             Assert.Equal("approval_denied", Code(denied));
             fixture.Response = ApprovalResponse.AllowOnce;
             var result = await fixture.Execute("run_command", invocation);
-            Assert.False(result.IsError, result.Content);
+            Assert.False(result.IsError, $"{name} ({executable}): {result.Content}");
             using var output = JsonDocument.Parse(result.Content);
-            Assert.Equal(0, output.RootElement.GetProperty("exitCode").GetInt32());
+            var exitCode = output.RootElement.GetProperty("exitCode").GetInt32();
+            Assert.True(exitCode == 0, $"{name} ({executable}) exited with {exitCode}: {output.RootElement.GetProperty("stderr").GetString()}");
             Assert.Contains("lumen-shell", output.RootElement.GetProperty("stdout").GetString());
         }
         Assert.Equal(shells.Length * 2, fixture.Requests.Count);

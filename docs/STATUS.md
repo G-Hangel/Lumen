@@ -52,6 +52,21 @@ Pendente: `SIGNPATH_API_TOKEN` (secret), `SIGNPATH_PROJECT_SLUG` e
 o SignPath validar a origem; depois instalar o `.vsix` assinado e confirmar
 **Exibir → Lumen** (fecha o B17).
 
+---
+
+### ✅ **B17 RESOLVIDO — VSIX assinado via SignPath instalado e validado (2026-11-22)**
+
+**Evidência final:**
+- Submissão manual no dashboard SignPath (artifact `lumen-signing-test.zip` → `Lumen.Vsix.vsix` na raiz).
+- Configuração de artefato: `<zip-file>` → `<opc-file path="*.vsix"><opc-sign/></opc-file></zip-file>`.
+- Política de assinatura `Lumen` (certificado GlobalSign OSS) aplicada.
+- VSIX assinado instalado no VS 2026 Community Insiders (18.x) — **menu Exibir → Lumen aparece**; tool window abre sem erros.
+- `ActivityLog.xml` **limpo**: sem `E_ACCESSDENIED` / `PkgDef section fails the security check`; chaves `Packages\{69e1a944...}`, `Menus\{96a71c4a...}`, `ToolWindows\{2dccaf3a...}` registradas no `privateregistry.bin`.
+
+**Causa raiz confirmada:** VS 2026 (18.x) exige assinatura OPC de CA pública no container VSIX para processar `pkgdef`. `AllowUnsignedExtensions=1` não afeta esse caminho.
+
+**Automação pronta:** workflow `.github/workflows/sign-vsix.yml` (trusted build system GitHub + SignPath GitHub App instalado) assinará automaticamente a cada release/push. Artefato assinado disponível em *Artifacts* da execução do workflow.
+
 ## Melhorias de providers e esforço de raciocínio (2026-11-20)
 
 1. **Effort XHigh.** Adicionado `ReasoningIntent.XHigh` ao enum unificado (minimal, low,

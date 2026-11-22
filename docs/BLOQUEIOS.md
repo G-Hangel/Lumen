@@ -41,6 +41,21 @@ saída e `arquivo:linha` — **não invente solução**.
 
 ---
 
+### ✅ **RESOLVIDO 2026-11-22** — Assinatura via SignPath + instalação manual validada
+
+**Evidência de resolução:**
+- Submissão manual no dashboard do SignPath com artifact `lumen-signing-test.zip` (ZIP contendo `Lumen.Vsix.vsix`).
+- Configuração de artefato: `<zip-file>` → `<opc-file path="*.vsix"><opc-sign/></opc-file></zip-file>`.
+- Política de assinatura `Lumen` (certificado GlobalSign OSS) aplicada com sucesso.
+- VSIX assinado instalado no VS 2026 Community Insiders (18.x) — menu **Exibir → Lumen** aparece e a tool window abre.
+- `ActivityLog.xml` **sem** entradas `E_ACCESSDENIED` / `PkgDef section fails the security check`; chaves `Packages\{69e1a944...}`, `Menus\{96a71c4a...}`, `ToolWindows\{2dccaf3a...}` presentes no `privateregistry.bin`.
+
+**Causa raiz confirmada:** VS 2026 (18.x) só processa `pkgdef` de extensões cujo container VSIX tenha assinatura OPC de CA pública (GlobalSign via SignPath). `AllowUnsignedExtensions=1` não cobre esse caminho.
+
+**Próximos passos automatizados:** workflow `.github/workflows/sign-vsix.yml` (trusted build system GitHub + SignPath GitHub App) assinará automaticamente a cada release/push.
+
+---
+
 ### B13 - Tool window não é realizado quando o VS é iniciado por automação - **RESOLVIDO 2026-11-19**
 
 Sintoma: iniciado por `Start-Process` a partir do agente, o VS nasce com a janela

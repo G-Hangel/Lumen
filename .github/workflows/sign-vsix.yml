@@ -1,0 +1,66 @@
+name: Build and sign VSIX
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build
+        run: dotnet build Lumen.sln -c Release
+
+      - name: Test
+        run: dotnet test Lumen.sln -c Release --no-build
+
+      - name: UI tests
+        run: |
+          npm ci
+          npm run build:ui
+
+      # archive:false keeps the .vsix as a plain file so the artifact
+      # configuration can use <opc-file> as root instead of <zip-file>.
+      - name: Upload unsigned artifact
+        id: upload-unsigned-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-vsix-unsigned
+          path: src/Lumen.Vsix/bin/Release/net48/Lumen.Vsix.vsix
+          archive: false
+          if-no-files-found: error
+
+      - name: Sign VSIX
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: dc8e7b01-49c0-4747-85d5-c3e8956150ac
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          skip-decompress: true
+          output-artifact-directory: signed
+
+      - name: Upload signed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumen-vsix-signed
+          path: signed/
+          if-no-files-found: error

@@ -14,23 +14,30 @@ saída e `arquivo:linha` — **não invente solução**.
 
 **Evidência:**
 - `ActivityLog.xml` (Exp): `PkgDefSearchPath` **não inclui** `C:\Users\Hanjel\AppData\Local\Microsoft\VisualStudio\18.0_25e762c6Exp\Extensions` (apenas system folders).
+- **`ActivityLog.xml` (2026-11-22, com `AllowUnsignedExtensions=1` nas chaves `ExtensionManager` de `18.0_25e762c6` e `18.0_25e762c6Exp`, HKCU):**
+  - `Error` — `PkgDef section fails the security check.` / `0x80070005 - E_ACCESSDENIED` / `\\$\Packages\{69e1a944-246f-4705-b303-32018d4a8df5}`
+  - `Error` — `Could not process PkgDef file` / `E_ACCESSDENIED` / `...\extensions\2glhjpfk.mi5\lumen.vsix.pkgdef`
+  - `Warning` — `Error scanning PkgDef file` / `E_ACCESSDENIED` (mesmo path)
+  - As entradas acima são **idênticas antes e depois** de setar `AllowUnsignedExtensions=1`, logo o registro não é o que destrava o pkgdef.
 - `PkgDefCache fast check: timestamps are current` — cache stale impede reprocessamento.
 - `devenv /Setup`, `/ResetSettings`, `/UpdateConfiguration` (user e admin) não processam o pkgdef.
-- VSIXInstaller log: `SignatureState: Unsigned`, `Scheduling without hotload: No hotloadable VSIX packages were present in the plan`.
+- VSIXInstaller log: `SignatureState: Unsigned`, `Scheduling without hotload: No hotloadable VSIX packages were present in the plan`, `Extension is not signed.`
 - Mesmo com `Menus.cto` correto no VSIX e pkgdef referenciando `Menus.cto`, o registro não é atualizado.
 
 **Tentativas:**
 1. Corrigido `ResourceName=Menus.cto` no `.csproj` + rebuild VSIX manual com pkgdef corrigido.
-2. Desinstalação completa + limpeza de caches (`ExtensionMetadata*.mpack`, `privateregistry.bin`).
+2. Desinstalação completa + limpeza de caches (`ExtensionMetadata*.mpack`, `privateregistry.bin`, `*pkgdefcache*`).
 3. Instalação machine-wide (`/admin`) em `C:\Program Files\...\Extensions\lumen\`.
 4. `devenv /Setup` como admin.
-5. Certificado de teste criado (`New-SelfSignedCertificate`) mas `signtool.exe` não disponível no ambiente.
+5. Windows SDK instalado via winget; `signtool.exe` localizado — **rejeita** o container `.vsix`: `SignTool Error: This file format cannot be signed because it is not recognized.`
+6. `dotnet nuget sign` com certificado auto-assinado (RSA/SHA256) — **rejeita**: `NU3018 UntrustedRoot` + `NU3018 NotValidForUsage`.
+7. `AllowUnsignedExtensions=1` (HKCU user e Exp) — sem efeito (ver evidência acima).
 
-**Hipótese:** VS 2026 exige extensão assinada para processar pkgdef de extensões VSIX v3, ou o `PkgDefSearchPath` não inclui pastas de extensões per-user/machine-wide não-sistema.
+**Hipótese:** VS 2026 (18.x) só processa `pkgdef` de extensão cujo container VSIX tenha assinatura OPC de CA pública (`VSIXSignTool`/`<opc-sign>`); `E_ACCESSDENIED` na "security check" é a recusa da assinatura ausente/inválida. `AllowUnsignedExtensions` não cobre esse caminho.
 
 **Controle negativo:** extensões Microsoft assinadas na mesma pasta têm pkgdef processado (ex: `Microsoft.VisualStudio.LanguageServices.TypeScript`).
 
-**Próximo passo:** assinar VSIX com certificado válido (requer Windows SDK/signtool) ou testar em VS 2022 estável para confirmar se é regressão do 18.x.
+**Plano:** assinar o VSIX via SignPath.io (open source, gratuito — organization id `dc8e7b01-49c0-4747-85d5-c3e8956150ac`), workflow em `.github/workflows/sign-vsix.yml`; depois reinstalar o `.vsix` assinado e revalidar o `ActivityLog.xml` (as três entradas `E_ACCESSDENIED` devem sumir e `Packages\{69e1a944...}` deve aparecer no registro).
 
 ---
 

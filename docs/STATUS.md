@@ -5,7 +5,52 @@ Para o plano executável e critérios de aceite, veja [PLANO.md](file:///c:/User
 Para rastreamento de bloqueios e impedimentos técnicos, veja [BLOQUEIOS.md](file:///c:/Users/Hanjel/Documents/Extensão/docs/BLOQUEIOS.md).
 Para o detalhamento de fatias de interface em andamento, veja [MELHORIAS-UI.md](file:///c:/Users/Hanjel/Documents/Extensão/docs/MELHORIAS-UI.md).
 
-Atualizado em **2026-11-21**.
+Atualizado em **2026-11-22**.
+
+## Assinatura do VSIX via SignPath e correções de concorrência (2026-11-22)
+
+1. **Race condition em `SettingsStore`.** `WriteModelOverrideEntryAsync` e
+   `RemoveModelOverridesAsync` faziam read-modify-write do `providers.models.json`
+   sem lock — escritas simultâneas perdiam overrides. Ambos agora passam por um
+   `SemaphoreSlim` estático (`ModelsLock`) com `try/finally` de liberação.
+2. **Bloqueio síncrono na UI.** `ByokSession.ApplyModelOverridesToModels` usava
+   `ReadModelOverridesAsync(...).GetAwaiter().GetResult()`. Virou
+   `ApplyModelOverridesToModelsAsync` com `await` + `CancellationToken`; os três
+   call sites (`byok.configure`, `byok.discover` e o write do override) agora
+   aguardam.
+3. **`Task.Run` aninhado.** Removido o `await Task.Run(async ...)` dentro de
+   `taskFactory.RunAsync` em `LumenControl.OnWebMessageReceived`.
+4. **B17 — VS 2026 ignora `pkgdef` de extensão não assinada.** Confirmado com
+   evidência nova: `ActivityLog.xml` registra
+   `PkgDef section fails the security check` / `E_ACCESSDENIED` ao ler
+   `Lumen.Vsix.pkgdef`, mesmo com `AllowUnsignedExtensions=1` nas chaves
+   `ExtensionManager` (HKCU user e Exp). Detalhes e tentativas em
+   `docs/BLOQUEIOS.md` (B17).
+5. **Windows SDK instalado** (`winget install Microsoft.WindowsSDK.10.0.18362`);
+   `signtool.exe` localizado em
+   `C:\Program Files (x86)\Windows Kits\10\bin\10.0.18362.0\x64\`. O `signtool`
+   rejeita o container `.vsix` ("file format cannot be signed") e o
+   `dotnet nuget sign` rejeita certificado auto-assinado (`NU3018
+   UntrustedRoot/NotValidForUsage`) — assinatura precisa ser de CA pública.
+6. **SignPath.io (open source, gratuito).** Projeto criado com organization id
+   `dc8e7b01-49c0-4747-85d5-c3e8956150ac`, repositório
+   `https://github.com/G-Hangel/Lumen`, licença MIT. Artefato configurado como
+   `<opc-file>` + `<opc-sign>` (equivalente a `VSIXSignTool.exe`), raiz direta
+   no `.vsix` — sem zip intermediário. Workflow criado em
+   `.github/workflows/sign-vsix.yml`: build Release → testes .NET → testes UI →
+   upload com `archive: false` → `signpath/github-action-submit-signing-request@v3`
+   → upload do artefato assinado. Dispara em `release` publicada ou manual.
+
+Evidência (2026-11-22): build Release **0 erros, 0 avisos**; suíte .NET
+**1.668/1.669** (a única falha é a ambiental pré-existente
+`DetectedShellsExecuteOnlyAfterApproval` — `pwsh.exe` da Store retorna
+`Acesso negado` no spawn, reproduzida isoladamente); UI **239/239**; pacote
+**3/3**. Commits `f108e27` e `ad02415`.
+
+Pendente: `SIGNPATH_API_TOKEN` (secret), `SIGNPATH_PROJECT_SLUG` e
+`SIGNPATH_SIGNING_POLICY_SLUG` (repository variables) + publicação do repo para
+o SignPath validar a origem; depois instalar o `.vsix` assinado e confirmar
+**Exibir → Lumen** (fecha o B17).
 
 ## Melhorias de providers e esforço de raciocínio (2026-11-20)
 

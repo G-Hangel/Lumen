@@ -321,7 +321,7 @@ export function isByokEnvelope(value) {
 
 function validRequest(type, p) {
   switch (type) {
-    case 'byok.list': case 'byok.cancel': case 'byok.history.new': case 'byok.skills.list': return fields(p, []);
+    case 'byok.list': case 'byok.models': case 'byok.cancel': case 'byok.history.new': case 'byok.skills.list': return fields(p, []);
     case 'byok.skills.set': return fields(p, ['name', 'enabled']) && skillName(p.name) && typeof p.enabled === 'boolean';
     case 'byok.skills.write': return fields(p, ['name', 'description', 'body', 'edit']) && skillName(p.name) && string(p.description, 1024) && string(p.body, 131072, true) && typeof p.edit === 'boolean';
     case 'byok.skills.undo': case 'byok.skills.open': return fields(p, []);

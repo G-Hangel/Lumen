@@ -612,7 +612,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function resetSelection() {
-    models = []; selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderModels(); renderCapabilities();
+    selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderModels(); renderCapabilities();
   }
   async function operate(task, focusTarget, loadingKey = 'byokLoading') {
     if (!online() || busy || imageLoading || needsCancel || cancelling) return;
@@ -850,7 +850,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
 
   function applyCatalog(result) {
-    models = result.models; selectedModelId = ''; clearProbeConsent();
+    // Merge discovered models with existing all-models list (keep overrides from other providers)
+    const otherModels = models.filter(m => m.configurationId !== result.configuration.id);
+    models = [...otherModels, ...result.models];
+    selectedModelId = ''; clearProbeConsent();
     // Public catalogs can succeed without verifying a key; errors with unknown validity must not be saved.
     const catalogUnverified = result.credentialValid === null && !result.code;
     // A 429 / 402 may validate credentials despite returning no models. Never relabel it as a 401.
@@ -869,10 +872,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function listProviders() {
     await operate(async () => {
-      const result = await bridge.request('byok.list', {});
+      const [listResult, modelsResult] = await Promise.all([
+        bridge.request('byok.list', {}),
+        bridge.request('byok.models', {})
+      ]);
       if (disposed) return;
-      configurations = result.configurations; remainingBudget = result.remainingBudget; renderProbeBudget();
-      loaded = true; configurationId = ''; resetSelection(); cancelRemoveProvider(false); renderProviders();
+      configurations = listResult.configurations; remainingBudget = listResult.remainingBudget; renderProbeBudget();
+      models = modelsResult.models || []; // all configured models from all providers
+      loaded = true; configurationId = ''; resetSelection(); cancelRemoveProvider(false); renderProviders(); renderModels(); renderCapabilities();
       setStatus(configurations.length ? 'byokReady' : 'byokEmptyProviders');
     });
   }
@@ -882,7 +889,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const id = configurationId; resetSelection();
     await operate(async () => {
       const result = await bridge.request('byok.discover', { configurationId: id });
-      if (!disposed && configurationId === id) applyCatalog(result);
+      if (!disposed && configurationId === id) {
+        // Merge discovered models with existing all-models list (keep overrides)
+        const otherModels = models.filter(m => m.configurationId !== id);
+        models = [...otherModels, ...result.models];
+        applyCatalog(result);
+      }
     }, node('models'));
   }
   function requestRemoveProvider() {
@@ -905,6 +917,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
       await bridge.request('byok.remove', { configurationId: id });
       if (disposed) return;
       configurations = configurations.filter(config => config.id !== id);
+      // Remove models from deleted provider from global list
+      models = models.filter(m => m.configurationId !== id);
       cancelRemoveProvider(false);
       const removedTabIds = new Set(savedConversations.filter(item => item.configurationId === id).map(item => item.id));
       openTabs = openTabs.filter(item => !item.id || !removedTabIds.has(item.id));
@@ -1014,6 +1028,12 @@ export function startByok({ transport, connected = () => false, text, renderMark
     selectedModelId = ''; clearProbeConsent(); removeAttachment(); renderCapabilities();
     if (!modelId) return;
     await operate(async () => {
+      // If the selected model belongs to a different provider, switch configuration first
+      const targetConfigId = next?.configurationId;
+      if (targetConfigId && targetConfigId !== configurationId) {
+        configurationId = targetConfigId;
+        renderProviders(); // update provider dropdown
+      }
       const result = await bridge.request('byok.select', { configurationId, modelId });
       if (disposed) return;
       configurations = configurations.map(config => config.id === result.configuration.id ? result.configuration : config);

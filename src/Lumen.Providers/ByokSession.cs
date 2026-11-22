@@ -434,6 +434,20 @@ public sealed class ByokSession : IDisposable
                     Require(payload, Array.Empty<string>());
                     await Reply(send, id, type + ".result", new { configurations = configurations.Select(ConfigurationView).ToArray(), remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
+                case "byok.models":
+                    Require(payload, Array.Empty<string>());
+                    // Return all configured models from all providers (only enabled ones)
+                    var allModels = models
+                        .Where(kvp => configurations.Any(c => c.Id == kvp.Key))
+                        .SelectMany(kvp =>
+                        {
+                            return kvp.Value
+                                .Where(m => m.Enabled)
+                                .Select(m => ModelView(m, kvp.Key));
+                        })
+                        .ToArray();
+                    await Reply(send, id, type + ".result", new { models = allModels }).ConfigureAwait(false);
+                    break;
                 case "byok.configure":
                     Require(payload, new[] { "id", "providerId", "kind", "baseUrl", "key" }, new[] { "deploymentNames", "arm" });
                     var kindText = RequiredString(payload, "kind", 32);
@@ -557,7 +571,7 @@ public sealed class ByokSession : IDisposable
                     var applied = await ApplyModelOverridesToModelsAsync(owner, models[owner.Id], cancellationToken).ConfigureAwait(false);
                     models[owner.Id] = applied;
                     var view = applied.First(value => value.ModelId == previous.ModelId);
-                    await Reply(send, id, type + ".result", new { model = ModelView(view), models = applied.Select(ModelView).ToArray() }).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { model = ModelView(view, owner.Id), models = applied.Select(m => ModelView(m, owner.Id)).ToArray() }).ConfigureAwait(false);
                     break;
                 case "byok.probe":
                     Require(payload, new[] { "configurationId", "capability", "consent" });
@@ -572,7 +586,7 @@ public sealed class ByokSession : IDisposable
                     var probedModel = ApplyProbe(probeConfiguration, probeModel);
                     models[probeConfiguration.Id] = models[probeConfiguration.Id].Select(value => value.ModelId == probedModel.ModelId ? probedModel : value).ToArray();
                     await settings.WriteProbeCacheAsync(probe.Store, cancellationToken).ConfigureAwait(false);
-                    await Reply(send, id, type + ".result", new { model = ModelView(probedModel), supported = support, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { model = ModelView(probedModel, probeConfiguration.Id), supported = support, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.chat":
                 {
@@ -1039,18 +1053,19 @@ public sealed class ByokSession : IDisposable
     private static object CatalogView(ProviderConfiguration configuration, CatalogResult result) => new
   {
     configuration = ConfigurationView(configuration),
-    models = result.Models.Select(ModelView).ToArray(),
+    models = result.Models.Select(m => ModelView(m, configuration.Id)).ToArray(),
     credentialValid = result.CredentialValid,
     code = result.ErrorCode,
     retryAfter = result.RetryAfter is TimeSpan wait ? (long)Math.Ceiling(wait.TotalSeconds) : (long?)null
   };
-    private static object ModelView(ModelInfo model) => new
+    private static object ModelView(ModelInfo model, string? configurationId = null) => new
     {
         id = model.ModelId, name = model.DisplayName ?? model.ModelId,
         vision = model.Has(ModelCapabilities.Vision), tools = model.Has(ModelCapabilities.Tools), reasoning = model.Has(ModelCapabilities.Reasoning),
         origins = model.Origins.Select(origin => new { capability = origin.Capability.ToString(), source = origin.Source.ToString(), confidence = origin.Confidence.ToString() }).ToArray(),
         efforts = model.Reasoning?.Efforts.Where(level => !model.Reasoning.Mandatory || level != ReasoningIntent.Off).Select(level => level.ToString()).ToArray() ?? Array.Empty<string>(),
-         enabled = model.Enabled
+        enabled = model.Enabled,
+        configurationId
     };
     private static object EventView(StreamEvent value) => value switch
     {

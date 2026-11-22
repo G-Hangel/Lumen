@@ -35,15 +35,13 @@ jobs:
           npm ci
           npm run build:ui
 
-      # archive:false keeps the .vsix as a plain file so the artifact
-      # configuration can use <opc-file> as root instead of <zip-file>.
+      # Upload creates a ZIP by default; artifact config must use <zip-file> root
       - name: Upload unsigned artifact
         id: upload-unsigned-artifact
         uses: actions/upload-artifact@v4
         with:
           name: lumen-vsix-unsigned
           path: src/Lumen.Vsix/bin/Release/net48/Lumen.Vsix.vsix
-          archive: false
           if-no-files-found: error
 
       - name: Sign VSIX
@@ -53,9 +51,9 @@ jobs:
           organization-id: dc8e7b01-49c0-4747-85d5-c3e8956150ac
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIG_SLUG }}
           github-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
           wait-for-completion: true
-          skip-decompress: true
           output-artifact-directory: signed
 
       - name: Upload signed artifact

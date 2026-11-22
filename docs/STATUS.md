@@ -73,6 +73,32 @@ o SignPath validar a origem; depois instalar o `.vsix` assinado e confirmar
 
 **Problema:** O usuário precisava trocar de provedor na aba de configuração para acessar modelos de outro provedor.
 
+**Solução:** Seletor único (`#models` / `#model-select`) que mostra **todos os modelos configurados de todos os provedores** simultaneamente.
+
+**Mudanças:**
+1. **Backend (`ByokSession.cs`):**
+   - `byok.list` agora retorna `models[]` com **todos os modelos habilitados de todos os provedores**, cada um com `configurationId`.
+   - Endpoint `byok.models` removido (era redundante).
+
+2. **Frontend (`byok.mjs`):**
+   - `listProviders()` carrega modelos globais via `byok.list` (sem requisição extra).
+   - `discover()` apenas atualiza overrides do provedor ativo; `applyCatalog` faz merge na lista global.
+   - `chooseModel()` detecta `configurationId` do modelo selecionado e troca `configurationId` automaticamente antes de chamar `byok.select`.
+   - `deleteProvider()` remove modelos do provedor excluído da lista global.
+
+3. **Bridge (`byok-bridge.mjs`):**
+   - Validação para `byok.models` removida.
+
+**Resultado:** O usuário vê todos os modelos configurados em um único dropdown. Ao escolher um modelo de outro provedor, a UI troca o provedor ativo silenciosamente e seleciona o modelo.
+
+**Evidência:** Build Release 0 erros/0 avisos; suíte .NET 1669/1669; UI 239/239; pacote 3/3. Commit `3d03a04`.
+
+---
+
+### ✅ **Seletor unificado de modelos (2026-11-22)**
+
+**Problema:** O usuário precisava trocar de provedor na aba de configuração para acessar modelos de outro provedor.
+
 **Solução:** Seletor único que mostra **todos os modelos configurados de todos os provedores** simultaneamente.
 
 **Mudanças:**

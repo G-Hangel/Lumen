@@ -432,21 +432,14 @@ public sealed class ByokSession : IDisposable
                     break;
                 case "byok.list":
                     Require(payload, Array.Empty<string>());
-                    await Reply(send, id, type + ".result", new { configurations = configurations.Select(ConfigurationView).ToArray(), remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
-                    break;
-                case "byok.models":
-                    Require(payload, Array.Empty<string>());
-                    // Return all configured models from all providers (only enabled ones)
+                    // Return all configurations + all configured models from all providers (enabled only)
                     var allModels = models
                         .Where(kvp => configurations.Any(c => c.Id == kvp.Key))
-                        .SelectMany(kvp =>
-                        {
-                            return kvp.Value
-                                .Where(m => m.Enabled)
-                                .Select(m => ModelView(m, kvp.Key));
-                        })
+                        .SelectMany(kvp => kvp.Value
+                            .Where(m => m.Enabled)
+                            .Select(m => ModelView(m, kvp.Key)))
                         .ToArray();
-                    await Reply(send, id, type + ".result", new { models = allModels }).ConfigureAwait(false);
+                    await Reply(send, id, type + ".result", new { configurations = configurations.Select(ConfigurationView).ToArray(), models = allModels, remainingBudget = probe.RemainingBudget }).ConfigureAwait(false);
                     break;
                 case "byok.configure":
                     Require(payload, new[] { "id", "providerId", "kind", "baseUrl", "key" }, new[] { "deploymentNames", "arm" });

@@ -1583,7 +1583,8 @@ test('provider removal requires confirmation and clears the deleted provider sel
   assert.equal(f.node('providers').value, '');
   assert.equal(f.node('remove').disabled, true);
   assert.equal(f.node('remove-confirmation').hidden, true);
-  assert.equal(f.node('models').children.length, 1);
+  // Unified selector keeps models from other providers
+  assert.ok(f.node('models').children.length >= 2, 'unified selector keeps models from other providers');
   assert.equal(f.node('status').textContent, en.byokReady);
 });
 

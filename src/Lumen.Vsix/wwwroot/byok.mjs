@@ -872,13 +872,10 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   async function listProviders() {
     await operate(async () => {
-      const [listResult, modelsResult] = await Promise.all([
-        bridge.request('byok.list', {}),
-        bridge.request('byok.models', {})
-      ]);
+      const listResult = await bridge.request('byok.list', {});
       if (disposed) return;
       configurations = listResult.configurations; remainingBudget = listResult.remainingBudget; renderProbeBudget();
-      models = modelsResult.models || []; // all configured models from all providers
+      models = listResult.models || []; // all configured models from all providers (from byok.list)
       loaded = true; configurationId = ''; resetSelection(); cancelRemoveProvider(false); renderProviders(); renderModels(); renderCapabilities();
       setStatus(configurations.length ? 'byokReady' : 'byokEmptyProviders');
     });
@@ -889,12 +886,7 @@ export function startByok({ transport, connected = () => false, text, renderMark
     const id = configurationId; resetSelection();
     await operate(async () => {
       const result = await bridge.request('byok.discover', { configurationId: id });
-      if (!disposed && configurationId === id) {
-        // Merge discovered models with existing all-models list (keep overrides)
-        const otherModels = models.filter(m => m.configurationId !== id);
-        models = [...otherModels, ...result.models];
-        applyCatalog(result);
-      }
+      if (!disposed && configurationId === id) applyCatalog(result);
     }, node('models'));
   }
   function requestRemoveProvider() {

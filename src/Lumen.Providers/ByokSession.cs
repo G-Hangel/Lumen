@@ -1114,6 +1114,9 @@ public sealed class ByokSession : IDisposable
             foreach (var pending in approvals.Values) pending.Decision.TrySetCanceled();
             approvals.Clear();
         }
+        // Wait for any pending ConversationStore I/O to complete before returning.
+        // Prevents "file in use" when the test fixture deletes the temp directory.
+        settings.Conversations.WaitForPendingOperations(TimeSpan.FromSeconds(5));
         http.Dispose();
     }
 }

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Security;
 using System.Text;
 using System.Text.Json;
@@ -51,7 +53,8 @@ public sealed class WorkspaceReadTools
                         var powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
                         if (File.Exists(powerShell)) executable = powerShell;
                     }
-                    if (executable is not null) detected.Add(new { name = shell, executable });
+                    if (executable is not null && IsShellUsable(executable, shell, cancellationToken))
+                        detected.Add(new { name = shell, executable });
                 }
                 return new ToolResult(invocation.Id, false, JsonSerializer.Serialize(new { shells = detected }));
             }
@@ -271,5 +274,44 @@ public sealed class WorkspaceReadTools
             }
         }
         return matches[value.Length];
+    }
+
+    // Validate that a shell executable actually works by running a benign test command.
+    // Returns true only if the shell exits with code 0 within the timeout.
+    private static bool IsShellUsable(string executable, string shellName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string[] args;
+            if (shellName == "cmd") args = new[] { "/c", "echo shell-test" };
+            else if (shellName == "powershell") args = new[] { "-NoProfile", "-NonInteractive", "-Command", "Write-Output shell-test" };
+            else if (shellName == "pwsh") args = new[] { "-NoProfile", "-NonInteractive", "-Command", "Write-Output shell-test" };
+            else if (shellName == "bash") args = new[] { "-c", "printf shell-test" };
+            else return false;
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = executable,
+                Arguments = string.Join(" ", args.Select(a => a.Contains(' ') ? "\"" + a + "\"" : a)),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = new UTF8Encoding(false),
+                StandardErrorEncoding = new UTF8Encoding(false)
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process is null) return false;
+
+            // Wait up to 5 seconds for the test command to complete
+            if (!process.WaitForExit(5000)) return false;
+            cancellationToken.ThrowIfCancellationRequested();
+            return process.ExitCode == 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 }

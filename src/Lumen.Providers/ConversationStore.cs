@@ -90,6 +90,20 @@ public sealed class ConversationStore
     private readonly string directory;
     private readonly SemaphoreSlim gate = new(1, 1);
 
+    // Wait for all pending operations to complete by acquiring the gate exclusively.
+    // Used by tests and disposal to ensure no in-flight I/O before deleting the directory.
+    public async Task WaitForPendingOperationsAsync(CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { } finally { gate.Release(); }
+    }
+
+    public void WaitForPendingOperations(TimeSpan timeout)
+    {
+        if (!gate.Wait(timeout)) throw new TimeoutException("ConversationStore operations did not complete in time");
+        try { } finally { gate.Release(); }
+    }
+
     public ConversationStore(string directory)
     {
         try

@@ -7,6 +7,121 @@ Para o detalhamento de fatias de interface em andamento, veja [MELHORIAS-UI.md](
 
 Atualizado em **2026-11-22**.
 
+## Terminal mais simples para o modelo (2026-11-22)
+
+O `run_command` exigia sempre `command` + `args` separados, sem mensagens de
+erro acionáveis e com teto de 60 s — o modelo precisava adivinhar a forma exata e
+não conseguia se recuperar de falhas. Mudanças:
+
+1. **Linha de comando natural.** `command` agora aceita a linha inteira
+   (`"git status"`), dividida com `CommandLineToArgvW` em Executável + lista de
+   argumentos. `args` continua opcional e, quando presente, tem precedência
+   (modo explícito antigo). A execução nunca abre shell: o processo recebe a
+   lista de argumentos, não uma string reinterpretada.
+2. **Operadores de shell rejeitados com explicação.** `| > < & ;` e backtick
+   (fora de aspas) retornam `shell_not_supported` com instrução para usar `args`
+   ou um comando por chamada.
+3. **Erros acionáveis.** Resultados de erro agora trazem `code` + `message`
+   (progresso do timeout, regra de blocklist, caminho inexistente, falha do SO).
+4. **Teto de timeout para 600 s** em `run_command`/`run_build`/`run_tests`, para
+   builds e testes que passam de um minuto.
+5. **`restore` opcional** em `run_build`/`run_tests` (`--no-restore` só quando
+   `restore` é falso) e `cwd` incluído no resultado.
+6. `AgentInstruction` e a descrição das ferramentas explicam a forma natural.
+
+**Controles negativos:** linha com `>` é barrada antes de qualquer aprovação
+(`ShellOperatorsAreRejectedBeforeApproval`); `args` explícitos não passam pelo
+detector de operadores; timeout 600.001 é rejeitado; ausência de `command`
+continua inválida; o parse preserva aspas/escaping (testes de round-trip
+existentes).
+
+**Evidência:** build Release 0 erros/0 avisos; suíte .NET **1674/1674**; UI
+**240/240**; pacote **3/3**. A execução real de processos é exercitada pela
+suíte (cmd/pwsh/git); não houve verificação na instância experimental do Visual
+Studio nesta rodada.
+
+## Cartão de ferramenta minimalista (2026-11-22)
+
+A caixa de ferramenta usada no chat era verbosa (título "Ferramenta · execução
+nativa" + estado longo + resultado em caixa com borda) e não deixava falhas
+óbvias. Redesenho inspirado no opencode:
+
+- **Bloco estilo terminal**, recolhido por padrão: cabeçalho arredondado em mono
+  com prompt `$`, o comando derivado (ex.: `git status --short` ou
+  `dotnet test Lumen.sln`), estado curto e botão `Copiar`. Ao expandir, um bloco
+  arredondado mostra argumentos e resultado, sem caixas internas.
+- **Erro visível:** `data-state="failed"` pinta prompt, comando, estado e
+  resultado com `--danger` e troca o prompt por `⚠`.
+- O comando do cabeçalho é derivado dos argumentos em `ToolCallEnd`/histórico
+  (`run_command` vira `cmd args`, `run_build`/`run_tests` viram `dotnet ...`).
+- **Corpo limpo:** argumentos aparecem como `chave: valor` (sem chaves/aspas de
+  JSON) e ficam ocultos quando vazios ou redundantes com o comando; o resultado
+  de `run_command`/`run_build`/`run_tests` mostra stdout/stderr reais (mais
+  `exit N` só quando diferente de zero) e `detect_shells` vira uma linha
+  `nome — executável` por shell.
+
+**Controles negativos:** o cartão concluído não recebe `data-state="failed"`;
+`Cancelled` não é tratado como erro; o estado é validado por `data-state`, não
+pela classe. Testes atualizados para a nova estrutura (`span.byok-tool-status`)
+e para a regra CSS `⚠`/`--danger`.
+
+**Evidência:** `npm run check:ui` **242/242**; prévia real do `styles.css` no
+Chromium (mesma engine do WebView2) com os estados concluído, executando e
+falho; build Release 0 erros/0 avisos; pacote **3/3**. A verificação visual foi
+feita numa prévia estática porque a instância experimental e o VS do usuário
+disputam o mesmo `UserDataFolder` do WebView2 (`initialization_failed`/
+COMException), não por falha do redesenho.
+
+**Release assinado:** `scripts/release-and-sign.ps1` corrigido para o campo
+`artifact` do endpoint `SubmitWithArtifact` (antes `inputArtifact`, rejeitado com
+"Artifact field is required") e para ler o token do SignPath de
+`SIGNPATH_API_TOKEN` ou de `%LOCALAPPDATA%\Lumen\signpath.token` protegido por
+DPAPI (nunca em texto puro no repositório). O download passou a usar `curl.exe`
+(timeout longo) porque `Invoke-WebRequest` abortava com EOF. A requisição
+`9496e9ce-2579-41fa-954e-b1c09e2be2ae` concluiu e o artefato assinado foi salvo
+em `Release/0.1.0/Lumen-0.1.0.vsix` (2.013.491 bytes, 62 entradas, com
+`_xmlsignatures`, `byok-tool-command` e `formatToolResult`). Checksums
+regenerados; SHA-256 `895ED6B3…C586160A4`.
+
+## Tela branca ao reabrir a tool window (2026-11-22)
+
+**Sintoma:** fechar a tool window do Lumen e abrir de novo (Exibir → Lumen)
+deixava a janela **em branco**, sem chat e sem barra lateral.
+
+**Causa raiz (confirmada na Exp):** o shell do VS **esconde** a tool window em
+vez de destruí-la e reutiliza o mesmo `ToolWindowPane`. Ao fechar, o `WebView2`
+é descarregado e seu processo é encerrado (`browser.unloaded`); ao reabrir,
+`IVsWindowFrameNotify.OnShow` dispara **antes** de o conteúdo recarregar. O
+`LumenControl` em cache tinha `CoreWebView2 == null`, e chamar
+`EnsureCoreWebView2Async` no controle morto falhava com `NullReferenceException`
+(`initialization_failed` no log). Recriar o `Content` do pane dentro do `OnShow`
+também não funcionava: o novo controle nunca era carregado (sem `Loaded`, sem
+navegação).
+
+**Correção:**
+
+1. `LumenToolWindow` passa a implementar `IVsWindowFrameNotify` e dá
+   `Advise` no `IVsWindowFrame2`, liberando no `Dispose`. Em `OnShow`, quando
+   `fShow != FRAMESHOW_Hidden` e o controle precisa de reinício, chama
+   `RestartWebView()`.
+2. `LumenControl` mantém o grid e passa a poder **recriar o `WebView2` in
+   place**: remove e descarta o browser morto, cria um novo no mesmo grid e
+   reinitializa quando o novo browser é carregado (`Loaded`), remapeando o host
+   virtual, eventos e a navegação para `index.html`.
+3. `NeedsRestart` = página já foi navegada e `CoreWebView2` ficou nulo.
+
+**Controle negativo:** com a correção, o contador de lifecycle mostrou
+`control.unloaded`/`browser.unloaded` no fechamento e `init.ensured` +
+`nav.completed success=True` na reabertura. Sem ela, o mesmo roteiro resultava em
+`initialization_failed` e CDP indisponível (nenhum processo WebView2).
+
+**Evidência:** na instância experimental (`25e762c6`, DLLs trocadas na instalação
+assinada e depois restauradas ao estado original), três ciclos consecutivos de
+abrir → fechar → reabrir mantiveram `document.readyState=complete`,
+`connection-status=connected`, 458 elementos e a UI completa; nenhum
+`initialization_failed` no log. Build Release 0 erros/0 avisos; suíte .NET
+**1674/1674**; UI **240/240**; pacote **3/3**.
+
 ## Assinatura do VSIX via SignPath e correções de concorrência (2026-11-22)
 
 1. **Race condition em `SettingsStore`.** `WriteModelOverrideEntryAsync` e
@@ -92,6 +207,30 @@ o SignPath validar a origem; depois instalar o `.vsix` assinado e confirmar
 **Resultado:** O usuário vê todos os modelos configurados em um único dropdown. Ao escolher um modelo de outro provedor, a UI troca o provedor ativo silenciosamente e seleciona o modelo.
 
 **Evidência:** Build Release 0 erros/0 avisos; suíte .NET 1669/1669; UI 239/239; pacote 3/3. Commit `3d03a04`.
+
+---
+
+### ✅ **Ferramentas de busca na internet: `web_search` + `web_fetch` (2026-11-23)**
+
+**Objetivo:** permitir que os modelos pesquisem na internet e leiam páginas com facilidade, em todos os modos (Ask/Plan/Agent), sem chave de API.
+
+**Backend (`src/Lumen.Tools/WebTools.cs`, novo):**
+- `web_search`: consulta o endpoint HTML público do DuckDuckGo (`https://html.duckduckgo.com/html/?q=…`, verificado ao vivo, sem chave/créditos). Parseia `result__a`/`result__snippet`, desembrulha o redirect `/l/?uddg=` para a URL real e descarta alvos não-http(s) (controle negativo: `javascript:` é ignorado).
+- `web_fetch`: baixa uma página http/https e devolve texto legível (remove script/style/comentários, preserva quebras de bloco, decodifica entidades), com `title` e `truncated`.
+- **Guarda SSRF:** bloqueia loopback, IPs privados/link-local/CGNAT/multicast, `localhost`/`.local`/`.internal` e metadata (`169.254.169.254`, `metadata.google.internal`); só http/https.
+- Decorator `IReadToolExecutor`: envolve o executor de workspace opcional; `HttpClient` compartilhado (estático) para não esgotar sockets.
+- Erros reutilizam códigos existentes: `network_error`, `unsafe_url`, `output_too_large`, `invalid_arguments` (sem novos códigos na bridge).
+
+**Integração:**
+- `ToolChatLoop`: `web_search`/`web_fetch` nas listas Readonly/Agent/Plan + `ValidWebArguments`.
+- `ByokSession`: web acompanha o caminho de read-tools (ligado com read tools, **desligado pelo opt-out `readTools:false`}); handler manual `byok.tool.read` aceita web.
+- `byok-bridge.mjs`: nomes em `READ_TOOL_NAMES` + validação de request web; painel manual de leitura continua só workspace (web é dirigida ao modelo).
+- `byok.mjs`: renderização legível dos resultados web nos cards.
+- `SkillParser`: web em `allowed-tools`.
+
+**Testes:** `tests/Lumen.Tests/WebToolsTests.cs` (23 casos, `HttpMessageHandler` fake, sem rede): parse/unwrap, maxResults, args inválidos, extração de texto, truncamento, SSRF (10 alvos), falha HTTP→network_error, delegação ao inner, unknown sem inner.
+
+**Evidência:** Build 0 erros/0 avisos; .NET **1697/1697**; UI **242/242**; pacote **3/3**. Listas exatas dos scripts `verify-*-webview` atualizadas para incluir web (esses scripts dependem do hive Exp e não foram rodados nesta sessão).
 
 ---
 

@@ -59,6 +59,7 @@ public static class SkillParser
     private static readonly string[] KnownTools =
     {
         "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot", "get_errors", "get_output_logs", "detect_shells",
+        "web_search", "web_fetch",
         "create_file", "edit_file", "apply_diff", "run_command", "run_build", "run_tests", "load_skill"
     };
 

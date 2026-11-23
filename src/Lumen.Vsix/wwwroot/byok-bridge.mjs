@@ -8,7 +8,7 @@ export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_CONTEXTS = 8;
 export const MAX_CONTEXT_TEXT = 65536;
 export const MAX_CONTEXT_TOTAL = 131072;
-export const READ_TOOL_NAMES = Object.freeze(['read_file', 'list_dir', 'find_files', 'grep', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'detect_shells']);
+export const READ_TOOL_NAMES = Object.freeze(['read_file', 'list_dir', 'find_files', 'grep', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'detect_shells', 'web_search', 'web_fetch']);
 export const MAX_READ_TOOL_CONTENT = 65536;
 export const WRITE_TOOL_NAMES = Object.freeze(['create_file', 'edit_file']);
 export const COMMAND_TOOL_NAMES = Object.freeze(['run_command', 'run_build', 'run_tests']);
@@ -86,7 +86,7 @@ const deployments = value => list(value, 256, name => string(name, 512)) && uniq
 const armConfiguration = value => value === null || (fields(value, ['subscriptionId', 'resourceGroup', 'accountName'])
   && guid(value.subscriptionId) && string(value.resourceGroup, 90) && string(value.accountName, 64));
 // The host always serializes `arm` (null for non-Azure configurations), so accepting it is required for
-// every configuration-bearing reply — not just Azure ones.
+// every configuration-bearing reply â€” not just Azure ones.
 const configuration = value => fields(value, ['id', 'providerId', 'kind', 'baseUrl', 'selectedModelId', 'deploymentNames'], ['arm'])
   && guid(value.id) && string(value.providerId, 64) && PROVIDER_KINDS.includes(value.kind) && validUrl(value.baseUrl)
   && (value.selectedModelId === null || string(value.selectedModelId, 512)) && deployments(value.deploymentNames)
@@ -94,11 +94,12 @@ const configuration = value => fields(value, ['id', 'providerId', 'kind', 'baseU
 const origin = value => fields(value, ['capability', 'source', 'confidence']) && string(value.capability, 64)
   && ['Native', 'Registry', 'Heuristic', 'Probe', 'UserOverride'].includes(value.source)
   && ['Low', 'Medium', 'High'].includes(value.confidence);
-export const isModel = value => fields(value, ['id', 'name', 'vision', 'tools', 'reasoning', 'origins', 'efforts'], ['enabled'])
+export const isModel = value => fields(value, ['id', 'name', 'vision', 'tools', 'reasoning', 'origins', 'efforts'], ['enabled', 'configurationId'])
   && string(value.id, 512) && string(value.name, 512) && ['vision', 'tools', 'reasoning'].every(key => typeof value[key] === 'boolean')
   && list(value.origins, 32, origin) && unique(value.origins, item => item.capability)
   && list(value.efforts, 7, effort => EFFORTS.includes(effort)) && unique(value.efforts)
-  && (!Object.hasOwn(value, 'enabled') || typeof value.enabled === 'boolean');
+  && (!Object.hasOwn(value, 'enabled') || typeof value.enabled === 'boolean')
+  && (!Object.hasOwn(value, 'configurationId') || value.configurationId === null || guid(value.configurationId));
 const errorCode = value => string(value, 64) && /^[a-z][a-z0-9_]*$/.test(value);
 const tokenCount = value => Number.isSafeInteger(value) && value >= 0;
 const probeBudget = value => Number.isInteger(value) && value >= 0 && value <= MAX_PROBE_BUDGET;
@@ -175,6 +176,10 @@ export function isReadToolRequest(value) {
   if (!fields(value, ['name', 'arguments']) || !READ_TOOL_NAMES.includes(value.name)) return false;
   const a = value.arguments;
   if (['get_errors', 'get_output_logs', 'detect_shells'].includes(value.name)) return fields(a, []);
+  if (value.name === 'web_search') return fields(a, ['query'], ['maxResults']) && toolText(a.query, 512)
+    && (!Object.hasOwn(a, 'maxResults') || toolInteger(a.maxResults, 10));
+  if (value.name === 'web_fetch') return fields(a, ['url'], ['maxChars']) && toolText(a.url, 2048)
+    && (!Object.hasOwn(a, 'maxChars') || toolInteger(a.maxChars, 65536));
   const required = ['path', ...(value.name === 'find_files' ? ['glob'] : value.name === 'grep' ? ['pattern'] : [])];
   const optional = value.name === 'get_edit_snapshot' ? [] : value.name === 'read_file' ? ['startLine', 'endLine'] : ['maxResults', ...(value.name === 'grep' ? ['glob'] : [])];
   return fields(a, required, optional) && toolText(a.path, value.name === 'get_edit_snapshot' ? 1024 : 4096)
@@ -265,8 +270,9 @@ export function isByokEnvelope(value) {
     case 'byok.skills.write.result': return fields(p, ['path']) && string(p.path, 4096);
     case 'byok.skills.undo.result': return fields(p, ['undone']) && p.undone === true;
     case 'byok.skills.open.result': return fields(p, ['path']) && string(p.path, 4096);
-    case 'byok.list.result': return fields(p, ['configurations', 'remainingBudget']) && probeBudget(p.remainingBudget)
-      && list(p.configurations, 256, configuration) && unique(p.configurations, item => item.id);
+    case 'byok.list.result': return fields(p, ['configurations', 'remainingBudget'], ['models']) && probeBudget(p.remainingBudget)
+      && list(p.configurations, 256, configuration) && unique(p.configurations, item => item.id)
+      && (!Object.hasOwn(p, 'models') || (list(p.models, 10000, isModel) && unique(p.models, item => item.id)));
     case 'byok.configure.result': case 'byok.discover.result':
       return fields(p, ['configuration', 'models', 'credentialValid', 'code'], ['retryAfter']) && configuration(p.configuration)
         && list(p.models, 8192, isModel) && unique(p.models, item => item.id)

@@ -21,6 +21,7 @@ public sealed class ByokSession : IDisposable
     private readonly bool canProbe;
     private readonly IContextSource? contextSource;
     private readonly IReadToolExecutor? readTools;
+    private readonly WebTools webTools = new WebTools();
     private readonly IWriteToolExecutor? writeTools;
     private readonly IShellToolExecutor? shellTools;
     private readonly ISkillSource? skills;
@@ -135,12 +136,13 @@ public sealed class ByokSession : IDisposable
             {
                 Require(payload, new[] { "name", "arguments" });
                 var toolName = RequiredString(payload, "name", 64);
-                if (!new[] { "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot" }.Contains(toolName)) throw new ProviderException("unknown_tool");
+                var isWebTool = toolName == WebTools.SearchTool || toolName == WebTools.FetchTool;
+                if (!isWebTool && !new[] { "read_file", "list_dir", "find_files", "grep", "get_edit_snapshot" }.Contains(toolName)) throw new ProviderException("unknown_tool");
                 var arguments = JsonWire.Get(payload, "arguments");
                 if (arguments.ValueKind != JsonValueKind.Object || arguments.GetRawText().Length > 8192) throw new ProviderException("invalid_arguments");
-                if (readTools is null) throw new ProviderException("path_unavailable");
+                if (!isWebTool && readTools is null) throw new ProviderException("path_unavailable");
                 var invocation = new ToolInvocation(id!, toolName, arguments.Clone());
-                var result = await readTools.ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
+                var result = await (isWebTool ? webTools : readTools!).ExecuteAsync(invocation, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (result.InvocationId != invocation.Id || result.Content.Length > 65536) throw new ProviderException("invalid_response");
                 await Reply(send, id, type + ".result", new { name = toolName, isError = result.IsError, content = result.Content }).ConfigureAwait(false);
@@ -646,7 +648,13 @@ public sealed class ByokSession : IDisposable
                     cancellationToken.ThrowIfCancellationRequested();
                     var capturedShell = enableTerminal ? (await shellTools!.CaptureAsync(cancellationToken).ConfigureAwait(false)).ForMode(mode, permission) : null;
                     cancellationToken.ThrowIfCancellationRequested();
-                    IReadToolExecutor? capturedTools = capturedRead is null ? null : mode == ChatMode.Ask ? capturedRead : new CompositeExecutor(capturedRead, capturedWrite, capturedShell);
+                    // Web search/fetch ride the read-tool path: enabled with read tools, disabled by the read opt-out.
+                    IReadToolExecutor? capturedTools = null;
+                    if (capturedRead is not null)
+                    {
+                        var readWithWeb = chatModel.Has(ModelCapabilities.Tools) ? new WebTools(capturedRead) : capturedRead;
+                        capturedTools = mode == ChatMode.Ask ? readWithWeb : new CompositeExecutor(readWithWeb, capturedWrite, capturedShell);
+                    }
                     var skillSnapshot = skills is null ? SkillSnapshot.Empty : await skills.DiscoverAsync(cancellationToken).ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     var disabledSkills = new HashSet<string>(await settings.ReadDisabledSkillsAsync(cancellationToken).ConfigureAwait(false), StringComparer.Ordinal);

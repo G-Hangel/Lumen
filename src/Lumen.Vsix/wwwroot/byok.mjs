@@ -1139,6 +1139,82 @@ export function startByok({ transport, connected = () => false, text, renderMark
   }
   // A turn is an ordered timeline: every reasoning/text/tool step becomes its own block appended
   // in arrival order, so think -> tool -> think -> answer renders exactly as it happened.
+  // Compact, terminal-like command shown in the collapsed tool line.
+  function toolCommand(name, arguments_) {    const value = name ?? '';
+    const args = arguments_ && typeof arguments_ === 'object' && !Array.isArray(arguments_) ? arguments_ : null;
+    if (!args) return value;
+    if (name === 'run_command' && typeof args.command === 'string') {
+      const parts = Array.isArray(args.args) ? args.args.filter(item => typeof item === 'string') : [];
+      return ([args.command, ...parts].join(' ').trim() || value).slice(0, 160);
+    }
+    if ((name === 'run_build' || name === 'run_tests') && typeof args.path === 'string')
+      return `dotnet ${name === 'run_build' ? 'build' : 'test'} ${args.path}`.slice(0, 160);
+    for (const key of ['path', 'pattern', 'glob', 'task', 'name']) {
+      if (typeof args[key] === 'string' && args[key]) return `${name} ${args[key]}`.slice(0, 160);
+    }
+    return value;
+  }
+
+  // Clean key/value view of the model's arguments: no JSON braces or quotes.
+  function formatToolValue(value) {
+    if (value === null) return 'null';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return value.map(formatToolValue).join(' ');
+    if (typeof value === 'object') return Object.entries(value).map(([key, item]) => `${key}: ${formatToolValue(item)}`).join(', ');
+    return String(value);
+  }
+
+  function formatToolArguments(args) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return '';
+    return Object.entries(args)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '')
+      .map(([key, value]) => `${key}: ${formatToolValue(value)}`)
+      .join('\n');
+  }
+
+  // Command tools return JSON; show the real stdout/stderr instead of it.
+  function formatToolResult(name, content) {
+    const text = typeof content === 'string' ? content : String(content ?? '');
+    if (name === 'run_command' || name === 'run_build' || name === 'run_tests') {
+      try {
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object' && 'exitCode' in data) {
+          const output = [data.stdout, data.stderr]
+            .filter(part => typeof part === 'string' && part.trim())
+            .map(part => part.replace(/\s+$/, ''))
+            .join('\n');
+          const lines = output ? [output] : [];
+          if (data.exitCode !== 0) lines.push(`exit ${data.exitCode}`);
+          if (data.truncated) lines.push('(truncated)');
+          return lines.join('\n') || '(no output)';
+        }
+      } catch { /* fall back to the raw content */ }
+    }
+    if (name === 'detect_shells') {
+      try {
+        const data = JSON.parse(text);
+        if (Array.isArray(data?.shells))
+          return data.shells.map(shell => `${shell.name} — ${shell.executable}`).join('\n');
+      } catch { /* fall back to the raw content */ }
+    }
+    if (name === 'web_search') {
+      try {
+        const data = JSON.parse(text);
+        if (Array.isArray(data?.results))
+          return data.results.map(result => [result.title, result.url, result.snippet].filter(Boolean).join('\n')).join('\n\n') || '(no results)';
+      } catch { /* fall back to the raw content */ }
+    }
+    if (name === 'web_fetch') {
+      try {
+        const data = JSON.parse(text);
+        if (typeof data?.text === 'string')
+          return [data.title, data.text, data.truncated ? '(truncated)' : ''].filter(Boolean).join('\n');
+      } catch { /* fall back to the raw content */ }
+    }
+    return text;
+  }
+
   function appendBlock(turn, type, data = {}) {
     data.type = type;
     const block = { type, data };
@@ -1152,16 +1228,38 @@ export function startByok({ transport, connected = () => false, text, renderMark
       } else block.el = body;
       block.body = body;
     } else if (type === 'tool') {
-      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = true; card.dataset.timestamp = data.timestamp ?? '';
-      const title = localized('summary', 'byokToolNotice'); const name = document.createElement('p'); name.textContent = data.name ?? '';
-      const state = localized('p', 'byokToolPending', 'secondary');
+      const card = document.createElement('details'); card.className = 'byok-tool'; card.open = false;
+      card.dataset.timestamp = data.timestamp ?? ''; card.dataset.state = 'pending';
+      const head = document.createElement('summary'); head.className = 'byok-tool-head';
+      const prompt = document.createElement('span'); prompt.className = 'byok-tool-prompt'; prompt.setAttribute('aria-hidden', 'true');
+      const command = document.createElement('span'); command.className = 'byok-tool-command'; command.textContent = data.name ?? '';
+      const state = document.createElement('span'); state.className = 'byok-tool-status';
+      state.dataset.byokText = 'byokToolPending'; state.textContent = text('byokToolPending');
       state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); state.setAttribute('aria-atomic', 'true');
+      const copy = localized('button', 'byokCopy', 'byok-tool-copy'); copy.type = 'button';
+      copy.addEventListener('click', async event => {
+        event.preventDefault(); event.stopPropagation();
+        const value = result.textContent ?? '';
+        let copied = false;
+        try { await navigator.clipboard.writeText(value); copied = true; }
+        catch {
+          const scratch = document.createElement('textarea'); scratch.value = value; scratch.className = 'sr-only'; scratch.setAttribute('readonly', '');
+          document.body.append(scratch); scratch.select();
+          try { copied = document.execCommand('copy'); } finally { scratch.remove(); }
+        }
+        copy.textContent = text(copied ? 'byokCopied' : 'byokCopyFailed');
+        setTimeout(() => { copy.textContent = text('byokCopy'); }, 2000);
+      });
+      head.append(prompt, command, state, copy);
+      const body = document.createElement('div'); body.className = 'byok-tool-body';
       const args = document.createElement('pre'); args.tabIndex = 0;
-      args.className = 'byok-plain'; args.dataset.i18nLabel = 'byokToolArguments'; args.setAttribute('aria-label', text('byokToolArguments'));
+      args.className = 'byok-plain byok-tool-args'; args.hidden = true;
+      args.dataset.i18nLabel = 'byokToolArguments'; args.setAttribute('aria-label', text('byokToolArguments'));
       const result = document.createElement('pre'); result.className = 'byok-plain byok-tool-result'; result.tabIndex = 0; result.hidden = true;
       result.dataset.i18nLabel = 'byokToolResult'; result.setAttribute('aria-label', text('byokToolResult'));
-      card.append(title, name, state, args, result);
-      block.el = card; block.title = title; block.state = state; block.args = args; block.result = result;
+      body.append(args, result);
+      card.append(head, body);
+      block.el = card; block.state = state; block.args = args; block.result = result; block.command = command;
     } else if (type === 'approval') {
       const card = document.createElement('section'); card.className = 'byok-approval';
       const name = document.createElement('p'); name.className = 'byok-plain'; name.textContent = data.toolName;
@@ -1236,20 +1334,22 @@ export function startByok({ transport, connected = () => false, text, renderMark
       block.data.text += event.text;
     } else if (event.kind === 'ToolCallStart') {
       const block = appendBlock(turn, 'tool', { id: event.id, name: event.name });
-      turn.calls.set(event.id, { block, args: block.args, state: block.state, title: block.title, result: block.result, name: event.name });
+      turn.calls.set(event.id, { block, args: block.args, state: block.state, result: block.result, command: block.command, name: event.name });
     } else if (event.kind === 'ToolCallArgsDelta') turn.calls.get(event.id).args.append(document.createTextNode(event.chunk));
     else if (event.kind === 'ToolCallEnd') {
-      const call = turn.calls.get(event.id); call.args.textContent = JSON.stringify(event.arguments, null, 2); call.args.dataset.timestamp = timestamp;
+      const call = turn.calls.get(event.id);
+      const formatted = formatToolArguments(event.arguments);
+      call.args.textContent = formatted; call.args.hidden = !formatted || ['run_command', 'run_build', 'run_tests'].includes(call.name);
+      call.args.dataset.timestamp = timestamp;
+      call.command.textContent = toolCommand(call.name, event.arguments);
       call.state.dataset.byokText = 'byokToolEnded'; call.state.textContent = text('byokToolEnded');
       call.block.data.arguments = event.arguments;
     } else if (event.kind === 'ToolExecution') {
       const call = turn.calls.get(event.id);
-      if (event.status === 'Running' || event.status === 'Completed') {
-        call.title.dataset.byokText = 'byokToolExecutedNotice'; call.title.textContent = text('byokToolExecutedNotice');
-      }
+      call.block.el.dataset.state = event.status.toLowerCase();
       call.state.dataset.byokText = `byokTool${event.status}`; call.state.textContent = text(`byokTool${event.status}`);
-      call.state.className = event.isError ? 'error' : 'secondary';
-      call.result.textContent = event.content; call.result.hidden = event.status === 'Running'; call.result.dataset.timestamp = timestamp;
+      call.result.textContent = formatToolResult(call.name, event.content);
+      call.result.hidden = event.status === 'Running'; call.result.dataset.timestamp = timestamp;
       if (event.status !== 'Running') {
         Object.assign(call.block.data, { status: event.status, isError: event.isError, content: event.content });
       }
@@ -1334,14 +1434,14 @@ export function startByok({ transport, connected = () => false, text, renderMark
       created.body.textContent = block.text ?? '';
     } else if (block.type === 'tool') {
       const created = appendBlock(turn, 'tool', { id: block.id, name: block.name });
-      created.args.textContent = JSON.stringify(block.arguments, null, 2);
+      const formatted = formatToolArguments(block.arguments);
+      created.args.textContent = formatted;
+      created.args.hidden = !formatted || ['run_command', 'run_build', 'run_tests'].includes(block.name);
+      created.command.textContent = toolCommand(block.name, block.arguments);
       if (block.status) {
-        if (block.status === 'Running' || block.status === 'Completed') {
-          created.title.dataset.byokText = 'byokToolExecutedNotice'; created.title.textContent = text('byokToolExecutedNotice');
-        }
+        created.el.dataset.state = block.status.toLowerCase();
         created.state.dataset.byokText = `byokTool${block.status}`; created.state.textContent = text(`byokTool${block.status}`);
-        created.state.className = block.isError ? 'error' : 'secondary';
-        created.result.textContent = block.content ?? ''; created.result.hidden = block.status === 'Running';
+        created.result.textContent = formatToolResult(block.name, block.content ?? ''); created.result.hidden = block.status === 'Running';
       } else {
         created.state.dataset.byokText = 'byokToolEnded'; created.state.textContent = text('byokToolEnded');
       }
@@ -1705,7 +1805,8 @@ export function startByok({ transport, connected = () => false, text, renderMark
   listen(composer, 'drop', handleDrop);
   listen(node('remove-image'), 'click', () => { removeAttachment(); updateControls(); });
   listen(node('chat-form'), 'submit', submitChat);
-  node('read-name').replaceChildren(...READ_TOOL_NAMES.map(name => option(name, name)));
+  // The manual read form only builds workspace arguments; web tools are model-driven (agent loop).
+  node('read-name').replaceChildren(...READ_TOOL_NAMES.filter(name => name !== 'web_search' && name !== 'web_fetch').map(name => option(name, name)));
   node('read-name').value = 'read_file'; changeReadTool();
   listen(node('read-name'), 'change', changeReadTool);
   listen(node('read-form'), 'submit', readDisk);

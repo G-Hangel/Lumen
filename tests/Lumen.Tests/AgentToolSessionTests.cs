@@ -186,7 +186,7 @@ public sealed class AgentToolSessionTests
         Assert.Contains("fixture", round.RootElement.GetProperty("messages")[3].GetProperty("content").GetString());
         var advertised = JsonDocument.Parse(fixture.Handler.Bodies[0]).RootElement.GetProperty("tools").EnumerateArray()
             .Select(tool => tool.GetProperty("function").GetProperty("name").GetString()).ToArray();
-        Assert.Equal(14, advertised.Length);
+        Assert.Equal(16, advertised.Length);
         Assert.Contains("create_file", advertised);
         Assert.Contains("edit_file", advertised);
         Assert.Contains("run_command", advertised);
@@ -478,7 +478,7 @@ public sealed class AgentToolSessionTests
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
         var tools = body.RootElement.GetProperty("tools").EnumerateArray().Select(tool => tool.GetProperty("function").GetProperty("name").GetString()).ToArray();
-        Assert.Equal(8, tools.Length);
+        Assert.Equal(10, tools.Length);
         Assert.DoesNotContain("run_command", tools);
         Assert.DoesNotContain("create_file", tools);
         Assert.Equal(1, fixture.Reader.Captures);
@@ -546,7 +546,7 @@ public sealed class AgentToolSessionTests
         Assert.Equal("byok.chat.result", fixture.Last.GetProperty("type").GetString());
         using var body = JsonDocument.Parse(fixture.Handler.Bodies[0]);
         var tools = body.RootElement.GetProperty("tools").EnumerateArray().Select(tool => tool.GetProperty("function").GetProperty("name").GetString()).ToArray();
-        Assert.Equal(14, tools.Length);
+        Assert.Equal(16, tools.Length);
         Assert.Contains("apply_diff", tools);
         Assert.Contains("run_command", tools);
         Assert.Equal(1, fixture.Writer.Captures);

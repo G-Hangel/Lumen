@@ -146,7 +146,7 @@ try {
     assert.equal(good.type, 'byok.chat.result', JSON.stringify(good)); assert.equal(good.payload.completed, true);
     manifest.conversationIds.push(good.payload.conversation.id); await saveManifest(); await idle();
     assert.equal(requests.length, 2);
-    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['detect_shells', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file']);
+    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['detect_shells', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file', 'web_fetch', 'web_search']);
     const wireResults = requests[1].messages.filter(message => message.role === 'tool');
     assert.equal(wireResults.length, 4);
     assert.ok(wireResults[0].content.includes('disk-marker')); assert.ok(!wireResults[0].content.includes(manifest.marker + '-unsaved'));

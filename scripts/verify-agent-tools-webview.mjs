@@ -634,7 +634,7 @@ try {
     assert.equal(write.type, 'byok.chat.result', JSON.stringify(write)); assert.equal(write.payload.completed, true);
     assert.equal(write.approvalUnexpected, false); assert.equal(write.approval, null);
     manifest.conversationIds.push(write.payload.conversation.id); await saveManifest();
-    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['apply_diff', 'create_file', 'detect_shells', 'edit_file', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file']);
+    assert.deepEqual(requests[0].tools.map(tool => tool.function.name).sort(), ['apply_diff', 'create_file', 'detect_shells', 'edit_file', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file', 'web_fetch', 'web_search']);
     assert.equal(write.events.filter(event => event.kind === 'ToolExecution' && event.status === 'Completed').length, 2);
     assert.equal((await automation('WriteInspect')).text.replaceAll('\r\n', '\n'), 'public class AgentEdited {}\n');
     assert.deepEqual(await readFile(sample), beforeDisk, 'open document edits the buffer, not disk');
@@ -762,7 +762,7 @@ try {
     await idle();
     const negative = await agentChat('fixture-agent-negative', ['auto-read-tools'], 'none');
     assert.equal(negative.type, 'byok.chat.result'); assert.equal(negative.approval, null);
-    assert.deepEqual(requests.at(-2).tools.map(tool => tool.function.name).sort(), ['detect_shells', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file']);
+    assert.deepEqual(requests.at(-2).tools.map(tool => tool.function.name).sort(), ['detect_shells', 'find_files', 'get_edit_snapshot', 'get_errors', 'get_output_logs', 'grep', 'list_dir', 'read_file', 'web_fetch', 'web_search']);
     const rejected = currentResults(requests.at(-1)).map(message => JSON.parse(message.content).code);
     assert.deepEqual(rejected, ['unknown_tool', 'unknown_tool']); report.readOnlyNoWriteOrCommand = true;
 
